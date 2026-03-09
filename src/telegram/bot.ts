@@ -2,6 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import type { Context } from 'grammy';
 import { Bot } from 'grammy';
 
+import { httpGetBuffer } from '../http';
 import { createEventBus } from './event-bus';
 import type { TelegramMessage } from './message';
 import { fromGrammyMessage } from './message';
@@ -32,9 +33,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
 
   const downloadFile = async (fileId: string): Promise<Buffer> => {
     const file = await bot.api.getFile(fileId);
-    const url = `https://api.telegram.org/file/bot${options.token}/${file.file_path}`;
-    const resp = await fetch(url);
-    return Buffer.from(await resp.arrayBuffer());
+    return await httpGetBuffer(`https://api.telegram.org/file/bot${options.token}/${file.file_path}`);
   };
 
   bot.command('start', async ctx => {

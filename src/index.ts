@@ -30,7 +30,7 @@ const main = async () => {
       const text = event.text.length > 80 ? `${event.text.slice(0, 80)}...` : event.text;
       logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text }).log('[replay] edit');
     } else {
-      logger.withFields({ chatId: event.chatId ?? 'unknown', messageIds: event.messageIds }).log('[replay] delete');
+      logger.withFields({ chatId: event.chatId, messageIds: event.messageIds }).log('[replay] delete');
     }
   }
 

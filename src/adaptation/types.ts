@@ -58,7 +58,7 @@ export interface CanonicalEditEvent {
 
 export interface CanonicalDeleteEvent {
   type: 'delete';
-  chatId?: string;
+  chatId: string;
   messageIds: number[];
   timestamp: number;
 }

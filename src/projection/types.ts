@@ -1,10 +1,13 @@
 import type { CanonicalAttachment, CanonicalUser } from '../adaptation/types';
 
 export interface ICMessage {
+  // String for cross-platform compatibility — Projection converts from
+  // CanonicalEvent's numeric messageId via String()
   messageId: string;
   sender: CanonicalUser;
   timestamp: number;
   text?: string;
+  // String for same reason as messageId
   replyToMessageId?: string;
   attachments: CanonicalAttachment[];
 }

@@ -1,4 +1,3 @@
-import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
 import type { Attachment } from '../db/schema';
@@ -17,21 +16,3 @@ export const canGenerateThumbnail = (attachment: Attachment): boolean =>
   THUMBNAIL_TYPES.has(attachment.type)
   && !attachment.isAnimatedSticker
   && !attachment.isVideoSticker;
-
-export const hydrateAttachmentThumbnails = async (
-  attachments: Attachment[] | undefined,
-  downloadFile: (fileId: string) => Promise<Buffer>,
-  logger: Logger,
-): Promise<void> => {
-  if (!attachments) return;
-
-  for (const att of attachments) {
-    if (!canGenerateThumbnail(att) || !att.fileId) continue;
-    try {
-      const buffer = await downloadFile(att.fileId);
-      att.thumbnail = await generateThumbnail(buffer);
-    } catch (err) {
-      logger.withError(err).warn('Failed to generate thumbnail');
-    }
-  }
-};

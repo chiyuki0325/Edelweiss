@@ -1,52 +1,9 @@
-import type { Message as GrammyMessage } from '@grammyjs/types';
 import { Api } from 'telegram';
 
-import type { Attachment, ForwardInfo, MessageEntity } from '../db/schema';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from './types';
+import type { Attachment, ForwardInfo, MessageEntity } from '../../db/schema';
 
-export interface TelegramUser {
-  id: string;
-  firstName: string;
-  lastName?: string;
-  username?: string;
-  isBot: boolean;
-  isPremium: boolean;
-}
-
-export interface TelegramMessage {
-  messageId: number;
-  chatId: string;
-  sender?: TelegramUser;
-  date: number;
-  editDate?: number;
-  text: string;
-  entities?: MessageEntity[];
-  replyToMessageId?: number;
-  replyToTopId?: number;
-  forwardInfo?: ForwardInfo;
-  mediaGroupId?: string;
-  viaBotId?: string;
-  attachments?: Attachment[];
-  source: 'bot' | 'userbot';
-}
-
-export interface TelegramMessageEdit {
-  messageId: number;
-  chatId: string;
-  sender?: TelegramUser;
-  date: number;
-  editDate: number;
-  text: string;
-  entities?: MessageEntity[];
-  replyToMessageId?: number;
-  attachments?: Attachment[];
-}
-
-export interface TelegramMessageDelete {
-  messageIds: number[];
-  chatId?: string;
-}
-
-// --- gramjs peer → chatId ---
+// --- peer → chatId ---
 
 const resolveChatId = (peer: Api.TypePeer): string => {
   if (peer instanceof Api.PeerChannel) return `-100${peer.channelId.toJSNumber()}`;
@@ -55,7 +12,7 @@ const resolveChatId = (peer: Api.TypePeer): string => {
   throw new Error(`Unknown peer type: ${String(peer)}`);
 };
 
-// --- gramjs entity conversion ---
+// --- entity conversion ---
 
 const ENTITY_CLASS_TO_TYPE: Record<string, string> = {
   MessageEntityUnknown: 'unknown',
@@ -101,7 +58,7 @@ const convertGramjsEntities = (entities?: Api.TypeMessageEntity[]): MessageEntit
   });
 };
 
-// --- gramjs forward info ---
+// --- forward info ---
 
 const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader): ForwardInfo | undefined => {
   if (!fwd || !(fwd instanceof Api.MessageFwdHeader)) return undefined;
@@ -124,7 +81,7 @@ const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader): ForwardInfo |
   return info;
 };
 
-// --- gramjs media → attachments ---
+// --- media → attachments ---
 
 const convertGramjsMedia = (media?: Api.TypeMessageMedia): Attachment[] | undefined => {
   if (!media) return undefined;
@@ -212,11 +169,12 @@ const convertGramjsDocument = (doc: Api.Document, spoiler?: boolean): Attachment
   return attachment;
 };
 
-// --- gramjs public API ---
+// --- public API ---
 
 export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefined => {
   const fromId = message.fromId;
-  if (fromId && fromId instanceof Api.PeerUser) {
+
+  if (fromId instanceof Api.PeerUser) {
     const userId = fromId.userId.toJSNumber();
     const sender = message.sender;
     if (sender && sender instanceof Api.User) {
@@ -236,6 +194,27 @@ export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefi
       isPremium: false,
     };
   }
+
+  if (fromId instanceof Api.PeerChannel) {
+    const channelId = fromId.channelId.toJSNumber();
+    const sender = message.sender;
+    if (sender && sender instanceof Api.Channel) {
+      return {
+        id: `-100${channelId}`,
+        firstName: sender.title ?? '',
+        username: sender.username,
+        isBot: false,
+        isPremium: false,
+      };
+    }
+    return {
+      id: `-100${channelId}`,
+      firstName: '',
+      isBot: false,
+      isPremium: false,
+    };
+  }
+
   return undefined;
 };
 
@@ -290,213 +269,4 @@ export const fromGramjsDeletedMessage = (
     chatId = `-100${peer.channelId.toJSNumber()}`;
   }
   return { messageIds: deletedIds, chatId };
-};
-
-// --- grammY conversion ---
-
-const convertGrammyEntities = (
-  entities?: GrammyMessage['entities'],
-): MessageEntity[] | undefined => {
-  if (!entities || entities.length === 0) return undefined;
-  return entities.map(e => ({
-    type: e.type,
-    offset: e.offset,
-    length: e.length,
-    url: 'url' in e ? e.url : undefined,
-    language: 'language' in e ? e.language : undefined,
-    customEmojiId: 'custom_emoji_id' in e ? e.custom_emoji_id : undefined,
-    userId: 'user' in e ? String(e.user.id) : undefined,
-  }));
-};
-
-const convertGrammyForwardInfo = (
-  origin?: GrammyMessage['forward_origin'],
-): ForwardInfo | undefined => {
-  if (!origin) return undefined;
-
-  const info: ForwardInfo = { date: origin.date };
-
-  switch (origin.type) {
-  case 'user':
-    info.fromUserId = String(origin.sender_user.id);
-    break;
-  case 'hidden_user':
-    info.senderName = origin.sender_user_name;
-    break;
-  case 'chat':
-    info.fromChatId = String(origin.sender_chat.id);
-    break;
-  case 'channel':
-    info.fromChatId = String(origin.chat.id);
-    if (origin.message_id) info.fromMessageId = origin.message_id;
-    break;
-  }
-
-  return info;
-};
-
-const convertGrammyAttachments = (msg: GrammyMessage): Attachment[] | undefined => {
-  const spoiler = msg.has_media_spoiler;
-
-  if (msg.photo) {
-    const largest = msg.photo.sort((a, b) => b.width * b.height - a.width * a.height)[0];
-    if (!largest) return undefined;
-    return [{
-      type: 'photo',
-      fileId: largest.file_id,
-      fileUniqueId: largest.file_unique_id,
-      width: largest.width,
-      height: largest.height,
-      fileSize: largest.file_size,
-      hasSpoiler: spoiler,
-    }];
-  }
-
-  if (msg.sticker) {
-    return [{
-      type: 'sticker',
-      fileId: msg.sticker.file_id,
-      fileUniqueId: msg.sticker.file_unique_id,
-      width: msg.sticker.width,
-      height: msg.sticker.height,
-      emoji: msg.sticker.emoji,
-      stickerSetName: msg.sticker.set_name,
-      isAnimatedSticker: msg.sticker.is_animated,
-      isVideoSticker: msg.sticker.is_video,
-      customEmojiId: msg.sticker.custom_emoji_id,
-      fileSize: msg.sticker.file_size,
-    }];
-  }
-
-  if (msg.animation) {
-    return [{
-      type: 'animation',
-      fileId: msg.animation.file_id,
-      fileUniqueId: msg.animation.file_unique_id,
-      width: msg.animation.width,
-      height: msg.animation.height,
-      duration: msg.animation.duration,
-      fileName: msg.animation.file_name,
-      mimeType: msg.animation.mime_type,
-      fileSize: msg.animation.file_size,
-    }];
-  }
-
-  if (msg.video) {
-    return [{
-      type: 'video',
-      fileId: msg.video.file_id,
-      fileUniqueId: msg.video.file_unique_id,
-      width: msg.video.width,
-      height: msg.video.height,
-      duration: msg.video.duration,
-      fileName: msg.video.file_name,
-      mimeType: msg.video.mime_type,
-      fileSize: msg.video.file_size,
-      hasSpoiler: spoiler,
-    }];
-  }
-
-  if (msg.video_note) {
-    return [{
-      type: 'video_note',
-      fileId: msg.video_note.file_id,
-      fileUniqueId: msg.video_note.file_unique_id,
-      width: msg.video_note.length,
-      height: msg.video_note.length,
-      duration: msg.video_note.duration,
-      fileSize: msg.video_note.file_size,
-    }];
-  }
-
-  if (msg.voice) {
-    return [{
-      type: 'voice',
-      fileId: msg.voice.file_id,
-      fileUniqueId: msg.voice.file_unique_id,
-      duration: msg.voice.duration,
-      mimeType: msg.voice.mime_type,
-      fileSize: msg.voice.file_size,
-    }];
-  }
-
-  if (msg.audio) {
-    return [{
-      type: 'audio',
-      fileId: msg.audio.file_id,
-      fileUniqueId: msg.audio.file_unique_id,
-      duration: msg.audio.duration,
-      fileName: msg.audio.file_name,
-      mimeType: msg.audio.mime_type,
-      fileSize: msg.audio.file_size,
-    }];
-  }
-
-  if (msg.document) {
-    return [{
-      type: 'document',
-      fileId: msg.document.file_id,
-      fileUniqueId: msg.document.file_unique_id,
-      fileName: msg.document.file_name,
-      mimeType: msg.document.mime_type,
-      fileSize: msg.document.file_size,
-    }];
-  }
-
-  return undefined;
-};
-
-export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
-  const sender: TelegramUser | undefined = message.from
-    ? {
-        id: String(message.from.id),
-        firstName: message.from.first_name,
-        lastName: message.from.last_name,
-        username: message.from.username,
-        isBot: message.from.is_bot,
-        isPremium: message.from.is_premium ?? false,
-      }
-    : undefined;
-
-  const textEntities = message.entities ?? message.caption_entities;
-  const textContent = message.text ?? message.caption ?? '';
-
-  return {
-    messageId: message.message_id,
-    chatId: String(message.chat.id),
-    sender,
-    date: message.date,
-    editDate: message.edit_date,
-    text: textContent,
-    entities: convertGrammyEntities(textEntities),
-    replyToMessageId: message.reply_to_message?.message_id,
-    forwardInfo: convertGrammyForwardInfo(message.forward_origin),
-    mediaGroupId: message.media_group_id,
-    viaBotId: message.via_bot ? String(message.via_bot.id) : undefined,
-    attachments: convertGrammyAttachments(message),
-    source: 'bot',
-  };
-};
-
-// --- dedup ---
-
-export const createMessageDedup = (maxSize = 10000) => {
-  const seen = new Set<string>();
-  const queue: string[] = [];
-
-  return {
-    tryAdd(chatId: string, messageId: number): boolean {
-      const key = `${chatId}:${messageId}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      queue.push(key);
-      while (queue.length > maxSize) {
-        const old = queue.shift()!;
-        seen.delete(old);
-      }
-      return true;
-    },
-  };
 };

@@ -67,7 +67,7 @@ const adaptForwardInfo = (info?: ForwardInfo): CanonicalForwardInfo | undefined 
   if (info.fromChatId) result.fromChatId = info.fromChatId;
   if (info.senderName) result.senderName = info.senderName;
   if (info.date != null) result.date = info.date;
-  return result;
+  return Object.keys(result).length > 0 ? result : undefined;
 };
 
 export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
@@ -103,9 +103,12 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
   return event;
 };
 
-export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent => ({
-  type: 'delete',
-  chatId: del.chatId,
-  messageIds: del.messageIds,
-  timestamp: Math.floor(Date.now() / 1000),
-});
+export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent => {
+  if (!del.chatId) throw new Error('Cannot adapt delete event without chatId');
+  return {
+    type: 'delete',
+    chatId: del.chatId,
+    messageIds: del.messageIds,
+    timestamp: Math.floor(Date.now() / 1000),
+  };
+};

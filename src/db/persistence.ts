@@ -103,27 +103,20 @@ export const persistMessageEdit = (db: DB, edit: TelegramMessageEdit) => {
 };
 
 export const persistMessageDelete = (db: DB, del: TelegramMessageDelete) => {
-  const now = new Date();
+  if (!del.chatId) return;
 
-  if (del.chatId) {
-    db.update(messages)
-      .set({ deletedAt: now })
-      .where(and(
-        eq(messages.chatId, del.chatId),
-        inArray(messages.messageId, del.messageIds),
-      ))
-      .run();
-  } else {
-    db.update(messages)
-      .set({ deletedAt: now })
-      .where(inArray(messages.messageId, del.messageIds))
-      .run();
-  }
+  db.update(messages)
+    .set({ deletedAt: new Date() })
+    .where(and(
+      eq(messages.chatId, del.chatId),
+      inArray(messages.messageId, del.messageIds),
+    ))
+    .run();
 };
 
 export const persistEvent = (db: DB, event: CanonicalEvent) => {
   const base = {
-    chatId: event.type === 'delete' ? (event.chatId ?? null) : event.chatId,
+    chatId: event.chatId,
     type: event.type as 'message' | 'edit' | 'delete',
     timestamp: event.timestamp,
   };
@@ -182,7 +175,7 @@ const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
 
 const reconstructDeleteEvent = (row: EventRow): CanonicalDeleteEvent => ({
   type: 'delete',
-  chatId: row.chatId ?? undefined,
+  chatId: row.chatId,
   messageIds: row.messageIds ?? [],
   timestamp: row.timestamp,
 });

@@ -132,7 +132,7 @@ export const createTelegramManager = (
   });
 
   userbot.onMessageDelete(del => {
-    if (del.chatId && !botChats.has(del.chatId)) return;
+    if (!del.chatId || !botChats.has(del.chatId)) return;
     deleteBus.emit(del);
   });
 
