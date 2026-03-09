@@ -75,8 +75,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
         if (!event.message || event.message instanceof Api.MessageEmpty) return;
         const msg = event.message;
         const sender = resolveGramjsSender(msg);
-        const telegramMsg = fromGramjsMessage(msg, sender);
-        void hydrateGramjsThumbnails(telegramMsg, msg).then(() => messageBus.emit(telegramMsg));
+        messageBus.emit(fromGramjsMessage(msg, sender));
       },
       new NewMessage({}),
     );
