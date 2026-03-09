@@ -11,7 +11,7 @@ import * as schema from './schema';
 
 export type DB = ReturnType<typeof createDatabase>;
 
-export function createDatabase(dbPath: string, logger: Logger) {
+export const createDatabase = (dbPath: string, logger: Logger) => {
   const log = logger.withContext('db');
 
   const dir = path.dirname(dbPath);
@@ -25,9 +25,9 @@ export function createDatabase(dbPath: string, logger: Logger) {
   log.withFields({ path: dbPath }).log('Database opened');
 
   return db;
-}
+};
 
-export function runMigrations(db: DB, logger: Logger) {
+export const runMigrations = (db: DB, logger: Logger) => {
   const log = logger.withContext('db');
 
   // foreign_keys must be OFF during migrations (DDL may drop/recreate referenced tables)
@@ -39,4 +39,4 @@ export function runMigrations(db: DB, logger: Logger) {
   log.log('Migrations complete');
 
   db.run(sql`PRAGMA foreign_keys = ON`);
-}
+};

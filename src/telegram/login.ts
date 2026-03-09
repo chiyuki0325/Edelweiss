@@ -10,7 +10,7 @@ import { patchGramjsLogger } from './gramjs-logger';
 import { loadSession, saveSession } from './session';
 import { loadEnv } from '../config/env';
 
-async function main() {
+const main = async () => {
   dotenv.config();
   initLogger(LogLevel.Log, Format.Pretty);
   const log = useGlobalLogger('login');
@@ -64,7 +64,7 @@ async function main() {
   log.log('Session saved to data/session');
 
   await client.disconnect();
-}
+};
 
 main().catch(err => {
   useGlobalLogger('login').withError(err).error('Login failed');

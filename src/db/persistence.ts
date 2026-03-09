@@ -4,7 +4,7 @@ import type { DB } from './client';
 import { messages, users } from './schema';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
-export function upsertUser(db: DB, user: TelegramUser) {
+export const upsertUser = (db: DB, user: TelegramUser) => {
   db.insert(users)
     .values({
       id: user.id,
@@ -27,9 +27,9 @@ export function upsertUser(db: DB, user: TelegramUser) {
       },
     })
     .run();
-}
+};
 
-export function persistMessage(db: DB, msg: TelegramMessage) {
+export const persistMessage = (db: DB, msg: TelegramMessage) => {
   if (msg.sender) upsertUser(db, msg.sender);
 
   db.insert(messages)
@@ -60,9 +60,9 @@ export function persistMessage(db: DB, msg: TelegramMessage) {
       },
     })
     .run();
-}
+};
 
-export function persistMessageEdit(db: DB, edit: TelegramMessageEdit) {
+export const persistMessageEdit = (db: DB, edit: TelegramMessageEdit) => {
   if (edit.sender) upsertUser(db, edit.sender);
 
   const updated = db.update(messages)
@@ -94,9 +94,9 @@ export function persistMessageEdit(db: DB, edit: TelegramMessageEdit) {
       })
       .run();
   }
-}
+};
 
-export function persistMessageDelete(db: DB, del: TelegramMessageDelete) {
+export const persistMessageDelete = (db: DB, del: TelegramMessageDelete) => {
   const now = new Date();
 
   if (del.chatId) {
@@ -113,4 +113,4 @@ export function persistMessageDelete(db: DB, del: TelegramMessageDelete) {
       .where(inArray(messages.messageId, del.messageIds))
       .run();
   }
-}
+};

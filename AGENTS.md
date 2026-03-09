@@ -33,7 +33,7 @@ src/
 ├── index.ts              # Entry point
 ├── config/
 │   ├── env.ts            # Environment variable schema (Valibot)
-│   ├── logger.ts         # pino logger
+│   ├── logger.ts         # @guiiai/logg structured logger
 │   └── index.ts
 ├── adaptation/           # Layer 1: Platform Event → Canonical Event
 │   ├── types.ts          # CanonicalEvent, CanonicalMessage, CanonicalUser, CanonicalAttachment

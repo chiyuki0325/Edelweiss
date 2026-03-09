@@ -4,7 +4,7 @@ import * as path from 'node:path';
 const SESSION_DIR = 'data';
 const SESSION_FILE = path.join(SESSION_DIR, 'session');
 
-export function loadSession(envValue: string): string {
+export const loadSession = (envValue: string): string => {
   if (envValue) {
     return envValue;
   }
@@ -14,9 +14,9 @@ export function loadSession(envValue: string): string {
   } catch {
     return '';
   }
-}
+};
 
-export function saveSession(sessionString: string): void {
+export const saveSession = (sessionString: string): void => {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
   fs.writeFileSync(SESSION_FILE, sessionString, 'utf-8');
-}
+};

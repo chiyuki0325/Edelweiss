@@ -11,7 +11,7 @@ setupLogger();
 
 const logger = useLogger('cahciua');
 
-async function main() {
+const main = async () => {
   const env = loadEnv();
 
   const db = createDatabase(env.DB_PATH, logger);
@@ -32,7 +32,11 @@ async function main() {
       sender: msg.sender?.username ?? msg.sender?.firstName ?? msg.sender?.id ?? 'unknown',
       text: msg.text.length > 100 ? `${msg.text.slice(0, 100)}...` : msg.text,
     }).log('Message received');
-    persistMessage(db, msg);
+    try {
+      persistMessage(db, msg);
+    } catch (err) {
+      logger.withError(err).error('Failed to persist message');
+    }
   });
 
   telegram.onMessageEdit(edit => {
@@ -42,7 +46,11 @@ async function main() {
       sender: edit.sender?.username ?? edit.sender?.firstName ?? edit.sender?.id ?? 'unknown',
       text: edit.text.length > 100 ? `${edit.text.slice(0, 100)}...` : edit.text,
     }).log('Message edited');
-    persistMessageEdit(db, edit);
+    try {
+      persistMessageEdit(db, edit);
+    } catch (err) {
+      logger.withError(err).error('Failed to persist message edit');
+    }
   });
 
   telegram.onMessageDelete(del => {
@@ -50,7 +58,11 @@ async function main() {
       chatId: del.chatId ?? 'unknown',
       messageIds: del.messageIds,
     }).log('Message deleted');
-    persistMessageDelete(db, del);
+    try {
+      persistMessageDelete(db, del);
+    } catch (err) {
+      logger.withError(err).error('Failed to persist message delete');
+    }
   });
 
   const shutdown = async () => {
@@ -64,7 +76,7 @@ async function main() {
 
   await telegram.start();
   logger.log('Cahciua is running');
-}
+};
 
 main().catch(err => {
   logger.withError(err).error('Fatal error');

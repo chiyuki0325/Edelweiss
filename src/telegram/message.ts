@@ -1,3 +1,4 @@
+import type { Message as GrammyMessage } from '@grammyjs/types';
 import { Api } from 'telegram';
 
 import type { Attachment, ForwardInfo, MessageEntity } from '../db/schema';
@@ -47,12 +48,12 @@ export interface TelegramMessageDelete {
 
 // --- gramjs peer → chatId ---
 
-function resolveChatId(peer: Api.TypePeer): string {
+const resolveChatId = (peer: Api.TypePeer): string => {
   if (peer instanceof Api.PeerChannel) return `-100${peer.channelId.toJSNumber()}`;
   if (peer instanceof Api.PeerChat) return `-${peer.chatId.toJSNumber()}`;
   if (peer instanceof Api.PeerUser) return String(peer.userId.toJSNumber());
   throw new Error(`Unknown peer type: ${String(peer)}`);
-}
+};
 
 // --- gramjs entity conversion ---
 
@@ -80,7 +81,7 @@ const ENTITY_CLASS_TO_TYPE: Record<string, string> = {
   MessageEntityBlockquote: 'blockquote',
 };
 
-function convertGramjsEntities(entities?: Api.TypeMessageEntity[]): MessageEntity[] | undefined {
+const convertGramjsEntities = (entities?: Api.TypeMessageEntity[]): MessageEntity[] | undefined => {
   if (!entities || entities.length === 0) return undefined;
 
   return entities.map(e => {
@@ -98,11 +99,11 @@ function convertGramjsEntities(entities?: Api.TypeMessageEntity[]): MessageEntit
 
     return result;
   });
-}
+};
 
 // --- gramjs forward info ---
 
-function convertGramjsForwardInfo(fwd?: Api.TypeMessageFwdHeader): ForwardInfo | undefined {
+const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader): ForwardInfo | undefined => {
   if (!fwd || !(fwd instanceof Api.MessageFwdHeader)) return undefined;
 
   const info: ForwardInfo = { date: fwd.date };
@@ -121,11 +122,11 @@ function convertGramjsForwardInfo(fwd?: Api.TypeMessageFwdHeader): ForwardInfo |
   if (fwd.fromName) info.senderName = fwd.fromName;
 
   return info;
-}
+};
 
 // --- gramjs media → attachments ---
 
-function convertGramjsMedia(media?: Api.TypeMessageMedia): Attachment[] | undefined {
+const convertGramjsMedia = (media?: Api.TypeMessageMedia): Attachment[] | undefined => {
   if (!media) return undefined;
 
   if (media instanceof Api.MessageMediaPhoto) {
@@ -144,14 +145,13 @@ function convertGramjsMedia(media?: Api.TypeMessageMedia): Attachment[] | undefi
 
   if (media instanceof Api.MessageMediaDocument) {
     if (!media.document || !(media.document instanceof Api.Document)) return undefined;
-    const doc = media.document;
-    return [convertGramjsDocument(doc, media.spoiler)];
+    return [convertGramjsDocument(media.document, media.spoiler)];
   }
 
   return undefined;
-}
+};
 
-function convertGramjsDocument(doc: Api.Document, spoiler?: boolean): Attachment {
+const convertGramjsDocument = (doc: Api.Document, spoiler?: boolean): Attachment => {
   const stickerAttr = doc.attributes.find(
     (a): a is Api.DocumentAttributeSticker => a instanceof Api.DocumentAttributeSticker,
   );
@@ -169,8 +169,7 @@ function convertGramjsDocument(doc: Api.Document, spoiler?: boolean): Attachment
     (a): a is Api.DocumentAttributeCustomEmoji => a instanceof Api.DocumentAttributeCustomEmoji,
   );
 
-  const type: Attachment['type'] = 'document';
-  const attachment: Attachment = { type };
+  const attachment: Attachment = { type: 'document' };
 
   if (stickerAttr || isCustomEmoji) {
     attachment.type = 'sticker';
@@ -211,11 +210,11 @@ function convertGramjsDocument(doc: Api.Document, spoiler?: boolean): Attachment
   if (spoiler) attachment.hasSpoiler = true;
 
   return attachment;
-}
+};
 
 // --- gramjs public API ---
 
-export function resolveGramjsSender(message: Api.Message): TelegramUser | undefined {
+export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefined => {
   const fromId = message.fromId;
   if (fromId && fromId instanceof Api.PeerUser) {
     const userId = fromId.userId.toJSNumber();
@@ -238,12 +237,12 @@ export function resolveGramjsSender(message: Api.Message): TelegramUser | undefi
     };
   }
   return undefined;
-}
+};
 
-export function fromGramjsMessage(
+export const fromGramjsMessage = (
   message: Api.Message,
   senderInfo?: TelegramUser,
-): TelegramMessage {
+): TelegramMessage => {
   const replyTo = message.replyTo instanceof Api.MessageReplyHeader ? message.replyTo : undefined;
 
   return {
@@ -262,12 +261,12 @@ export function fromGramjsMessage(
     attachments: convertGramjsMedia(message.media),
     source: 'userbot',
   };
-}
+};
 
-export function fromGramjsEditedMessage(
+export const fromGramjsEditedMessage = (
   message: Api.Message,
   senderInfo?: TelegramUser,
-): TelegramMessageEdit {
+): TelegramMessageEdit => {
   const base = fromGramjsMessage(message, senderInfo);
   return {
     messageId: base.messageId,
@@ -280,101 +279,63 @@ export function fromGramjsEditedMessage(
     replyToMessageId: base.replyToMessageId,
     attachments: base.attachments,
   };
-}
+};
 
-export function fromGramjsDeletedMessage(
+export const fromGramjsDeletedMessage = (
   deletedIds: number[],
   peer?: Api.PeerChannel,
-): TelegramMessageDelete {
+): TelegramMessageDelete => {
   let chatId: string | undefined;
   if (peer) {
     chatId = `-100${peer.channelId.toJSNumber()}`;
   }
   return { messageIds: deletedIds, chatId };
-}
+};
 
 // --- grammY conversion ---
 
-interface GrammyMessageInput {
-  message_id: number;
-  chat: { id: number };
-  from?: { id: number; first_name: string; last_name?: string; username?: string; is_bot: boolean; is_premium?: true };
-  date: number;
-  edit_date?: number;
-  text?: string;
-  caption?: string;
-  entities?: Array<{ type: string; offset: number; length: number; url?: string; language?: string; custom_emoji_id?: string; user?: { id: number } }>;
-  caption_entities?: Array<{ type: string; offset: number; length: number; url?: string; language?: string; custom_emoji_id?: string; user?: { id: number } }>;
-  reply_to_message?: { message_id: number };
-  forward_origin?: {
-    type: string;
-    date: number;
-    sender_user?: { id: number };
-    sender_user_name?: string;
-    sender_chat?: { id: number };
-    chat?: { id: number };
-    message_id?: number;
-  };
-  media_group_id?: string;
-  via_bot?: { id: number };
-  photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number; file_size?: number }>;
-  sticker?: {
-    file_id: string; file_unique_id: string; width: number; height: number;
-    is_animated: boolean; is_video: boolean;
-    emoji?: string; set_name?: string; custom_emoji_id?: string;
-    file_size?: number;
-  };
-  animation?: { file_id: string; file_unique_id: string; width: number; height: number; duration: number; file_name?: string; mime_type?: string; file_size?: number };
-  audio?: { file_id: string; file_unique_id: string; duration: number; file_name?: string; mime_type?: string; file_size?: number };
-  document?: { file_id: string; file_unique_id: string; file_name?: string; mime_type?: string; file_size?: number };
-  video?: { file_id: string; file_unique_id: string; width: number; height: number; duration: number; file_name?: string; mime_type?: string; file_size?: number };
-  video_note?: { file_id: string; file_unique_id: string; length: number; duration: number; file_size?: number };
-  voice?: { file_id: string; file_unique_id: string; duration: number; mime_type?: string; file_size?: number };
-  has_media_spoiler?: true;
-}
-
-function convertGrammyEntities(
-  entities?: GrammyMessageInput['entities'],
-): MessageEntity[] | undefined {
+const convertGrammyEntities = (
+  entities?: GrammyMessage['entities'],
+): MessageEntity[] | undefined => {
   if (!entities || entities.length === 0) return undefined;
   return entities.map(e => ({
     type: e.type,
     offset: e.offset,
     length: e.length,
-    url: e.url,
-    language: e.language,
-    customEmojiId: e.custom_emoji_id,
-    userId: e.user ? String(e.user.id) : undefined,
+    url: 'url' in e ? e.url : undefined,
+    language: 'language' in e ? e.language : undefined,
+    customEmojiId: 'custom_emoji_id' in e ? e.custom_emoji_id : undefined,
+    userId: 'user' in e ? String(e.user.id) : undefined,
   }));
-}
+};
 
-function convertGrammyForwardInfo(
-  origin?: GrammyMessageInput['forward_origin'],
-): ForwardInfo | undefined {
+const convertGrammyForwardInfo = (
+  origin?: GrammyMessage['forward_origin'],
+): ForwardInfo | undefined => {
   if (!origin) return undefined;
 
   const info: ForwardInfo = { date: origin.date };
 
   switch (origin.type) {
   case 'user':
-    if (origin.sender_user) info.fromUserId = String(origin.sender_user.id);
+    info.fromUserId = String(origin.sender_user.id);
     break;
   case 'hidden_user':
-    if (origin.sender_user_name) info.senderName = origin.sender_user_name;
+    info.senderName = origin.sender_user_name;
     break;
   case 'chat':
-    if (origin.sender_chat) info.fromChatId = String(origin.sender_chat.id);
+    info.fromChatId = String(origin.sender_chat.id);
     break;
   case 'channel':
-    if (origin.chat) info.fromChatId = String(origin.chat.id);
+    info.fromChatId = String(origin.chat.id);
     if (origin.message_id) info.fromMessageId = origin.message_id;
     break;
   }
 
   return info;
-}
+};
 
-function convertGrammyAttachments(msg: GrammyMessageInput): Attachment[] | undefined {
+const convertGrammyAttachments = (msg: GrammyMessage): Attachment[] | undefined => {
   const spoiler = msg.has_media_spoiler;
 
   if (msg.photo) {
@@ -483,9 +444,9 @@ function convertGrammyAttachments(msg: GrammyMessageInput): Attachment[] | undef
   }
 
   return undefined;
-}
+};
 
-export function fromGrammyMessage(message: GrammyMessageInput): TelegramMessage {
+export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
   const sender: TelegramUser | undefined = message.from
     ? {
         id: String(message.from.id),
@@ -515,11 +476,11 @@ export function fromGrammyMessage(message: GrammyMessageInput): TelegramMessage 
     attachments: convertGrammyAttachments(message),
     source: 'bot',
   };
-}
+};
 
 // --- dedup ---
 
-export function createMessageDedup(maxSize = 10000) {
+export const createMessageDedup = (maxSize = 10000) => {
   const seen = new Set<string>();
   const queue: string[] = [];
 
@@ -538,4 +499,4 @@ export function createMessageDedup(maxSize = 10000) {
       return true;
     },
   };
-}
+};
