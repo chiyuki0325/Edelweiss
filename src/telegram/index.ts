@@ -44,9 +44,26 @@ export const createTelegramManager = (
 
   const dedup = createMessageDedup();
   const botChats = new Set<string>();
+  const inflight = new Map<string, TelegramMessage>();
   const messageBus = createEventBus<TelegramMessage>('telegram:message', logger);
   const editBus = createEventBus<TelegramMessageEdit>('telegram:edit', logger);
   const deleteBus = createEventBus<TelegramMessageDelete>('telegram:delete', logger);
+
+  // Merge fileIds from bot version into an existing userbot message.
+  // If thumbnail download hasn't started yet for that attachment,
+  // downloadAttachmentMedia will pick up the fileId and use Bot API.
+  // Either way the fileId is preserved for future high-res downloads.
+  const mergeFileIds = (target?: Attachment[], source?: Attachment[]) => {
+    if (!target || !source) return;
+    for (let i = 0; i < target.length && i < source.length; i++) {
+      const t = target[i]!;
+      const s = source[i]!;
+      if (!t.fileId && s.fileId) {
+        t.fileId = s.fileId;
+        t.fileUniqueId = s.fileUniqueId;
+      }
+    }
+  };
 
   // Unified download: fileId → Bot API, else → userbot by chatId+messageId
   const downloadAttachmentMedia = async (
@@ -79,9 +96,23 @@ export const createTelegramManager = (
   };
 
   const dispatchMessage = (msg: TelegramMessage) => {
-    if (!dedup.tryAdd(msg.chatId, msg.messageId)) return;
+    const key = `${msg.chatId}:${msg.messageId}`;
+
+    if (!dedup.tryAdd(msg.chatId, msg.messageId)) {
+      // Second arrival — if bot version, merge fileIds into the in-flight message
+      if (msg.source === 'bot') {
+        const existing = inflight.get(key);
+        if (existing) mergeFileIds(existing.attachments, msg.attachments);
+      }
+      return;
+    }
+
+    inflight.set(key, msg);
     void hydrateThumbnails(msg.chatId, msg.messageId, msg.attachments)
-      .then(() => messageBus.emit(msg));
+      .then(() => {
+        inflight.delete(key);
+        messageBus.emit(msg);
+      });
   };
 
   bot.onMessage(msg => {
