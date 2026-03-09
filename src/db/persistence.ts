@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { events, messages, users } from './schema';
@@ -202,4 +202,12 @@ export const loadEvents = (db: DB, chatId: string): CanonicalEvent[] => {
     .orderBy(events.id)
     .all();
   return rows.map(reconstructEvent);
+};
+
+export const loadRecentEvents = (db: DB, limit: number): CanonicalEvent[] => {
+  const rows = db.select().from(events)
+    .orderBy(desc(events.id))
+    .limit(limit)
+    .all();
+  return rows.reverse().map(reconstructEvent);
 };

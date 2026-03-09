@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import { adaptDelete, adaptEdit, adaptMessage } from './adaptation';
 import { loadEnv } from './config/env';
 import { setupLogger, useLogger } from './config/logger';
-import { createDatabase, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
+import { createDatabase, loadRecentEvents, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
 import { createTelegramManager } from './telegram';
 import { loadSession } from './telegram/session';
 
@@ -17,6 +17,22 @@ const main = async () => {
 
   const db = createDatabase(env.DB_PATH, logger);
   runMigrations(db, logger);
+
+  const recentEvents = loadRecentEvents(db, 100);
+  logger.withFields({ count: recentEvents.length }).log('Replayed recent events from DB');
+  for (const event of recentEvents) {
+    if (event.type === 'message') {
+      const sender = event.sender?.displayName ?? event.sender?.id ?? 'unknown';
+      const text = event.text.length > 80 ? `${event.text.slice(0, 80)}...` : event.text;
+      logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text }).log('[replay] message');
+    } else if (event.type === 'edit') {
+      const sender = event.sender?.displayName ?? event.sender?.id ?? 'unknown';
+      const text = event.text.length > 80 ? `${event.text.slice(0, 80)}...` : event.text;
+      logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text }).log('[replay] edit');
+    } else {
+      logger.withFields({ chatId: event.chatId ?? 'unknown', messageIds: event.messageIds }).log('[replay] delete');
+    }
+  }
 
   const telegram = createTelegramManager({
     botToken: env.TELEGRAM_BOT_TOKEN,
