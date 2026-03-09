@@ -5,8 +5,10 @@ import { createBotClient } from './bot';
 import { createEventBus } from './event-bus';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
 import { createMessageDedup } from './message';
+import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 import type { FetchOptions, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
+import type { Attachment } from '../db/schema';
 
 export interface TelegramManagerOptions {
   botToken: string;
@@ -32,6 +34,7 @@ export const createTelegramManager = (
   options: TelegramManagerOptions,
   logger: Logger,
 ): TelegramManager => {
+  const log = logger.withContext('telegram:manager');
   const bot = createBotClient({ token: options.botToken }, logger);
   const userbot = createUserbotClient({
     apiId: options.apiId,
@@ -45,9 +48,40 @@ export const createTelegramManager = (
   const editBus = createEventBus<TelegramMessageEdit>('telegram:edit', logger);
   const deleteBus = createEventBus<TelegramMessageDelete>('telegram:delete', logger);
 
+  // Unified download: fileId → Bot API, else → userbot by chatId+messageId
+  const downloadAttachmentMedia = async (
+    chatId: string,
+    messageId: number,
+    att: Attachment,
+  ): Promise<Buffer | undefined> => {
+    if (att.fileId) {
+      return await bot.downloadFile(att.fileId);
+    }
+    return await userbot.downloadMessageMedia(chatId, messageId);
+  };
+
+  // Generate thumbnails for all eligible attachments on a message or edit
+  const hydrateThumbnails = async (
+    chatId: string,
+    messageId: number,
+    attachments?: Attachment[],
+  ) => {
+    if (!attachments) return;
+    for (const att of attachments) {
+      if (!canGenerateThumbnail(att)) continue;
+      try {
+        const buffer = await downloadAttachmentMedia(chatId, messageId, att);
+        if (buffer) att.thumbnail = await generateThumbnail(buffer);
+      } catch (err) {
+        log.withError(err).warn('Failed to generate thumbnail');
+      }
+    }
+  };
+
   const dispatchMessage = (msg: TelegramMessage) => {
     if (!dedup.tryAdd(msg.chatId, msg.messageId)) return;
-    messageBus.emit(msg);
+    void hydrateThumbnails(msg.chatId, msg.messageId, msg.attachments)
+      .then(() => messageBus.emit(msg));
   };
 
   bot.onMessage(msg => {
@@ -62,7 +96,8 @@ export const createTelegramManager = (
 
   userbot.onMessageEdit(edit => {
     if (!botChats.has(edit.chatId)) return;
-    editBus.emit(edit);
+    void hydrateThumbnails(edit.chatId, edit.messageId, edit.attachments)
+      .then(() => editBus.emit(edit));
   });
 
   userbot.onMessageDelete(del => {

@@ -5,7 +5,6 @@ import { Bot } from 'grammy';
 import { createEventBus } from './event-bus';
 import type { TelegramMessage } from './message';
 import { fromGrammyMessage } from './message';
-import { hydrateAttachmentThumbnails } from './thumbnail';
 
 export interface BotClientOptions {
   token: string;
@@ -42,11 +41,9 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     await ctx.reply('Cahciua is running.');
   });
 
-  bot.on('message', async (ctx: Context) => {
+  bot.on('message', (ctx: Context) => {
     if (!ctx.message) return;
-    const msg = fromGrammyMessage(ctx.message);
-    await hydrateAttachmentThumbnails(msg.attachments, downloadFile, log);
-    messageBus.emit(msg);
+    messageBus.emit(fromGrammyMessage(ctx.message));
   });
 
   bot.catch(err => {

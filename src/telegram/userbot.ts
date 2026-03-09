@@ -9,7 +9,6 @@ import { createEventBus } from './event-bus';
 import { patchGramjsLogger } from './gramjs-logger';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
 import { fromGramjsDeletedMessage, fromGramjsEditedMessage, fromGramjsMessage, resolveGramjsSender } from './message';
-import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 
 export interface UserbotOptions {
   apiId: number;
@@ -25,6 +24,7 @@ export interface UserbotClient {
   onMessageDelete: (handler: (del: TelegramMessageDelete) => void) => void;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
+  downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
   raw(): TelegramClient;
   getSessionString(): string;
 }
@@ -50,22 +50,6 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
   const deleteBus = createEventBus<TelegramMessageDelete>('userbot:delete', log);
   let eventHandlerRegistered = false;
 
-  const hydrateGramjsThumbnails = async (
-    telegramMsg: { attachments?: import('../db/schema').Attachment[] },
-    originalMsg: Api.Message,
-  ) => {
-    const att = telegramMsg.attachments?.find(a => canGenerateThumbnail(a));
-    if (!att) return;
-    try {
-      const result = await client.downloadMedia(originalMsg, {});
-      if (Buffer.isBuffer(result)) {
-        att.thumbnail = await generateThumbnail(result);
-      }
-    } catch (err) {
-      log.withError(err).warn('Failed to generate thumbnail');
-    }
-  };
-
   const registerEventHandler = () => {
     if (eventHandlerRegistered) return;
     eventHandlerRegistered = true;
@@ -85,8 +69,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
         if (!event.message || event.message instanceof Api.MessageEmpty) return;
         const msg = event.message;
         const sender = resolveGramjsSender(msg);
-        const telegramEdit = fromGramjsEditedMessage(msg, sender);
-        void hydrateGramjsThumbnails(telegramEdit, msg).then(() => editBus.emit(telegramEdit));
+        editBus.emit(fromGramjsEditedMessage(msg, sender));
       },
       new EditedMessage({}),
     );
@@ -154,6 +137,14 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
       .map(m => fromGramjsMessage(m, resolveGramjsSender(m)));
   };
 
+  const downloadMessageMedia = async (chatId: string, messageId: number): Promise<Buffer | undefined> => {
+    const msgs = await client.getMessages(chatId, { ids: [messageId] });
+    const msg = msgs[0];
+    if (!msg || msg instanceof Api.MessageEmpty || !msg.media) return undefined;
+    const result = await client.downloadMedia(msg, {});
+    return Buffer.isBuffer(result) ? result : undefined;
+  };
+
   return {
     start,
     stop,
@@ -162,6 +153,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     onMessageDelete: deleteBus.on,
     fetchMessages,
     fetchSpecificMessages,
+    downloadMessageMedia,
     raw: () => client,
     getSessionString: () => String(client.session.save()),
   };
