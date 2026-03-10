@@ -1,6 +1,20 @@
+const secrets = new Set<string>();
+
+export const registerHttpSecret = (secret: string) => {
+  if (secret) secrets.add(secret);
+};
+
+const redact = (text: string): string => {
+  let result = text;
+  for (const secret of secrets) {
+    result = result.replaceAll(secret, '*'.repeat(secret.length));
+  }
+  return result;
+};
+
 export class HttpError extends Error {
   constructor(public readonly status: number, url: string) {
-    super(`HTTP ${status}: ${url}`);
+    super(`HTTP ${status}: ${redact(url)}`);
     this.name = 'HttpError';
   }
 }

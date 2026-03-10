@@ -2,7 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import type { Context } from 'grammy';
 import { Bot } from 'grammy';
 
-import { httpGetBuffer } from '../http';
+import { httpGetBuffer, registerHttpSecret } from '../http';
 import { createEventBus } from './event-bus';
 import type { TelegramMessage } from './message';
 import { fromGrammyMessage } from './message';
@@ -28,6 +28,8 @@ export interface SendOptions {
 export const createBotClient = (options: BotClientOptions, logger: Logger): BotClient => {
   const log = logger.withContext('telegram:bot');
   const bot = new Bot(options.token);
+
+  registerHttpSecret(options.token);
 
   const messageBus = createEventBus<TelegramMessage>('bot:message', log);
 

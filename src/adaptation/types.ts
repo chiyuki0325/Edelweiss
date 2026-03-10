@@ -37,6 +37,7 @@ export interface CanonicalMessageEvent {
   chatId: string;
   messageId: number;
   sender?: CanonicalUser;
+  receivedAt: number;
   timestamp: number;
   text: string;
   entities?: CanonicalEntity[];
@@ -50,6 +51,7 @@ export interface CanonicalEditEvent {
   chatId: string;
   messageId: number;
   sender?: CanonicalUser;
+  receivedAt: number;
   timestamp: number;
   text: string;
   entities?: CanonicalEntity[];
@@ -60,6 +62,7 @@ export interface CanonicalDeleteEvent {
   type: 'delete';
   chatId: string;
   messageIds: number[];
+  receivedAt: number;
   timestamp: number;
 }
 

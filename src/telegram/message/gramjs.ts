@@ -1,7 +1,6 @@
 import { Api } from 'telegram';
 
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from './types';
-import type { Attachment, ForwardInfo, MessageEntity } from '../../db/schema';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from './types';
 
 // --- peer → chatId ---
 
@@ -218,47 +217,40 @@ export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefi
   return undefined;
 };
 
-export const fromGramjsMessage = (
-  message: Api.Message,
-  senderInfo?: TelegramUser,
-): TelegramMessage => {
+const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUser) => {
   const replyTo = message.replyTo instanceof Api.MessageReplyHeader ? message.replyTo : undefined;
-
   return {
     messageId: message.id,
     chatId: resolveChatId(message.peerId),
     sender: senderInfo,
     date: message.date,
-    editDate: message.editDate,
     text: message.text,
     entities: convertGramjsEntities(message.entities),
     replyToMessageId: replyTo?.replyToMsgId,
     replyToTopId: replyTo?.replyToTopId,
-    forwardInfo: convertGramjsForwardInfo(message.fwdFrom),
-    mediaGroupId: message.groupedId ? String(message.groupedId) : undefined,
-    viaBotId: message.viaBotId ? String(message.viaBotId.toJSNumber()) : undefined,
     attachments: convertGramjsMedia(message.media),
-    source: 'userbot',
   };
 };
+
+export const fromGramjsMessage = (
+  message: Api.Message,
+  senderInfo?: TelegramUser,
+): TelegramMessage => ({
+  ...convertGramjsMessageBase(message, senderInfo),
+  editDate: message.editDate,
+  forwardInfo: convertGramjsForwardInfo(message.fwdFrom),
+  mediaGroupId: message.groupedId ? String(message.groupedId) : undefined,
+  viaBotId: message.viaBotId ? String(message.viaBotId.toJSNumber()) : undefined,
+  source: 'userbot',
+});
 
 export const fromGramjsEditedMessage = (
   message: Api.Message,
   senderInfo?: TelegramUser,
-): TelegramMessageEdit => {
-  const base = fromGramjsMessage(message, senderInfo);
-  return {
-    messageId: base.messageId,
-    chatId: base.chatId,
-    sender: base.sender,
-    date: base.date,
-    editDate: message.editDate ?? base.date,
-    text: base.text,
-    entities: base.entities,
-    replyToMessageId: base.replyToMessageId,
-    attachments: base.attachments,
-  };
-};
+): TelegramMessageEdit => ({
+  ...convertGramjsMessageBase(message, senderInfo),
+  editDate: message.editDate ?? message.date,
+});
 
 export const fromGramjsDeletedMessage = (
   deletedIds: number[],

@@ -1,6 +1,7 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import type { CanonicalAttachment, CanonicalEntity, CanonicalForwardInfo, CanonicalUser } from '../adaptation/types';
+import type { Attachment, ForwardInfo, MessageEntity } from '../telegram/message/types';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -49,60 +50,12 @@ export const messages = sqliteTable('messages', {
   uniqueIndex('messages_chat_message_idx').on(table.chatId, table.messageId),
 ]);
 
-// Types for JSON columns
-
-export interface MessageEntity {
-  type: string; // bold, italic, url, mention, code, pre, text_link, custom_emoji, etc.
-  offset: number;
-  length: number;
-  url?: string;
-  language?: string;
-  customEmojiId?: string;
-  userId?: string;
-}
-
-export interface ForwardInfo {
-  fromUserId?: string;
-  fromChatId?: string;
-  fromMessageId?: number;
-  senderName?: string; // for hidden forwards
-  date?: number;
-}
-
-export interface Attachment {
-  type: 'photo' | 'sticker' | 'document' | 'video' | 'audio' | 'voice' | 'video_note' | 'animation';
-
-  // Telegram file reference for re-downloading
-  fileId?: string;
-  fileUniqueId?: string;
-  fileName?: string;
-  mimeType?: string;
-  fileSize?: number;
-
-  // Dimensions
-  width?: number;
-  height?: number;
-  duration?: number;
-
-  // Low-res thumbnail base64 for LLM context (~85 tokens)
-  thumbnail?: string;
-
-  // Sticker-specific
-  emoji?: string;
-  stickerSetName?: string;
-  isAnimatedSticker?: boolean;
-  isVideoSticker?: boolean;
-  customEmojiId?: string;
-
-  // Spoiler
-  hasSpoiler?: boolean;
-}
-
 export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   chatId: text('chat_id').notNull(),
   type: text('type').notNull().$type<'message' | 'edit' | 'delete'>(),
+  receivedAt: integer('received_at').notNull(),
   timestamp: integer('timestamp').notNull(),
 
   // message/edit only

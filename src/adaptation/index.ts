@@ -7,8 +7,7 @@ import type {
   CanonicalMessageEvent,
   CanonicalUser,
 } from './types';
-import type { Attachment, ForwardInfo, MessageEntity } from '../db/schema';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
 export type {
   CanonicalAttachment,
@@ -75,6 +74,7 @@ export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
     type: 'message',
     chatId: msg.chatId,
     messageId: msg.messageId,
+    receivedAt: Date.now(),
     timestamp: msg.date,
     text: msg.text,
     attachments: adaptAttachments(msg.attachments),
@@ -93,6 +93,7 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
     type: 'edit',
     chatId: edit.chatId,
     messageId: edit.messageId,
+    receivedAt: Date.now(),
     timestamp: edit.editDate,
     text: edit.text,
     attachments: adaptAttachments(edit.attachments),
@@ -105,10 +106,12 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
 
 export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent => {
   if (!del.chatId) throw new Error('Cannot adapt delete event without chatId');
+  const now = Date.now();
   return {
     type: 'delete',
     chatId: del.chatId,
     messageIds: del.messageIds,
-    timestamp: Math.floor(Date.now() / 1000),
+    receivedAt: now,
+    timestamp: Math.floor(now / 1000),
   };
 };

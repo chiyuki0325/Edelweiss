@@ -3,18 +3,18 @@ import type { Logger } from '@guiiai/logg';
 import type { BotClient, SendOptions } from './bot';
 import { createBotClient } from './bot';
 import { createEventBus } from './event-bus';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
 import { createMessageDedup } from './message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attachment } from './message';
 import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 import type { FetchOptions, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
-import type { Attachment } from '../db/schema';
 
 export interface TelegramManagerOptions {
   botToken: string;
   apiId: number;
   apiHash: string;
   session: string;
+  initialChatIds?: string[];
   // Resolve chatId for delete events that lack it (MTProto private chat/basic group deletes).
   // The message IDs in this space are globally unique, so a lookup by messageId suffices.
   resolveChatId?: (messageIds: number[]) => string | undefined;
@@ -46,7 +46,7 @@ export const createTelegramManager = (
   }, logger);
 
   const dedup = createMessageDedup();
-  const botChats = new Set<string>();
+  const botChats = new Set<string>(options.initialChatIds);
   const inflight = new Map<string, TelegramMessage>();
   const messageBus = createEventBus<TelegramMessage>('telegram:message', logger);
   const editBus = createEventBus<TelegramMessageEdit>('telegram:edit', logger);
@@ -112,7 +112,8 @@ export const createTelegramManager = (
 
     inflight.set(key, msg);
     void hydrateThumbnails(msg.chatId, msg.messageId, msg.attachments)
-      .then(() => {
+      .catch(err => log.withError(err).warn('Thumbnail hydration failed'))
+      .finally(() => {
         inflight.delete(key);
         messageBus.emit(msg);
       });
@@ -131,7 +132,8 @@ export const createTelegramManager = (
   userbot.onMessageEdit(edit => {
     if (!botChats.has(edit.chatId)) return;
     void hydrateThumbnails(edit.chatId, edit.messageId, edit.attachments)
-      .then(() => editBus.emit(edit));
+      .catch(err => log.withError(err).warn('Thumbnail hydration failed'))
+      .finally(() => editBus.emit(edit));
   });
 
   userbot.onMessageDelete(del => {

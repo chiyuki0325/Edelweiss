@@ -2,7 +2,7 @@ import * as v from 'valibot';
 
 const EnvSchema = v.object({
   // Telegram Bot API
-  TELEGRAM_BOT_TOKEN: v.optional(v.string(), ''),
+  TELEGRAM_BOT_TOKEN: v.string(),
 
   // Telegram User API (MTProto)
   TELEGRAM_API_ID: v.pipe(v.string(), v.transform(Number)),

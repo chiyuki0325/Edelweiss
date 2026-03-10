@@ -27,12 +27,10 @@ export interface IntermediateContext {
   compactCursor: number;
 }
 
-export function createEmptyIC(chatId: string): IntermediateContext {
-  return {
-    chatId,
-    messages: [],
-    users: new Map(),
-    epoch: 0,
-    compactCursor: 0,
-  };
-}
+export const createEmptyIC = (chatId: string): IntermediateContext => ({
+  chatId,
+  messages: [],
+  users: new Map(),
+  epoch: 0,
+  compactCursor: 0,
+});

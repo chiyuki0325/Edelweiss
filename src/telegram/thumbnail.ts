@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 
-import type { Attachment } from '../db/schema';
+import type { Attachment } from './message';
 
 export const generateThumbnail = async (buffer: Buffer): Promise<string> => {
   const webp = await sharp(buffer)

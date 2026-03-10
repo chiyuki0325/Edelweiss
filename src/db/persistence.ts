@@ -117,7 +117,8 @@ export const persistMessageDelete = (db: DB, del: TelegramMessageDelete) => {
 export const persistEvent = (db: DB, event: CanonicalEvent) => {
   const base = {
     chatId: event.chatId,
-    type: event.type as 'message' | 'edit' | 'delete',
+    type: event.type,
+    receivedAt: event.receivedAt,
     timestamp: event.timestamp,
   };
 
@@ -146,8 +147,9 @@ type EventRow = typeof events.$inferSelect;
 const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
   const event: CanonicalMessageEvent = {
     type: 'message',
-    chatId: row.chatId!,
+    chatId: row.chatId,
     messageId: row.messageId!,
+    receivedAt: row.receivedAt,
     timestamp: row.timestamp,
     text: row.text ?? '',
     attachments: row.attachments ?? [],
@@ -162,8 +164,9 @@ const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
 const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
   const event: CanonicalEditEvent = {
     type: 'edit',
-    chatId: row.chatId!,
+    chatId: row.chatId,
     messageId: row.messageId!,
+    receivedAt: row.receivedAt,
     timestamp: row.timestamp,
     text: row.text ?? '',
     attachments: row.attachments ?? [],
@@ -177,6 +180,7 @@ const reconstructDeleteEvent = (row: EventRow): CanonicalDeleteEvent => ({
   type: 'delete',
   chatId: row.chatId,
   messageIds: row.messageIds ?? [],
+  receivedAt: row.receivedAt,
   timestamp: row.timestamp,
 });
 
@@ -192,14 +196,14 @@ const reconstructEvent = (row: EventRow): CanonicalEvent => {
 export const loadEvents = (db: DB, chatId: string): CanonicalEvent[] => {
   const rows = db.select().from(events)
     .where(eq(events.chatId, chatId))
-    .orderBy(events.id)
+    .orderBy(events.receivedAt, events.id)
     .all();
   return rows.map(reconstructEvent);
 };
 
 export const loadRecentEvents = (db: DB, limit: number): CanonicalEvent[] => {
   const rows = db.select().from(events)
-    .orderBy(desc(events.id))
+    .orderBy(desc(events.receivedAt), desc(events.id))
     .limit(limit)
     .all();
   return rows.reverse().map(reconstructEvent);
@@ -215,4 +219,11 @@ export const lookupChatId = (db: DB, messageIds: number[]): string | undefined =
     .limit(1)
     .get();
   return row?.chatId;
+};
+
+export const loadKnownChatIds = (db: DB): string[] => {
+  const rows = db.selectDistinct({ chatId: events.chatId })
+    .from(events)
+    .all();
+  return rows.map(r => r.chatId);
 };

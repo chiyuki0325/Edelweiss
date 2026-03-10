@@ -1,7 +1,6 @@
 import type { Message as GrammyMessage } from '@grammyjs/types';
 
-import type { TelegramMessage, TelegramUser } from './types';
-import type { Attachment, ForwardInfo, MessageEntity } from '../../db/schema';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramUser } from './types';
 
 // --- entity conversion ---
 
