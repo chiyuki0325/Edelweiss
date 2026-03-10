@@ -156,6 +156,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 - **Immutable state**: use Immer's `produce()` in Projection reducers.
 - **Error handling**: prefer explicit error returns or Result types over thrown exceptions for expected failures.
 - **Logging**: use `@guiiai/logg` (`useLogger` / `useGlobalLogger`) for all runtime logs. Never use `console.log` for logging. `console.log` is only acceptable in CLI scripts for outputting raw data the user needs to copy (e.g. session strings).
+- **No speculative code**: if a design isn't settled, don't write a wrong placeholder. Either leave a `// TODO:` explaining the initial thinking, or don't write it at all. Wrong code looks authoritative and misleads future work.
 
 ## Styling Rules (enforced by ESLint)
 
