@@ -2,6 +2,8 @@
 
 Reference for contributors working on the Cahciua codebase. Improve code when you touch it; avoid one-off patterns.
 
+**Maintenance rule**: When you add, rename, or remove a file, change a key pattern, or complete a milestone — update this file in the same commit. Outdated docs are worse than no docs.
+
 ## What Is Cahciua
 
 Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture. DCP constructs LLM context through a three-layer pure-function pipeline:
@@ -12,6 +14,17 @@ Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeli
 
 Key design goals: KV Cache friendly (append-only history, static system prompt, epoch-based compaction), group chat native (message batching, multi-user identity tracking, anti-injection via XML fencing), autonomous reply (bot decides whether to respond via Tool Call, not synchronous response).
 
+## Current Progress
+
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
+| Adaptation | Done | Types, conversion, dual timestamps, phantom edit filtering |
+| DB / Persistence | Done | events table (canonical), messages table (raw platform), 5 migrations |
+| Projection | Types only | `projection/types.ts` has IC shape; no reducers yet |
+| Rendering | Types only | `rendering/types.ts` has output shape; no implementation |
+| LLM / Batching / Reply | Not started | — |
+
 ## Tech Stack
 
 - **Runtime**: Node.js (>=22), TypeScript, tsx (dev), tsdown (build).
@@ -19,7 +32,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
 - **LLM**: xsAI (planned) — ultra-lightweight OpenAI-compatible SDK.
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
-- **State management**: Immer — immutable IC updates in Projection reducers.
+- **State management**: Immer (planned) — immutable IC updates in Projection reducers.
 - **Validation**: Valibot — schema validation for env, config, canonical events.
 - **Logging**: @guiiai/logg — structured logger with pretty/JSON output.
 - **Testing**: Vitest.
@@ -30,31 +43,51 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 ```
 src/
-├── index.ts              # Entry point
+├── index.ts                # Entry point — wires adaptation, persistence, telegram
+├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── config/
-│   ├── env.ts            # Environment variable schema (Valibot)
-│   ├── logger.ts         # @guiiai/logg structured logger
-│   └── index.ts
-├── adaptation/           # Layer 1: Platform Event → Canonical Event
-│   ├── types.ts          # CanonicalEvent, CanonicalMessage, CanonicalUser, CanonicalAttachment
-│   └── index.ts
-├── projection/           # Layer 2: IC' = Reducers(IC, Event)
-│   ├── types.ts          # IntermediateContext, ICMessage, ICUserState
-│   └── index.ts
-├── rendering/            # Layer 3: IC + SessionState → Messages[]
-│   ├── types.ts          # SessionState, RenderedMessage
-│   └── index.ts
-└── telegram/             # Dual-client Telegram integration
-    ├── bot.ts            # grammY Bot API client
-    ├── userbot.ts        # gramjs MTProto User API client
-    └── index.ts
+│   ├── env.ts              # Environment variable schema (Valibot)
+│   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
+├── adaptation/             # Layer 1: Platform Event → Canonical Event
+│   ├── types.ts            # CanonicalEvent (discriminated union), CanonicalUser, etc.
+│   └── index.ts            # adaptMessage, adaptEdit, adaptDelete + re-exports
+├── projection/             # Layer 2: IC' = Reducers(IC, Event)
+│   └── types.ts            # IntermediateContext, ICMessage, ICUserState
+├── rendering/              # Layer 3: IC + SessionState → Messages[]
+│   └── types.ts            # SessionState, RenderedMessage, RenderedOutput
+├── db/
+│   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
+│   ├── schema.ts           # Drizzle schema: users, messages, events tables
+│   ├── persistence.ts      # CRUD: persistEvent, persistMessage, loadEvents, etc.
+│   └── index.ts            # Barrel exports
+└── telegram/
+    ├── index.ts             # TelegramManager — unified facade, thumbnail hydration, dedup dispatch
+    ├── bot.ts               # grammY Bot API client
+    ├── userbot.ts           # gramjs MTProto client
+    ├── event-bus.ts         # Simple typed pub/sub
+    ├── thumbnail.ts         # sharp-based thumbnail generation (512×512 webp)
+    ├── gramjs-logger.ts     # Patches gramjs internal logger to @guiiai/logg
+    ├── session.ts           # Session file load/save
+    ├── login.ts             # Interactive MTProto login script (pnpm login)
+    └── message/
+        ├── types.ts         # TelegramUser, TelegramMessage, Attachment, ForwardInfo, MessageEntity
+        ├── gramjs.ts        # gramjs Api.Message → TelegramMessage conversion
+        ├── grammy.ts        # grammY Message → TelegramMessage conversion
+        ├── dedup.ts         # Set-based message dedup with LRU eviction (10k)
+        └── index.ts         # Barrel exports
 ```
+
+### Type Ownership
+
+Platform types (`Attachment`, `ForwardInfo`, `MessageEntity`) are defined in `telegram/message/types.ts` — they belong to the telegram layer. `db/schema.ts` imports them for JSON column annotations. Never define platform types in the DB layer.
+
+Canonical types (`CanonicalEvent`, `CanonicalUser`, etc.) are defined in `adaptation/types.ts`.
 
 ### Imports
 
 Use relative paths for all internal imports:
 ```ts
-import { logger } from '../config/logger';
+import { loadEnv } from './config/env';
 import type { CanonicalEvent } from '../adaptation/types';
 ```
 
@@ -66,6 +99,8 @@ import type { CanonicalEvent } from '../adaptation/types';
 - `pnpm typecheck` — `tsc --noEmit`.
 - `pnpm lint` / `pnpm lint:fix` — ESLint.
 - `pnpm test` / `pnpm test:run` — Vitest.
+- `pnpm login` — interactive MTProto session login.
+- `pnpm db:generate` — generate Drizzle migration from schema changes.
 
 ## Architecture Rules
 
@@ -73,12 +108,28 @@ import type { CanonicalEvent } from '../adaptation/types';
 
 Projection reducers must be pure: `(IC, CanonicalEvent) => IC'`. No I/O, no side effects, no network calls. All external data (memory, user profiles) enters through the Rendering layer's late-binding mechanism or as pre-fetched fields on the CanonicalEvent.
 
+### Dual Timestamps
+
+Every `CanonicalEvent` carries two timestamps:
+- `receivedAt` (milliseconds): local receive time, set by `Date.now()` at adaptation. **Ordering source of truth** — ensures cold-start replay matches live processing.
+- `timestamp` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAt / 1000)`.
+
+DB queries order by `(received_at, id)`.
+
 ### Dual Telegram Client
 
 - **grammY** (Bot API): receives messages from non-bot users, sends replies, handles `/commands`.
-- **gramjs** (User API): fetches history on startup/join, resolves reply-to chains for messages the bot hasn't seen, listens for other bots' messages (invisible to Bot API).
+- **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete events.
 
-Messages from both clients are deduplicated by `(chatId, messageId)` in the Adaptation layer before entering the pipeline.
+Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference.
+
+### Phantom Edit Filtering
+
+MTProto fires `updateEditMessage` for metadata-only changes (link preview loading, reactions in large supergroups, inline keyboard updates). These have no `editDate`. The userbot handler skips events without `editDate` — if reactions support is added later, use `updateMessageReactions` separately.
+
+### HTTP Credential Redaction
+
+`src/http.ts` exposes `registerHttpSecret(secret)`. Registered strings are masked with equal-length `*` in all `HttpError` messages. Bot token is registered at client creation.
 
 ### Message Batching
 
@@ -97,7 +148,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 ## Coding Conventions
 
-- **Functional style**: prefer plain functions and composition over classes. Use classes only when required by library APIs (grammY, gramjs).
+- **Functional style**: `const` + arrow functions everywhere, closure-based factories. Use classes only when required by library APIs (grammY, gramjs) or for `Error` subclasses.
 - **Strict types**: avoid `any`; use `unknown` + narrowing. `noUncheckedIndexedAccess` is enabled.
 - **Consistent type imports**: use `import type { ... }` for type-only imports (enforced by ESLint).
 - **File names**: `kebab-case`.
@@ -140,3 +191,4 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - Use Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, etc.
 - Keep commits focused and scoped.
+- When a commit changes project structure, key patterns, or completes a milestone, update this file in the same commit.
