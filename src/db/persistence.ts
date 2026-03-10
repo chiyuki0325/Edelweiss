@@ -5,7 +5,7 @@ import { events, messages, users } from './schema';
 import type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
-  CanonicalEvent,
+  CanonicalIMEvent,
   CanonicalMessageEvent,
 } from '../adaptation/types';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
@@ -114,7 +114,7 @@ export const persistMessageDelete = (db: DB, del: TelegramMessageDelete) => {
     .run();
 };
 
-export const persistEvent = (db: DB, event: CanonicalEvent) => {
+export const persistEvent = (db: DB, event: CanonicalIMEvent) => {
   const base = {
     chatId: event.chatId,
     type: event.type,
@@ -184,7 +184,7 @@ const reconstructDeleteEvent = (row: EventRow): CanonicalDeleteEvent => ({
   timestamp: row.timestamp,
 });
 
-const reconstructEvent = (row: EventRow): CanonicalEvent => {
+const reconstructEvent = (row: EventRow): CanonicalIMEvent => {
   switch (row.type) {
   case 'message': return reconstructMessageEvent(row);
   case 'edit': return reconstructEditEvent(row);
@@ -193,7 +193,7 @@ const reconstructEvent = (row: EventRow): CanonicalEvent => {
   }
 };
 
-export const loadEvents = (db: DB, chatId: string): CanonicalEvent[] => {
+export const loadEvents = (db: DB, chatId: string): CanonicalIMEvent[] => {
   const rows = db.select().from(events)
     .where(eq(events.chatId, chatId))
     .orderBy(events.receivedAt, events.id)
@@ -201,7 +201,7 @@ export const loadEvents = (db: DB, chatId: string): CanonicalEvent[] => {
   return rows.map(reconstructEvent);
 };
 
-export const loadRecentEvents = (db: DB, limit: number): CanonicalEvent[] => {
+export const loadRecentEvents = (db: DB, limit: number): CanonicalIMEvent[] => {
   const rows = db.select().from(events)
     .orderBy(desc(events.receivedAt), desc(events.id))
     .limit(limit)

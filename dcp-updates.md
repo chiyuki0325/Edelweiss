@@ -1,0 +1,116 @@
+# DCP RFC 实施更新
+
+以下是 Cahciua 实现过程中，相对于原始 RFC 所做的设计变更和细化。
+
+---
+
+## 1. 新增：双时间戳排序
+
+RFC 原文假设各事件携带服务端 `date` 字段即可确定顺序。实现中发现仅靠服务端时间戳不足以保证**确定性重放**——不同服务器的时钟偏差和网络乱序会导致冷启动重放的事件顺序与在线处理时不一致。
+
+现在每个 `CanonicalIMEvent` 携带两个时间戳：
+
+| 字段 | 精度 | 来源 | 用途 |
+|------|------|------|------|
+| `receivedAt` | 毫秒 | 适配时 `Date.now()` | 排序的唯一来源，DB 按 `(received_at, id)` 排序 |
+| `timestamp` | 秒 | 服务端 `date` | 展示给 LLM 的消息时间 |
+
+Delete 事件无服务端时间，`timestamp` 由 `Math.floor(receivedAt / 1000)` 派生。
+
+## 2. 变更：事件类型精简
+
+RFC 提出了多种独立事件类型（`StickerEvent`、`UserUpdateEvent`、`MemberJoinEvent` / `MemberLeaveEvent`）。实现中做了精简：
+
+- **Sticker** 不单独立事件类型，作为 `CanonicalMessageEvent` 的 `attachments` 中 `type: 'sticker'` 处理。这与 Telegram API 的实际结构一致——sticker 就是一条消息的附件。
+- **UserUpdateEvent / MemberJoinEvent / MemberLeaveEvent** 暂不作为独立的 CanonicalIMEvent 类型。用户状态变更通过 **MetaReducer 模式**从普通消息中检测（见下文第 4 点），不依赖平台专有事件。入群退群事件留到需要时再加。
+
+当前 `CanonicalIMEvent = CanonicalMessageEvent | CanonicalEditEvent | CanonicalDeleteEvent`。
+
+## 3. 变更：Projection 不拆分 Reducer
+
+RFC 提出 ContentReducer 和 MetaReducer 作为独立的代码抽象。实现中决定**暂不拆分**：
+
+- 当前只有一个 `reduce(ic, event)` 函数，MetaReducer 的逻辑（用户状态变更检测）作为其中一个步骤执行
+- 拆分的时机是出现真正独立的元事件类型（`UserUpdateEvent`、`MemberJoinEvent` 等）时
+
+避免了过早抽象——在只有 message/edit/delete 三种事件时，ContentReducer 和 MetaReducer 的边界并不清晰。
+
+## 4. 新增：MetaReducer 模式（用户状态变更检测）
+
+这是 RFC 中 MetaReducer 概念的具体化，但实现方式不同——不通过平台专有事件，而是**从普通消息事件推断**：
+
+Reducer 处理每条消息时，将 `event.sender` 与 `ic.users` Map 中的记录比对。若 `displayName` 或 `username` 发生变化，在 IC 当前位置插入一个 `ICSystemEvent` 节点，让 LLM 知道「用户 A 改名为 B」。
+
+这不需要 Telegram 提供 `UserUpdateEvent`（Bot API 本身也不推送此类事件），从已有数据中提取出了等价的信息。
+
+## 5. 变更：IC 不含 CompactSummaryNode
+
+RFC 的 IC 包含三种节点：`MessageNode`、`SystemEventNode`、`CompactSummaryNode`。实现中去掉了 `CompactSummaryNode`：
+
+- 压缩摘要由 Driver 提供给 Rendering（作为 `RenderParams` 的一部分），Rendering 在序列化时插入
+- IC 始终持有未压缩的工作集，不混入压缩产物
+- 这保持了 IC 的纯粹性——它只是事件流的结构化投影，不含渲染层或 Driver 层的产物
+
+当前 `ICNode = ICMessage | ICSystemEvent`。
+
+## 6. 新增：Edit/Delete 的就地标记语义
+
+RFC 未详细说明 Projection 如何处理 edit/delete。实现中确定了具体语义：
+
+- **Edit**：找到 IC 中对应 `messageId` 的 `ICMessage`，原地更新 `text`/`entities`/`attachments` 并设置 `editedAt`
+- **Delete**：找到对应节点，设置 `deleted: true`（不移除节点，不追加新节点）
+- 若目标消息不在当前 IC 中（已被 GC），静默忽略
+
+这模拟了 IM 的真实行为——编辑和删除修改原始消息位置，不产生新的时间线条目。
+
+## 7. 重大变更：新增 Driver 层
+
+RFC 的三层管道（Adaptation → Projection → Rendering）在实现中扩展为**四层**。原因：
+
+各 LLM API（OpenAI Chat Completions、OpenAI Responses、Anthropic Messages）的 tool call 格式和必须回传的元数据（ID、签名）各不相同。这些元数据是服务端生成的，无法从 IC 推导，也无法用 provider-agnostic 的方式表达在 Rendering 输出中。
+
+现在的架构：
+
+```
+Adaptation → Projection → Rendering → Driver
+                            (纯函数)     (有状态)
+```
+
+| 层 | 职责 | 纯度 |
+|---|---|---|
+| **Rendering** | `render(IC, RenderParams) → RC`：序列化 IC 为 provider-agnostic 的 RC | 纯函数 |
+| **Driver** | 持有 Turns（对话历史），合并 RC + Turns，管理 tool call 循环 | 有状态 |
+
+RC（Rendered Context）不是最终 LLM 请求——它是 Driver 合并的输入之一。Driver 按时间戳（`receivedAt`/`requestedAt`）将 RC 和 Turns 交错合并为最终 API 请求。
+
+## 8. 新增：Conversation History 的原始 Provider 格式存储
+
+RFC 未涉及 bot 自身回复和 tool call 历史的存储。现在的设计：
+
+- **存储单位**：Turn（一次 LLM 交互的输出），存原始 provider 格式
+- **同 provider 读取**：零转换，保证无损
+- **跨 provider 切换**：显式 A→B 转换函数，直接结构映射，独立可测
+- 切换 provider 不改变数据库中的已有数据，只改变读取时的翻译逻辑
+
+设计原则：直接存储比中间格式更简单，避免归一化导致的信息丢失。N*(N-1) 个转换器，N=2-3 → 2-6 个函数，按需实现。
+
+## 9. 变更：Compaction 归属从 Orchestrator 移到 Driver
+
+RFC 将压缩描述为「外部 Orchestrator 驱动」。实现中将 compaction 的所有权明确交给 **Driver 层**：
+
+- Driver 掌握 token 预算和缓存策略，知道最优的压缩边界（不同 provider 的缓存机制差异很大）
+- tool call 循环可以被 Driver 更激进地压缩（它了解 tool call 的结构）
+- 某些 provider 有原生压缩支持（如 OpenAI Responses API）
+- 压缩后 Driver 更新 compact cursor，Rendering 据此做视口过滤
+
+App 层可以提供重要性标注（如 pinned 消息不应被压缩）作为 hint，但不拥有压缩机制本身。
+
+## 10. 细化：RFC 讨论点的结论
+
+RFC 尾部提出了两个待讨论的点，现有结论：
+
+**讨论点 1「纯函数管道的边界应该画在哪里？」**：
+DCP 三层（Adaptation / Projection / Rendering）保持纯函数。副作用（LLM 调用、tool 执行、压缩）由新增的 Driver 层承担。这就是「纯核心 + 副作用外壳」——复杂度可控，因为 Driver 是管道的最外层，不会污染内部数据流。
+
+**讨论点 2「打破 1:1 响应范式」**：
+方向不变——bot 通过 `send_message` tool call 自主决定是否回复。这个范式转变在 Driver 层吸收，不影响 DCP 管道内部。

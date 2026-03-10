@@ -8,9 +8,11 @@ Reference for contributors working on the Cahciua codebase. Improve code when yo
 
 Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture. DCP constructs LLM context through a three-layer pure-function pipeline:
 
-1. **Adaptation**: Platform Event → Canonical Event (anti-corruption layer).
-2. **Projection**: `IC' = Reducers(IC, Event)` — pure-function state machine producing an Intermediate Context (IC).
-3. **Rendering**: `IC + SessionState → Messages[]` — serialization with viewport filtering and late-binding injection.
+1. **Adaptation**: Platform Event → CanonicalIMEvent (anti-corruption layer).
+2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
+3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering and late-binding injection, producing Rendered Context (RC).
+
+The Driver layer sits after Rendering: it merges RC (chat context) with its own Turns (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns compaction, provider-specific adaptation, and tool call loops.
 
 Key design goals: KV Cache friendly (append-only history, static system prompt, epoch-based compaction), group chat native (message batching, multi-user identity tracking, anti-injection via XML fencing), autonomous reply (bot decides whether to respond via Tool Call, not synchronous response).
 
@@ -22,8 +24,8 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Adaptation | Done | Types, conversion, dual timestamps, phantom edit filtering |
 | DB / Persistence | Done | events table (canonical), messages table (raw platform), 5 migrations |
 | Projection | Types only | `projection/types.ts` has IC shape; no reducers yet |
-| Rendering | Types only | `rendering/types.ts` has output shape; no implementation |
-| LLM / Batching / Reply | Not started | — |
+| Rendering | Types only | `rendering/types.ts` has RC shape (RenderedContext); no implementation |
+| Driver | Not started | Merges RC + Turns, owns compaction and tool call loops |
 
 ## Tech Stack
 
@@ -49,12 +51,12 @@ src/
 │   ├── env.ts              # Environment variable schema (Valibot)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
 ├── adaptation/             # Layer 1: Platform Event → Canonical Event
-│   ├── types.ts            # CanonicalEvent (discriminated union), CanonicalUser, etc.
+│   ├── types.ts            # CanonicalIMEvent (discriminated union), CanonicalUser, etc.
 │   └── index.ts            # adaptMessage, adaptEdit, adaptDelete + re-exports
 ├── projection/             # Layer 2: IC' = Reducers(IC, Event)
 │   └── types.ts            # IntermediateContext, ICMessage, ICUserState
-├── rendering/              # Layer 3: IC + SessionState → Messages[]
-│   └── types.ts            # SessionState, RenderedMessage, RenderedOutput
+├── rendering/              # Layer 3: IC + RenderParams → RenderedContext (RC)
+│   └── types.ts            # RenderParams, RenderedSegment, RenderedContext
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
 │   ├── schema.ts           # Drizzle schema: users, messages, events tables
@@ -81,14 +83,14 @@ src/
 
 Platform types (`Attachment`, `ForwardInfo`, `MessageEntity`) are defined in `telegram/message/types.ts` — they belong to the telegram layer. `db/schema.ts` imports them for JSON column annotations. Never define platform types in the DB layer.
 
-Canonical types (`CanonicalEvent`, `CanonicalUser`, etc.) are defined in `adaptation/types.ts`.
+Canonical types (`CanonicalIMEvent`, `CanonicalUser`, etc.) are defined in `adaptation/types.ts`.
 
 ### Imports
 
 Use relative paths for all internal imports:
 ```ts
 import { loadEnv } from './config/env';
-import type { CanonicalEvent } from '../adaptation/types';
+import type { CanonicalIMEvent } from '../adaptation/types';
 ```
 
 ## Commands
@@ -106,11 +108,11 @@ import type { CanonicalEvent } from '../adaptation/types';
 
 ### DCP Layers Are Pure Functions
 
-Projection reducers must be pure: `(IC, CanonicalEvent) => IC'`. No I/O, no side effects, no network calls. All external data (memory, user profiles) enters through the Rendering layer's late-binding mechanism or as pre-fetched fields on the CanonicalEvent.
+Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no side effects, no network calls. Projection only processes IM platform events — bot's own LLM interactions live exclusively in the Driver layer (unidirectional data flow, no backflow). External data (memory, user profiles) enters through Rendering's late-binding mechanism or as pre-fetched fields on the event.
 
 ### Dual Timestamps
 
-Every `CanonicalEvent` carries two timestamps:
+Every `CanonicalIMEvent` carries two timestamps:
 - `receivedAt` (milliseconds): local receive time, set by `Date.now()` at adaptation. **Ordering source of truth** — ensures cold-start replay matches live processing.
 - `timestamp` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAt / 1000)`.
 
@@ -133,7 +135,7 @@ MTProto fires `updateEditMessage` for metadata-only changes (link preview loadin
 
 ### Message Batching
 
-Group messages are debounced/batched before triggering LLM inference. The bot does not respond to every message — it receives a batch of Canonical Events, updates the IC, then the LLM decides whether to reply via a `send_message` Tool Call.
+Group messages are debounced/batched before triggering LLM inference. The bot does not respond to every message — it receives a batch of CanonicalIMEvents, updates the IC, then the LLM decides whether to reply via a `send_message` Tool Call.
 
 ### Anti-Injection
 
@@ -169,7 +171,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 ## Testing Practices
 
 - Use Vitest. Test files live next to source as `*.test.ts`.
-- Projection reducers are pure functions — test them with static CanonicalEvent fixtures.
+- Projection reducers are pure functions — test them with static CanonicalIMEvent fixtures.
 - Mock Telegram clients and DB for integration tests.
 - When fixing a bug, add a test that reproduces the previous failure.
 

@@ -66,7 +66,7 @@ export interface CanonicalDeleteEvent {
   timestamp: number;
 }
 
-export type CanonicalEvent =
+export type CanonicalIMEvent =
   | CanonicalMessageEvent
   | CanonicalEditEvent
   | CanonicalDeleteEvent;

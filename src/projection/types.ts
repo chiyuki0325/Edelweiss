@@ -3,9 +3,11 @@ import type { CanonicalAttachment, CanonicalEntity, CanonicalForwardInfo, Canoni
 export interface ICMessage {
   type: 'message';
   // String for cross-platform compatibility — Projection converts from
-  // CanonicalEvent's numeric messageId via String()
+  // CanonicalMessageEvent's numeric messageId via String()
   messageId: string;
   sender: CanonicalUser;
+  // receivedAt flows from the source event for merge ordering (see SPEC §RC and Turns Are Orthogonal)
+  receivedAt: number;
   timestamp: number;
   text: string;
   entities?: CanonicalEntity[];
@@ -21,6 +23,8 @@ export interface ICMessage {
 // Candidates: user rename, avatar change, join/leave, premium status change.
 export interface ICSystemEvent {
   type: 'system_event';
+  // Inherited from the triggering event for merge ordering
+  receivedAt: number;
   timestamp: number;
 }
 

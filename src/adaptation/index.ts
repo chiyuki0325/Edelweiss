@@ -14,7 +14,7 @@ export type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
   CanonicalEntity,
-  CanonicalEvent,
+  CanonicalIMEvent,
   CanonicalForwardInfo,
   CanonicalMessageEvent,
   CanonicalUser,
