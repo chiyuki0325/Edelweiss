@@ -135,7 +135,37 @@ MTProto fires `updateEditMessage` for metadata-only changes (link preview loadin
 
 ### Message Batching
 
-Group messages are debounced/batched before triggering LLM inference. The bot does not respond to every message — it receives a batch of CanonicalIMEvents, updates the IC, then the LLM decides whether to reply via a `send_message` Tool Call.
+Projection runs immediately on every event — IC is always current. Rendering + Driver invocation is debounced/throttled — each trigger produces one RC and one LLM API call. The debounce/throttle parameters are strategy (tunable, graded via fixtures). Bot responds via `send_message` tool call (not 1:1 response).
+
+### RC and Turns — Orthogonal Merge
+
+RC (from Rendering) and Turns (from Driver) are two independent sorted streams:
+- RC segments carry `receivedAt` (milliseconds, from source events)
+- Turns carry `requestedAt` (milliseconds, `Date.now()` at API request time)
+
+Driver merges them by timestamp into the final LLM API messages array. Causality guarantees correct ordering in online operation. **Mandatory tiebreaker**: when timestamps are equal, RC is ordered before Turns — required because Anthropic Messages API enforces strict user/assistant role alternation.
+
+Data flows strictly forward (no backflow). Events table stores only IM platform events. IC is only derived from platform events. Driver is sole owner of Turns.
+
+### Turn Storage
+
+Turns are stored in a `turns` DB table (raw provider format, not provider-agnostic). One row per Turn:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | autoincrement |
+| chat_id | TEXT NOT NULL | which Session (chat) this Turn belongs to |
+| requested_at | INTEGER NOT NULL | millisecond timestamp, merge ordering key |
+| provider | TEXT NOT NULL | e.g. 'openai-chat', 'anthropic-messages' |
+| data | TEXT (JSON) NOT NULL | raw provider response entries (assistant message + tool results) |
+| session_meta | TEXT (JSON) | top-level state from response (e.g. response.id for Responses API) |
+| input_tokens | INTEGER NOT NULL | for statistics / cost tracking |
+| output_tokens | INTEGER NOT NULL | for statistics / cost tracking |
+| response_envelope | TEXT (JSON) | raw response with content stripped (model, finish_reason, usage, etc.) |
+
+Same-provider reads are zero-conversion. Cross-provider reads use explicit A→B converter functions.
+
+See `docs/dcp-design.md` for detailed design rationale, theoretical model, and provider-specific metadata reference.
 
 ### Anti-Injection
 
