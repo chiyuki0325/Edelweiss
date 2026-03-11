@@ -1,6 +1,6 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-import type { CanonicalAttachment, CanonicalEntity, CanonicalForwardInfo, CanonicalUser } from '../adaptation/types';
+import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode } from '../adaptation/types';
 import type { Attachment, ForwardInfo, MessageEntity } from '../telegram/message/types';
 
 export const users = sqliteTable('users', {
@@ -58,21 +58,22 @@ export const events = sqliteTable('events', {
   receivedAt: integer('received_at').notNull(),
   timestamp: integer('timestamp').notNull(),
 
-  // message/edit only
-  messageId: integer('message_id'),
+  // message/edit only (canonical string IDs)
+  messageId: text('message_id'),
   senderId: text('sender_id'),
+  // Denormalized plain text for SQL search — derived from content at persist time
   text: text('text'),
 
-  // delete only
-  messageIds: text('message_ids', { mode: 'json' }).$type<number[]>(),
+  // delete only (canonical string IDs)
+  messageIds: text('message_ids', { mode: 'json' }).$type<string[]>(),
 
   // JSON fields
   sender: text('sender', { mode: 'json' }).$type<CanonicalUser>(),
-  entities: text('entities', { mode: 'json' }).$type<CanonicalEntity[]>(),
+  content: text('content', { mode: 'json' }).$type<ContentNode[]>(),
   attachments: text('attachments', { mode: 'json' }).$type<CanonicalAttachment[]>(),
 
-  // message only
-  replyToMessageId: integer('reply_to_message_id'),
+  // message only (canonical string ID)
+  replyToMessageId: text('reply_to_message_id'),
   forwardInfo: text('forward_info', { mode: 'json' }).$type<CanonicalForwardInfo>(),
 }, table => [
   index('events_chat_id_idx').on(table.chatId),

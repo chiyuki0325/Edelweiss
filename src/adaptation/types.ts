@@ -15,15 +15,22 @@ export interface CanonicalAttachment {
   thumbnail?: string;
 }
 
-export interface CanonicalEntity {
-  type: string;
-  offset: number;
-  length: number;
-  url?: string;
-  language?: string;
-  userId?: string;
-  customEmojiId?: string;
-}
+// Rich text content tree — platform-agnostic representation parsed from
+// platform-specific encodings (e.g. Telegram's text + offset-based entities).
+// Adaptation parses the encoding; Rendering serializes the tree.
+export type ContentNode =
+  | { type: 'text'; text: string }
+  | { type: 'code'; text: string }
+  | { type: 'pre'; text: string; language?: string }
+  | { type: 'bold'; children: ContentNode[] }
+  | { type: 'italic'; children: ContentNode[] }
+  | { type: 'underline'; children: ContentNode[] }
+  | { type: 'strikethrough'; children: ContentNode[] }
+  | { type: 'spoiler'; children: ContentNode[] }
+  | { type: 'blockquote'; children: ContentNode[] }
+  | { type: 'link'; url: string; children: ContentNode[] }
+  | { type: 'mention'; userId?: string; children: ContentNode[] }
+  | { type: 'custom_emoji'; customEmojiId: string; children: ContentNode[] };
 
 export interface CanonicalForwardInfo {
   fromUserId?: string;
@@ -35,13 +42,12 @@ export interface CanonicalForwardInfo {
 export interface CanonicalMessageEvent {
   type: 'message';
   chatId: string;
-  messageId: number;
+  messageId: string;
   sender?: CanonicalUser;
   receivedAt: number;
   timestamp: number;
-  text: string;
-  entities?: CanonicalEntity[];
-  replyToMessageId?: number;
+  content: ContentNode[];
+  replyToMessageId?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
 }
@@ -49,19 +55,18 @@ export interface CanonicalMessageEvent {
 export interface CanonicalEditEvent {
   type: 'edit';
   chatId: string;
-  messageId: number;
+  messageId: string;
   sender?: CanonicalUser;
   receivedAt: number;
   timestamp: number;
-  text: string;
-  entities?: CanonicalEntity[];
+  content: ContentNode[];
   attachments: CanonicalAttachment[];
 }
 
 export interface CanonicalDeleteEvent {
   type: 'delete';
   chatId: string;
-  messageIds: number[];
+  messageIds: string[];
   receivedAt: number;
   timestamp: number;
 }

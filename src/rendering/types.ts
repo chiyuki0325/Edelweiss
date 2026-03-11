@@ -8,7 +8,7 @@ export interface RenderParams {
   compactionSummary?: string;
   // TODO: Late-binding context (recalled memory, cross-session awareness, action directives)
   // will be injected at the end of the last user message. Exact fields TBD when implementing
-  // the rendering layer. See SPEC §Rendering Parameters and §Cross-Session Interaction.
+  // the rendering layer. See docs/dcp-design.md §Rendering Parameters and §Cross-Session Interaction.
 }
 
 // Rendered Context (RC) — the output of the Rendering layer.

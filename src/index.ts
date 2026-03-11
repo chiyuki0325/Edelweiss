@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 
-import { adaptDelete, adaptEdit, adaptMessage } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, contentToPlainText } from './adaptation';
 import { loadEnv } from './config/env';
 import { setupLogger, useLogger } from './config/logger';
 import { createDatabase, loadKnownChatIds, loadRecentEvents, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
@@ -25,8 +25,9 @@ const main = async () => {
       logger.withFields({ chatId: event.chatId, messageIds: event.messageIds }).log('[replay] delete');
     } else {
       const sender = event.sender?.displayName ?? event.sender?.id ?? 'unknown';
-      const text = event.text.length > 100 ? `${event.text.slice(0, 100)}...` : event.text;
-      logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text, length: event.text.length }).log(`[replay] ${event.type}`);
+      const plainText = contentToPlainText(event.content);
+      const text = plainText.length > 100 ? `${plainText.slice(0, 100)}...` : plainText;
+      logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text, length: plainText.length }).log(`[replay] ${event.type}`);
     }
   }
 

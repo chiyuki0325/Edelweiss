@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { events, messages, users } from './schema';
+import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
@@ -128,13 +129,14 @@ export const persistEvent = (db: DB, event: CanonicalIMEvent) => {
       messageIds: event.messageIds,
     }).run();
   } else {
+    const plainText = contentToPlainText(event.content);
     db.insert(events).values({
       ...base,
       messageId: event.messageId,
       senderId: event.sender?.id ?? null,
-      text: event.text,
+      text: plainText || null,
       sender: event.sender ?? null,
-      entities: event.entities ?? null,
+      content: event.content.length > 0 ? event.content : null,
       attachments: event.attachments.length > 0 ? event.attachments : null,
       replyToMessageId: event.type === 'message' ? (event.replyToMessageId ?? null) : null,
       forwardInfo: event.type === 'message' ? (event.forwardInfo ?? null) : null,
@@ -151,11 +153,10 @@ const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
     messageId: row.messageId!,
     receivedAt: row.receivedAt,
     timestamp: row.timestamp,
-    text: row.text ?? '',
+    content: row.content ?? [],
     attachments: row.attachments ?? [],
   };
   if (row.sender) event.sender = row.sender;
-  if (row.entities) event.entities = row.entities;
   if (row.replyToMessageId != null) event.replyToMessageId = row.replyToMessageId;
   if (row.forwardInfo) event.forwardInfo = row.forwardInfo;
   return event;
@@ -168,11 +169,10 @@ const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
     messageId: row.messageId!,
     receivedAt: row.receivedAt,
     timestamp: row.timestamp,
-    text: row.text ?? '',
+    content: row.content ?? [],
     attachments: row.attachments ?? [],
   };
   if (row.sender) event.sender = row.sender;
-  if (row.entities) event.entities = row.entities;
   return event;
 };
 
@@ -210,7 +210,7 @@ export const loadRecentEvents = (db: DB, limit: number): CanonicalIMEvent[] => {
 };
 
 // Resolve chatId for message IDs that lack chat context (MTProto private chat deletes).
-// Message IDs in the private/basic group space are globally unique, so a simple lookup suffices.
+// Operates on platform-level numeric IDs (messages table stores raw Telegram data).
 export const lookupChatId = (db: DB, messageIds: number[]): string | undefined => {
   if (messageIds.length === 0) return undefined;
   const row = db.select({ chatId: messages.chatId })

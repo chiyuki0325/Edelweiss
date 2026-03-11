@@ -21,8 +21,8 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
-| Adaptation | Done | Types, conversion, dual timestamps, phantom edit filtering |
-| DB / Persistence | Done | events table (canonical), messages table (raw platform), 5 migrations |
+| Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
+| DB / Persistence | Done | events table (canonical), messages table (raw platform), 6 migrations |
 | Projection | Types only | `projection/types.ts` has IC shape; no reducers yet |
 | Rendering | Types only | `rendering/types.ts` has RC shape (RenderedContext); no implementation |
 | Driver | Not started | Merges RC + Turns, owns compaction and tool call loops |
@@ -51,8 +51,8 @@ src/
 │   ├── env.ts              # Environment variable schema (Valibot)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
 ├── adaptation/             # Layer 1: Platform Event → Canonical Event
-│   ├── types.ts            # CanonicalIMEvent (discriminated union), CanonicalUser, etc.
-│   └── index.ts            # adaptMessage, adaptEdit, adaptDelete + re-exports
+│   ├── types.ts            # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
+│   └── index.ts            # adaptMessage, adaptEdit, adaptDelete, parseContent, contentToPlainText + re-exports
 ├── projection/             # Layer 2: IC' = Reducers(IC, Event)
 │   └── types.ts            # IntermediateContext, ICMessage, ICUserState
 ├── rendering/              # Layer 3: IC + RenderParams → RenderedContext (RC)
@@ -83,7 +83,7 @@ src/
 
 Platform types (`Attachment`, `ForwardInfo`, `MessageEntity`) are defined in `telegram/message/types.ts` — they belong to the telegram layer. `db/schema.ts` imports them for JSON column annotations. Never define platform types in the DB layer.
 
-Canonical types (`CanonicalIMEvent`, `CanonicalUser`, etc.) are defined in `adaptation/types.ts`.
+Canonical types (`CanonicalIMEvent`, `CanonicalUser`, `ContentNode`, etc.) are defined in `adaptation/types.ts`. `ContentNode` is the platform-agnostic rich text representation — Adaptation parses platform-specific encodings (e.g. Telegram's text + offset-based entities) into `ContentNode[]` trees. All IDs in canonical types are strings (platform-agnostic).
 
 ### Imports
 

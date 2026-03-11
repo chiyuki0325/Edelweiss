@@ -1,17 +1,13 @@
-import type { CanonicalAttachment, CanonicalEntity, CanonicalForwardInfo, CanonicalUser } from '../adaptation/types';
+import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode } from '../adaptation/types';
 
 export interface ICMessage {
   type: 'message';
-  // String for cross-platform compatibility — Projection converts from
-  // CanonicalMessageEvent's numeric messageId via String()
   messageId: string;
   sender: CanonicalUser;
-  // receivedAt flows from the source event for merge ordering (see SPEC §RC and Turns Are Orthogonal)
+  // receivedAt flows from the source event for merge ordering (see SPEC §RC and Turns — Orthogonal Merge)
   receivedAt: number;
   timestamp: number;
-  text: string;
-  entities?: CanonicalEntity[];
-  // String for same reason as messageId
+  content: ContentNode[];
   replyToMessageId?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
