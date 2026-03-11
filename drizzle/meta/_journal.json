@@ -6,42 +6,42 @@
       "idx": 0,
       "version": "6",
       "when": 1773059764567,
-      "tag": "0000_complex_harrier",
+      "tag": "0000_initial_schema",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "6",
       "when": 1773067939887,
-      "tag": "0001_certain_marvel_apes",
+      "tag": "0001_messages_deleted_at",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "6",
       "when": 1773068462396,
-      "tag": "0002_panoramic_union_jack",
+      "tag": "0002_users_is_premium_not_null",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "6",
       "when": 1773073241783,
-      "tag": "0003_cultured_sway",
+      "tag": "0003_create_events_table",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "6",
       "when": 1773080982180,
-      "tag": "0004_overconfident_yellow_claw",
+      "tag": "0004_events_chat_id_not_null",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "6",
       "when": 1773087282449,
-      "tag": "0005_outstanding_umar",
+      "tag": "0005_events_add_received_at",
       "breakpoints": true
     },
     {
