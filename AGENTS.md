@@ -12,7 +12,7 @@ Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeli
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
 3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering and late-binding injection, producing Rendered Context (RC).
 
-The Driver layer sits after Rendering: it merges RC (chat context) with its own Turns (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns compaction, provider-specific adaptation, and tool call loops.
+The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns compaction, provider-specific adaptation, and tool call loops.
 
 Key design goals: KV Cache friendly (append-only history, static system prompt, epoch-based compaction), group chat native (message batching, multi-user identity tracking, anti-injection via XML fencing), autonomous reply (bot decides whether to respond via Tool Call, not synchronous response).
 
@@ -23,9 +23,9 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events table (canonical), messages table (raw platform), 6 migrations |
-| Projection | Types only | `projection/types.ts` has IC shape; no reducers yet |
+| Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Types only | `rendering/types.ts` has RC shape (RenderedContext); no implementation |
-| Driver | Not started | Merges RC + Turns, owns compaction and tool call loops |
+| Driver | Not started | Merges RC + TRs, owns compaction and tool call loops |
 
 ## Tech Stack
 
@@ -54,9 +54,11 @@ src/
 │   ├── types.ts            # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
 │   └── index.ts            # adaptMessage, adaptEdit, adaptDelete, parseContent, contentToPlainText + re-exports
 ├── projection/             # Layer 2: IC' = Reducers(IC, Event)
-│   └── types.ts            # IntermediateContext, ICMessage, ICUserState
+│   ├── types.ts            # IntermediateContext, ICMessage, ICSystemEvent, ICUserState
+│   ├── reduce.ts           # reduce(IC, CanonicalIMEvent) → IC' with Immer
+│   └── index.ts            # Barrel exports
 ├── rendering/              # Layer 3: IC + RenderParams → RenderedContext (RC)
-│   └── types.ts            # RenderParams, RenderedSegment, RenderedContext
+│   └── types.ts            # RenderParams, RenderedContentPiece, RenderedContextSegment, RenderedContext
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
 │   ├── schema.ts           # Drizzle schema: users, messages, events tables
@@ -133,23 +135,29 @@ MTProto fires `updateEditMessage` for metadata-only changes (link preview loadin
 
 `src/http.ts` exposes `registerHttpSecret(secret)`. Registered strings are masked with equal-length `*` in all `HttpError` messages. Bot token is registered at client creation.
 
-### Message Batching
+### Message Batching and Debounce
 
-Projection runs immediately on every event — IC is always current. Rendering + Driver invocation is debounced/throttled — each trigger produces one RC and one LLM API call. The debounce/throttle parameters are strategy (tunable, graded via fixtures). Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. Debounce/throttle is owned by the **Driver** — each trigger produces one `render(IC)` → one RC → one LLM API call. The debounce/throttle parameters are strategy (tunable, graded via fixtures). Bot responds via `send_message` tool call (not 1:1 response).
 
-### RC and Turns — Orthogonal Merge
+Debounce lives in Driver (not a separate orchestration layer) because tool call loops already require the Driver to decide when to re-render IC — externalizing debounce would create coordination overhead.
 
-RC (from Rendering) and Turns (from Driver) are two independent sorted streams:
+### Tool Call Loop Interleaving
+
+Each LLM API call = one TR (not the entire loop as one TR). Before each loop iteration, Driver re-renders IC to pick up new chat messages. New messages' `receivedAt` > previous TR's `requestedAt` (causality), so they merge correctly after the TR's tool results and before the next assistant response. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+
+### RC and TRs — Orthogonal Merge
+
+RC (from Rendering) and TRs (from Driver) are two independent sorted streams:
 - RC segments carry `receivedAt` (milliseconds, from source events)
-- Turns carry `requestedAt` (milliseconds, `Date.now()` at API request time)
+- TRs carry `requestedAt` (milliseconds, `Date.now()` at API request time)
 
-Driver merges them by timestamp into the final LLM API messages array. Causality guarantees correct ordering in online operation. **Mandatory tiebreaker**: when timestamps are equal, RC is ordered before Turns — required because Anthropic Messages API enforces strict user/assistant role alternation.
+Driver merges them by timestamp into the final LLM API messages array. Causality guarantees correct ordering in online operation. **Mandatory tiebreaker**: when timestamps are equal, RC is ordered before TRs — required because Anthropic Messages API enforces strict user/assistant role alternation.
 
-Data flows strictly forward (no backflow). Events table stores only IM platform events. IC is only derived from platform events. Driver is sole owner of Turns.
+Data flows strictly forward (no backflow). Events table stores only IM platform events. IC is only derived from platform events. Driver is sole owner of TRs.
 
-### Turn Storage
+### TR Storage
 
-Turns are stored in a `turns` DB table (raw provider format, not provider-agnostic). One row per Turn:
+TRs are stored in a `turn_responses` DB table (raw provider format, not provider-agnostic). One row per TR:
 
 | Column | Type | Notes |
 |--------|------|-------|

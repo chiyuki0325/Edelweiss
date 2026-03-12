@@ -79,15 +79,15 @@ Adaptation → Projection → Rendering → Driver
 | 层 | 职责 | 纯度 |
 |---|---|---|
 | **Rendering** | `render(IC, RenderParams) → RC`：序列化 IC 为 provider-agnostic 的 RC | 纯函数 |
-| **Driver** | 持有 Turns（对话历史），合并 RC + Turns，管理 tool call 循环 | 有状态 |
+| **Driver** | 持有 TRs（对话历史），合并 RC + TRs，管理 tool call 循环 | 有状态 |
 
-RC（Rendered Context）不是最终 LLM 请求——它是 Driver 合并的输入之一。Driver 按时间戳（`receivedAt`/`requestedAt`）将 RC 和 Turns 交错合并为最终 API 请求。
+RC（Rendered Context）不是最终 LLM 请求——它是 Driver 合并的输入之一。Driver 按时间戳（`receivedAt`/`requestedAt`）将 RC 和 TRs 交错合并为最终 API 请求。
 
 ## 8. 新增：Conversation History 的原始 Provider 格式存储
 
 RFC 未涉及 bot 自身回复和 tool call 历史的存储。现在的设计：
 
-- **存储单位**：Turn（一次 LLM 交互的输出），存原始 provider 格式
+- **存储单位**：Turn Response / TR（一次 LLM 交互的输出），存原始 provider 格式
 - **同 provider 读取**：零转换，保证无损
 - **跨 provider 切换**：显式 A→B 转换函数，直接结构映射，独立可测
 - 切换 provider 不改变数据库中的已有数据，只改变读取时的翻译逻辑
@@ -138,4 +138,25 @@ Telegram 使用数字 message ID，但其他 IM 平台（Discord snowflake、Sla
 - ICMessage 的 messageId/replyToMessageId 已经是 string，不再需要 Projection 做类型转换
 - events 表的 `message_id` 和 `reply_to_message_id` 列从 INTEGER 改为 TEXT
 - messages 表不变——它存原始平台数据，Telegram messageId 就是 number
+
+## 13. 新增：Debounce 归属 Driver 层
+
+RFC/早期设计将 debounce/throttle 描述为「Projection 和 Rendering 之间」的未分配调度逻辑。现在明确归属 **Driver 层**：
+
+- Driver 已经管理 tool call loop，它知道什么时候该重新 render IC——如果 debounce 在外部编排层，编排层需要和 Driver 协调「你在 loop 中吗？要不要插一次 re-render？」，增加不必要的耦合
+- Driver 掌握 token 预算和 provider 缓存策略，这些直接影响 debounce 行为（如判断是否值得发起新请求）
+- 具体的 debounce/throttle 参数仍然是 strategy，不是 architecture
+
+## 14. 新增：Tool Call Loop 可被新消息打断
+
+每次 LLM API 调用产生一个独立的 TR（而不是整个 tool call loop 合成一个 TR）。这使得 **tool 执行期间到达的新聊天消息可以被 LLM 看到**：
+
+1. Projection 对每个新事件立即执行 `reduce`，IC 始终最新
+2. Driver 在 tool call loop 的每次迭代前重新 `render(IC)`，拿到包含新消息的 RC
+3. 新消息的 `receivedAt` 必然 > 触发 tool call 的 TR 的 `requestedAt`（因果律：消息在 API 调用发出之后才到达），merge 时自然排在 tool result 之后
+
+TR 结构：每个 TR 存储「作为输入发送的 tool results + 收到的 assistant 响应」。TR₁ = `[assistant₁]`，TR₂ = `[tool_result₁, assistant₂]`。Append-only——每个 TR 在其 API call 返回时一次性写入。
+
+Merge 规则：TR 中的 tool results 锚定在前一个 TR 之后（保持 tool_call → tool_result 的邻接性），新的 RC segments 排在 tool results 之后。
+
 

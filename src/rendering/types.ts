@@ -1,9 +1,5 @@
-// Rendering parameters — all provided by the Driver or computed at call time.
-// In the theoretical model, render(IC) → RC with no extra parameters.
-// In practice, these make the infinite IC/RC finite and add dynamic context.
 export interface RenderParams {
   systemPrompt: string;
-  // From Driver: compact cursor + summary make IC finite.
   compactCursor?: number;
   compactionSummary?: string;
   // TODO: Late-binding context (recalled memory, cross-session awareness, action directives)
@@ -11,24 +7,19 @@ export interface RenderParams {
   // the rendering layer. See docs/dcp-design.md §Rendering Parameters and §Cross-Session Interaction.
 }
 
+// Provider-agnostic content piece — maps to LLM API content parts.
+// Driver converts to provider-specific format (OpenAI image_url / Anthropic base64 image).
+export type RenderedContentPiece =
+  | { type: 'text'; text: string }
+  | { type: 'image'; url: string };
+
 // Rendered Context (RC) — the output of the Rendering layer.
-// A sequence of segments that the Driver interleaves with its Turns
-// by timestamp to assemble the final LLM API request.
-
-export interface RenderedSystemSegment {
-  type: 'system';
-  content: string;
+// One segment per IC node. Carries receivedAt from the source event for merge ordering.
+// Driver merges RC + TRs by timestamp, grouping consecutive segments between TRs
+// into user messages.
+export interface RenderedContextSegment {
+  receivedAt: number;
+  content: RenderedContentPiece[];
 }
 
-// TODO: For multimodal support, content will need to become a structured
-// Content[] with text and image_url parts instead of a single string.
-export interface RenderedUserBatchSegment {
-  type: 'user_batch';
-  content: string;
-}
-
-export type RenderedSegment =
-  | RenderedSystemSegment
-  | RenderedUserBatchSegment;
-
-export type RenderedContext = RenderedSegment[];
+export type RenderedContext = RenderedContextSegment[];

@@ -1,0 +1,188 @@
+import { describe, expect, it } from 'vitest';
+
+import { reduce } from './reduce';
+import type { ICMessage } from './types';
+import { createEmptyIC } from './types';
+import type {
+  CanonicalDeleteEvent,
+  CanonicalEditEvent,
+  CanonicalMessageEvent,
+  CanonicalUser,
+  ContentNode,
+} from '../adaptation/types';
+
+const alice: CanonicalUser = { id: '1', displayName: 'Alice', username: 'alice', isBot: false };
+const bob: CanonicalUser = { id: '2', displayName: 'Bob', isBot: false };
+const content: ContentNode[] = [{ type: 'text', text: 'hello' }];
+
+const msg = (overrides: Partial<CanonicalMessageEvent> = {}): CanonicalMessageEvent => ({
+  type: 'message',
+  chatId: 'chat1',
+  messageId: '1',
+  sender: alice,
+  receivedAt: 1000,
+  timestamp: 1,
+  content,
+  attachments: [],
+  ...overrides,
+});
+
+const edit = (overrides: Partial<CanonicalEditEvent> = {}): CanonicalEditEvent => ({
+  type: 'edit',
+  chatId: 'chat1',
+  messageId: '1',
+  sender: alice,
+  receivedAt: 2000,
+  timestamp: 2,
+  content: [{ type: 'text', text: 'edited' }],
+  attachments: [],
+  ...overrides,
+});
+
+const del = (overrides: Partial<CanonicalDeleteEvent> = {}): CanonicalDeleteEvent => ({
+  type: 'delete',
+  chatId: 'chat1',
+  messageIds: ['1'],
+  receivedAt: 3000,
+  timestamp: 3,
+  ...overrides,
+});
+
+describe('reduce', () => {
+  describe('message events', () => {
+    it('appends ICMessage and initializes user state', () => {
+      const ic = reduce(createEmptyIC('chat1'), msg());
+
+      expect(ic.nodes).toHaveLength(1);
+      const node = ic.nodes[0] as ICMessage;
+      expect(node.type).toBe('message');
+      expect(node.messageId).toBe('1');
+      expect(node.sender).toEqual(alice);
+      expect(node.content).toEqual(content);
+
+      const userState = ic.users.get('1');
+      expect(userState).toBeDefined();
+      expect(userState!.user).toEqual(alice);
+      expect(userState!.firstSeenAt).toBe(1000);
+      expect(userState!.lastSeenAt).toBe(1000);
+      expect(userState!.messageCount).toBe(1);
+    });
+
+    it('updates lastSeenAt and messageCount on repeated messages', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2 }));
+
+      expect(ic.nodes).toHaveLength(2);
+      const userState = ic.users.get('1')!;
+      expect(userState.firstSeenAt).toBe(1000);
+      expect(userState.lastSeenAt).toBe(2000);
+      expect(userState.messageCount).toBe(2);
+    });
+
+    it('sets replyToMessageId and forwardInfo when present', () => {
+      const ic = reduce(createEmptyIC('chat1'), msg({
+        replyToMessageId: '99',
+        forwardInfo: { senderName: 'Someone', date: 100 },
+      }));
+
+      const node = ic.nodes[0] as ICMessage;
+      expect(node.replyToMessageId).toBe('99');
+      expect(node.forwardInfo).toEqual({ senderName: 'Someone', date: 100 });
+    });
+
+    it('skips messages without sender', () => {
+      const ic = reduce(createEmptyIC('chat1'), msg({ sender: undefined }));
+      expect(ic.nodes).toHaveLength(0);
+      expect(ic.users.size).toBe(0);
+    });
+  });
+
+  describe('MetaReducer — user rename detection', () => {
+    it('inserts ICUserRenamedEvent when displayName changes', () => {
+      const renamedAlice: CanonicalUser = { id: '1', displayName: 'Alice New', username: 'alice', isBot: false };
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2, sender: renamedAlice }));
+
+      expect(ic.nodes).toHaveLength(3);
+      expect(ic.nodes[0]!.type).toBe('message');
+      expect(ic.nodes[1]!.type).toBe('system_event');
+      expect(ic.nodes[2]!.type).toBe('message');
+
+      const sysEvent = ic.nodes[1]!;
+      if (sysEvent.type !== 'system_event') throw new Error('expected system_event');
+      expect(sysEvent.kind).toBe('user_renamed');
+      expect(sysEvent.oldUser).toEqual(alice);
+      expect(sysEvent.newUser).toEqual(renamedAlice);
+    });
+
+    it('inserts ICUserRenamedEvent when username changes', () => {
+      const renamedAlice: CanonicalUser = { id: '1', displayName: 'Alice', username: 'alice_new', isBot: false };
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2, sender: renamedAlice }));
+
+      expect(ic.nodes).toHaveLength(3);
+      expect(ic.nodes[1]!.type).toBe('system_event');
+    });
+
+    it('does not emit system event when user info unchanged', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2 }));
+
+      expect(ic.nodes).toHaveLength(2);
+      expect(ic.nodes.every(n => n.type === 'message')).toBe(true);
+    });
+  });
+
+  describe('edit events', () => {
+    it('updates content, attachments, and sets editedAt on existing message', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, edit());
+
+      expect(ic.nodes).toHaveLength(1);
+      const node = ic.nodes[0] as ICMessage;
+      expect(node.content).toEqual([{ type: 'text', text: 'edited' }]);
+      expect(node.editedAt).toBe(2);
+    });
+
+    it('is a no-op when target message not found', () => {
+      const ic = reduce(createEmptyIC('chat1'), edit({ messageId: '999' }));
+      expect(ic.nodes).toHaveLength(0);
+    });
+  });
+
+  describe('delete events', () => {
+    it('sets deleted flag on existing message', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, del());
+
+      const node = ic.nodes[0] as ICMessage;
+      expect(node.deleted).toBe(true);
+    });
+
+    it('handles multiple messageIds', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({ messageId: '2', sender: bob, receivedAt: 2000, timestamp: 2 }));
+      ic = reduce(ic, del({ messageIds: ['1', '2'] }));
+
+      expect((ic.nodes[0] as ICMessage).deleted).toBe(true);
+      expect((ic.nodes[1] as ICMessage).deleted).toBe(true);
+    });
+
+    it('is a no-op when target message not found', () => {
+      const ic = reduce(createEmptyIC('chat1'), del({ messageIds: ['999'] }));
+      expect(ic.nodes).toHaveLength(0);
+    });
+  });
+
+  describe('immutability', () => {
+    it('does not mutate the original IC', () => {
+      const original = createEmptyIC('chat1');
+      const after = reduce(original, msg());
+
+      expect(original.nodes).toHaveLength(0);
+      expect(original.users.size).toBe(0);
+      expect(after.nodes).toHaveLength(1);
+      expect(after.users.size).toBe(1);
+    });
+  });
+});

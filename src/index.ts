@@ -1,9 +1,11 @@
 import dotenv from 'dotenv';
 
-import { adaptDelete, adaptEdit, adaptMessage, contentToPlainText } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage } from './adaptation';
 import { loadEnv } from './config/env';
 import { setupLogger, useLogger } from './config/logger';
-import { createDatabase, loadKnownChatIds, loadRecentEvents, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
+import { createDatabase, loadEvents, loadKnownChatIds, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
+import { createEmptyIC, reduce } from './projection';
+import type { IntermediateContext } from './projection';
 import { createTelegramManager } from './telegram';
 import { loadSession } from './telegram/session';
 
@@ -18,18 +20,17 @@ const main = async () => {
   const db = createDatabase(env.DB_PATH, logger);
   runMigrations(db, logger);
 
-  const recentEvents = loadRecentEvents(db, 100);
-  logger.withFields({ count: recentEvents.length }).log('Replayed recent events from DB');
-  for (const event of recentEvents) {
-    if (event.type === 'delete') {
-      logger.withFields({ chatId: event.chatId, messageIds: event.messageIds }).log('[replay] delete');
-    } else {
-      const sender = event.sender?.displayName ?? event.sender?.id ?? 'unknown';
-      const plainText = contentToPlainText(event.content);
-      const text = plainText.length > 100 ? `${plainText.slice(0, 100)}...` : plainText;
-      logger.withFields({ chatId: event.chatId, messageId: event.messageId, sender, text, length: plainText.length }).log(`[replay] ${event.type}`);
-    }
+  // Cold-start: replay events per chat to rebuild IC
+  const sessions = new Map<string, IntermediateContext>();
+  for (const chatId of loadKnownChatIds(db)) {
+    let ic = createEmptyIC(chatId);
+    const events = loadEvents(db, chatId);
+    for (const event of events)
+      ic = reduce(ic, event);
+    sessions.set(chatId, ic);
+    logger.withFields({ chatId, events: events.length, nodes: ic.nodes.length, users: ic.users.size }).log('Replayed session');
   }
+  logger.withFields({ sessions: sessions.size }).log('Cold start complete');
 
   const telegram = createTelegramManager({
     botToken: env.TELEGRAM_BOT_TOKEN,
@@ -63,6 +64,9 @@ const main = async () => {
     } catch (err) {
       logger.withError(err).error('Failed to persist message');
     }
+
+    const ic = sessions.get(event.chatId) ?? createEmptyIC(event.chatId);
+    sessions.set(event.chatId, reduce(ic, event));
   });
 
   telegram.onMessageEdit(edit => {
@@ -87,6 +91,9 @@ const main = async () => {
     } catch (err) {
       logger.withError(err).error('Failed to persist message edit');
     }
+
+    const ic = sessions.get(event.chatId) ?? createEmptyIC(event.chatId);
+    sessions.set(event.chatId, reduce(ic, event));
   });
 
   telegram.onMessageDelete(del => {
@@ -108,6 +115,9 @@ const main = async () => {
     } catch (err) {
       logger.withError(err).error('Failed to persist message delete');
     }
+
+    const ic = sessions.get(event.chatId) ?? createEmptyIC(event.chatId);
+    sessions.set(event.chatId, reduce(ic, event));
   });
 
   const shutdown = async () => {

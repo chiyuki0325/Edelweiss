@@ -3,11 +3,11 @@
 ## Terminology
 
 | Term | Definition |
-|------|-----------|
+|------|-----------||
 | **Session** | One instance of the full pipeline: Adaptation → Projection → Rendering → Driver. Each chat has its own Session. |
 | **IC** (IntermediateContext) | Structured representation of chat events, produced by Projection. |
 | **RC** (RenderedContext) | Serialized, segmented output of Rendering. Provider-agnostic XML. |
-| **Turn** | One entry in the Driver's conversation history, timestamped by `requestedAt`. Stores only LLM outputs (assistant responses) and tool results — NOT user messages from RC (those are re-derivable from IC). |
+| **TR** (TurnResponse) | One entry in the Driver's conversation history, timestamped by `requestedAt`. Stores only LLM outputs (assistant responses) and tool results — NOT user messages from RC (those are re-derivable from IC). |
 | **Strategy** | A behavioral choice within a layer that determines output quality (rendering format, batching timing, compaction policy, etc.). Strategies are tunable and graded via fixtures. Distinguished from architecture (pipeline structure, data flow, storage format), which is fixed. |
 
 ## Theoretical Model
@@ -15,44 +15,44 @@
 ### Events as External Input
 The events table is the system's external input layer. Currently it stores IM platform events (`CanonicalIMEvent`), but the architecture is extensible to other input modalities (web browsing results, RSS feeds, etc.) via new event type families. This is a theoretical direction — we don't design or implement non-IM event types now.
 
-### Pipeline: Events → IC → RC, plus Turns
+### Pipeline: Events → IC → RC, plus TRs
 ```
 events ──→ Projection ──→ IC (always current)
                             │
-                      [debounce/throttle]
+                      Driver [debounce/throttle]
                             ↓
                       Rendering ──→ RC
                                      \
                                       Driver merges ──→ LLM API call
                                      /
-                            Turns (Driver storage)
+                            TRs (Driver storage)
 ```
 
 - `IC' = reduce(IC, CanonicalIMEvent)` — Projection runs immediately on every event. IC is always current.
 - `RC = render(IC)` — pure function, triggered by debounce/throttle. IC nodes and RC segments carry `receivedAt` from their source events.
-- Driver merges RC + Turns by timestamp (`receivedAt` / `requestedAt`) → final LLM API context array. One merge = one LLM API call.
-- Debounce/throttle sits between Projection and Rendering. Its parameters are strategy, not architecture.
+- Driver merges RC + TRs by timestamp (`receivedAt` / `requestedAt`) → final LLM API context array. One merge = one LLM API call.
+- Debounce/throttle is owned by the Driver. Its parameters (timing, thresholds) are strategy, not architecture.
 
 In the theoretical model, IC and RC are unbounded sequences. No SessionState, no compact cursor — those are practical concerns (see below).
 
-### RC and Turns Are Orthogonal
-RC contains only LLM **input** (serialized chat context). Turns contain only LLM **output** + tool results. LLM APIs are stateless — they don't assign IDs to our user/system messages, so RC needs no provider-specific metadata. All provider complexity lives in Turns.
+### RC and TRs Are Orthogonal
+RC contains only LLM **input** (serialized chat context). TRs contain only LLM **output** + tool results. LLM APIs are stateless — they don't assign IDs to our user/system messages, so RC needs no provider-specific metadata. All provider complexity lives in TRs.
 
-Both streams carry timestamps for merge ordering: IC nodes carry `receivedAt` (milliseconds, from their source events), which flows through to RC segments. Turns carry `requestedAt` (milliseconds, set at API request time). The Driver merges these two sorted streams by their respective timestamps. Causality guarantees `receivedAt_batch_n < requestedAt_n < receivedAt_batch_n+1`.
+Both streams carry timestamps for merge ordering: IC nodes carry `receivedAt` (milliseconds, from their source events), which flows through to RC segments. TRs carry `requestedAt` (milliseconds, set at API request time). The Driver merges these two sorted streams by their respective timestamps. Causality guarantees `receivedAt_batch_n < requestedAt_n < receivedAt_batch_n+1`.
 
-Rendering does not need to know about Turn positions — it serializes IC nodes sequentially, each carrying its own `receivedAt`. The Driver groups consecutive RC segments between Turns into user messages during merge.
+Rendering does not need to know about TR positions — it serializes IC nodes sequentially, each carrying its own `receivedAt`. The Driver groups consecutive RC segments between TRs into user messages during merge.
 
-### Timestamp Race Condition Between RC and Turns
+### Timestamp Race Condition Between RC and TRs
 During online operation, `receivedAt` and `requestedAt` are assigned sequentially by `Date.now()`, so ordering is correct. However, when timestamps collide (same millisecond — unlikely but possible), the merge order becomes ambiguous.
 
-This requires a **mandatory tiebreaker**: when `receivedAt` equals `requestedAt`, RC segments MUST be ordered before Turns. Without this:
-- **Anthropic**: Messages API requires strict user/assistant role alternation. If a Turn (assistant) is ordered before its preceding RC batch (user), two consecutive assistant messages appear, and the API rejects the request.
+This requires a **mandatory tiebreaker**: when `receivedAt` equals `requestedAt`, RC segments MUST be ordered before TRs. Without this:
+- **Anthropic**: Messages API requires strict user/assistant role alternation. If a TR (assistant) is ordered before its preceding RC batch (user), two consecutive assistant messages appear, and the API rejects the request.
 - **OpenAI**: No strict alternation requirement, but wrong ordering would still produce a semantically incorrect conversation.
 - **Thinking signatures**: Anthropic's thinking `signature` attests only to the thinking block's own content — it does NOT bind to the conversation prefix. Evidence: Anthropic explicitly allows omitting thinking blocks from prior turns, which changes the prefix without invalidating later signatures. So reordering messages before a thinking block does not cause signature validation failure.
 
-The tiebreaker (RC before Turn on equal timestamp) is a correctness requirement, not optional mitigation. IMPLEMENTATION NOTE: the merge comparator must implement this rule, and the comment should explain the Anthropic role alternation constraint.
+The tiebreaker (RC before TR on equal timestamp) is a correctness requirement, not optional mitigation. IMPLEMENTATION NOTE: the merge comparator must implement this rule, and the comment should explain the Anthropic role alternation constraint.
 
-### What Turns Store
+### What TRs Store
 Only data that can't be re-derived from IC:
 - **Assistant responses**: LLM output with tool_call IDs, thinking blocks, signatures
 - **Tool results**: our responses to tool calls (non-deterministic, can't re-execute)
@@ -61,14 +61,14 @@ Only data that can't be re-derived from IC:
 Storage format: raw provider format. See "Conversation History Storage" below.
 
 ### Compaction
-Compaction exists only in the Driver layer in the theoretical model. It makes the infinite IC/RC/Turns finite in practice. It does NOT change the computation results of earlier layers — it only enables them to be implemented with bounded resources.
+Compaction exists only in the Driver layer in the theoretical model. It makes the infinite IC/RC/TRs finite in practice. It does NOT change the computation results of earlier layers — it only enables them to be implemented with bounded resources.
 
-The compact cursor T is a **millisecond timestamp in the unified `receivedAt`/`requestedAt` timeline**. Everything with a timestamp < T — both events (by `receivedAt`) and Turns (by `requestedAt`) — is covered by the compaction summary.
+The compact cursor T is a **millisecond timestamp in the unified `receivedAt`/`requestedAt` timeline**. Everything with a timestamp < T — both events (by `receivedAt`) and TRs (by `requestedAt`) — is covered by the compaction summary.
 
 When compaction happens:
 1. Driver decides a cut point T (based on token budget, cache strategy — the specific policy is strategy)
-2. Driver generates summary covering everything before T (both RC content and Turns)
-3. Driver discards its Turns with `requestedAt < T`
+2. Driver generates summary covering everything before T (both RC content and TRs)
+3. Driver discards its TRs with `requestedAt < T`
 4. Driver passes cursor T to Rendering → Rendering skips IC nodes before T → Projection may GC nodes before T
 5. Summary is included in RC output as a "previously on..." prefix
 
@@ -98,14 +98,14 @@ This document does not prescribe specific strategies. It describes the mechanism
 
 ### Dual Timestamps — Deterministic Ordering
 - `receivedAt` (milliseconds, on events): local receive time, set by `Date.now()` at adaptation. Source of truth for event ordering. Ensures cold-start replay produces the same sequence as live processing regardless of server clock skew or network reordering.
-- `requestedAt` (milliseconds, on Turns): set by `Date.now()` when the Driver sends an API request. Together with `receivedAt`, forms a total order across all events and Turns in the system.
+- `requestedAt` (milliseconds, on TRs): set by `Date.now()` when the Driver sends an API request. Together with `receivedAt`, forms a total order across all events and TRs in the system.
 - `timestamp` (seconds, on events): server-reported time. Shown to the AI as the message's "time". For delete events (no server time), derived as `Math.floor(receivedAt / 1000)`.
 - DB ordering: `ORDER BY received_at, id` — receivedAt for arrival order, id as tiebreaker for events received in the same millisecond.
 
 ### IC: Theoretically Complete, Practically a Working Set
 IC is conceptually the complete history of all chat events. In practice, it's the working set after the compact cursor — nodes with `receivedAt < T` are GC'd since they'll never be rendered again (replaced by compaction summary). The events table retains complete history for research/audit purposes (but completeness is not a business requirement).
 
-Cold start: load compact cursor T from Driver storage → load Turns with `requestedAt >= T` → replay events with `receivedAt >= T` through Projection → rebuild IC working set. O(events since last compaction), not O(all events ever).
+Cold start: load compact cursor T from Driver storage → load TRs with `requestedAt >= T` → replay events with `receivedAt >= T` through Projection → rebuild IC working set. O(events since last compaction), not O(all events ever).
 
 ### Rendering Parameters
 In the theoretical model, `render(IC) → RC` with no extra parameters. In practice, Rendering needs:
@@ -113,7 +113,7 @@ In the theoretical model, `render(IC) → RC` with no extra parameters. In pract
 - **System prompt**: configuration
 - **Late-binding context**: computed at request time (recalled memory, cross-session awareness)
 
-These are all provided by the Driver or computed at call time — there is no persistent "SessionState" entity in the theoretical model. Notably, Rendering does NOT need to know about Turn positions — it serializes IC nodes sequentially (each carrying `receivedAt`), and the Driver groups RC segments into user messages based on Turn `requestedAt` timestamps during merge.
+These are all provided by the Driver or computed at call time — there is no persistent "SessionState" entity in the theoretical model. Notably, Rendering does NOT need to know about TR positions — it serializes IC nodes sequentially (each carrying `receivedAt`), and the Driver groups RC segments into user messages based on TR `requestedAt` timestamps during merge.
 
 ### Projection Reducer
 - Single `reduce(ic, event)` function, not prematurely split into ContentReducer/MetaReducer
@@ -133,20 +133,21 @@ Reducer compares `event.sender` against `ic.users` on each message. If displayNa
 Data flows strictly forward. No backflow from Driver to events/Projection:
 - Events table: only IM platform events (CanonicalIMEvent)
 - IC: only derived from platform events
-- Driver: sole owner of Turns, provides parameters to Rendering, assembles final request
+- Driver: sole owner of TRs, provides parameters to Rendering, assembles final request
 
-Earlier design explored BotTurnEvent as an InternalEvent flowing back through Projection. Rejected: (1) splits bot turn across two stores; (2) circular dependency; (3) error amplification across three layers.
+Earlier design explored BotTurnEvent as an InternalEvent flowing back through Projection. Rejected: (1) splits bot response across two stores; (2) circular dependency; (3) error amplification across three layers.
 
 ### Driver Responsibilities
-- Sole owner of Turns (conversation history)
+- Sole owner of TRs (conversation history)
 - Provides compact cursor + summary to Rendering
-- Merges RC + Turns by timestamp (`receivedAt` / `requestedAt`) into final API request
-- Manages tool call loop (call → execute → result → re-call LLM)
+- Merges RC + TRs by timestamp (`receivedAt` / `requestedAt`) into final API request
+- **Owns debounce/throttle scheduling**: decides when to trigger Rendering + API call. Lives in Driver (not a separate orchestration layer) because tool call loops already require the Driver to decide when to re-render — externalizing debounce would create coordination overhead between the scheduler and the active loop.
+- Manages tool call loop (see §Tool Call Loop Interleaving below)
 - Provider-specific adapters for serialization/deserialization
 - Owns compaction decisions (timing, boundary, summary generation)
 - Standard append-only LLM client with restart consistency
 
-### Provider-Specific Metadata (in Turns only)
+### Provider-Specific Metadata (in TRs only)
 
 | Provider | Tool call ID | Tool result linkage | Extra metadata | Cache |
 |---|---|---|---|---|
@@ -155,10 +156,33 @@ Earlier design explored BotTurnEvent as an InternalEvent flowing back through Pr
 
 RC (user/system messages) needs NO provider metadata. `cache_control` annotations are added by Driver at request-assembly time, not persisted.
 
+### Tool Call Loop Interleaving
+
+Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). This enables **new chat messages to appear mid-loop**: Projection runs immediately on every event, so IC is always current. Before each loop iteration, the Driver re-renders IC. New messages' `receivedAt` is always > the previous TR's `requestedAt` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge.
+
+```
+TR₁(t=1500): [assistant₁(tool_call)]     ← API call 1 returns
+                                            tool executes... new messages arrive at t=2200, 2800
+TR₂(t=3500): [tool_result₁, assistant₂]  ← API call 2 returns
+
+Merge result:
+  [user]      RC(≤1000)                   ← original context
+  [assistant]  TR₁(1500)                  ← tool_call
+  [tool/user]  TR₂.tool_result₁           ← tool result (anchored after TR₁)
+  [user]       RC(2200, 2800)             ← new messages that arrived during tool execution
+  [assistant]  TR₂.assistant₂             ← LLM sees new messages, decides next action
+```
+
+**TR structure**: each TR stores the tool results that were *sent with* that API call (input) + the assistant response that was *received* (output). TR₁ = `[assistant₁]`, TR₂ = `[tool_result₁, assistant₂]`. This is append-only: each TR is written once when its API call returns.
+
+**Merge rule for tool results**: tool results in a TR are anchored immediately after the previous TR (which contained the tool_call that triggered them), before any interleaved RC segments. This preserves the tool_call → tool_result adjacency required by all LLM APIs.
+
+**Provider-specific detail**: Anthropic requires strict user/assistant alternation. Since tool_result is `role: "user"` and new RC is also `role: "user"`, they must be merged into a single user message (tool_result content blocks + text content blocks). OpenAI has separate `role: "tool"` for tool results, so no merging needed.
+
 ### Top-Level Request Fields from Previous Response
 All three major APIs are stateless in headers and URLs — none depend on previous responses. For the request body top-level (outside the messages/input array), only OpenAI Responses API has a field that comes from the previous response: `response.id` → next request's `previous_response_id`. OpenAI Chat Completions and Anthropic Messages have no such fields.
 
-This is stored in the latest Turn's `sessionMeta`. When constructing the next request, Driver reads the last Turn's `sessionMeta`; if the provider matches, it uses the value. If the provider changed, it ignores it.
+This is stored in the latest TR's `sessionMeta`. When constructing the next request, Driver reads the last TR's `sessionMeta`; if the provider matches, it uses the value. If the provider changed, it ignores it.
 
 ### Conversation History Storage
 Store in raw provider format, not a provider-agnostic intermediate format. Rationale: an intermediate format risks losing provider-specific information through normalization (bugs hide in "does the union format cover all providers' semantics?"). Direct storage is simpler:
@@ -168,7 +192,7 @@ Store in raw provider format, not a provider-agnostic intermediate format. Ratio
 - **Conversion matrix**: N*(N-1) converters. N=2-3 → 2-6 functions, manageable. Implemented lazily as needed.
 
 ```
-Turn {
+TurnResponse {
   requestedAt: number            — Date.now() at API request. Forms total order with events' receivedAt.
   provider: string               — 'openai-chat' | 'anthropic-messages' | 'openai-responses'
   data: unknown                  — raw provider array entries (assistant message + tool results),
@@ -183,9 +207,9 @@ What `data` contains per provider (the extracted array entries, NOT the full res
 - **Anthropic Messages**: `[assistantMessage, toolResultUserMessage]` — `{ role: "assistant", content }` + `{ role: "user", content: [tool_result, ...] }`
 - **OpenAI Responses**: `[...outputItems, ...functionCallOutputItems]` — output items + `function_call_output` items
 
-### Turn Storage
+### TR Storage
 
-Turns are stored in a `turns` DB table, one row per Turn:
+TRs are stored in a `turn_responses` DB table, one row per TR:
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -199,14 +223,14 @@ Turns are stored in a `turns` DB table, one row per Turn:
 | output_tokens | INTEGER NOT NULL | for statistics / cost tracking |
 | response_envelope | TEXT (JSON) | raw response with content/output stripped (already in `data`). Includes model, finish_reason, usage, system_fingerprint, etc. |
 
-Index: `(chat_id, requested_at)` for loading a session's Turns in order.
+Index: `(chat_id, requested_at)` for loading a session's TRs in order.
 
-Compaction state (cursor + summary) is session-level, not per-Turn. Stored separately — either in a dedicated session-state table or as metadata on the oldest remaining Turn after GC. Exact mechanism TBD when implementing compaction.
+Compaction state (cursor + summary) is session-level, not per-TR. Stored separately — either in a dedicated session-state table or as metadata on the oldest remaining TR after GC. Exact mechanism TBD when implementing compaction.
 
 ## Other Design Decisions
 
 ### Event Processing and Batching
-Projection runs immediately on every event — IC is always current. Rendering + Driver invocation is debounce/throttled — RC is produced in batches. Each batch triggers one Driver invocation = one LLM API call. The debounce/throttle parameters (timing, thresholds) are strategy. Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. The Driver owns debounce/throttle: when it fires, Driver calls `render(IC)` to produce RC, then merges RC + TRs into one LLM API call. The debounce/throttle parameters (timing, thresholds) are strategy. Bot responds via `send_message` tool call (not 1:1 response).
 
 ### Multimodal
 - Low-res thumbnails (~85 tokens) kept in context — cheaper than text descriptions
@@ -218,7 +242,7 @@ Projection runs immediately on every event — IC is always current. Rendering +
 - JSON for output (tool calls)
 
 ### Cold Start
-- Load compact cursor T from turns table (or session-state storage)
-- Load Turns with `requested_at >= T`
+- Load compact cursor T from turn_responses table (or session-state storage)
+- Load TRs with `requested_at >= T`
 - Replay events with `received_at >= T` through Projection to rebuild IC
 - Optional catch-up: fetch missed messages from Telegram API by comparing DB max messageId with Telegram history

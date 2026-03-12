@@ -4,7 +4,7 @@ export interface ICMessage {
   type: 'message';
   messageId: string;
   sender: CanonicalUser;
-  // receivedAt flows from the source event for merge ordering (see SPEC §RC and Turns — Orthogonal Merge)
+  // receivedAt flows from the source event for merge ordering (see SPEC §RC and TRs — Orthogonal Merge)
   receivedAt: number;
   timestamp: number;
   content: ContentNode[];
@@ -15,14 +15,18 @@ export interface ICMessage {
   deleted?: boolean;
 }
 
-// TODO: Concrete fields TBD when implementing MetaReducer.
-// Candidates: user rename, avatar change, join/leave, premium status change.
-export interface ICSystemEvent {
+export interface ICUserRenamedEvent {
   type: 'system_event';
-  // Inherited from the triggering event for merge ordering
+  kind: 'user_renamed';
   receivedAt: number;
   timestamp: number;
+  userId: string;
+  oldUser: CanonicalUser;
+  newUser: CanonicalUser;
 }
+
+// Extensible: add more event kinds (join/leave, etc.) to this union as needed.
+export type ICSystemEvent = ICUserRenamedEvent;
 
 export type ICNode = ICMessage | ICSystemEvent;
 
