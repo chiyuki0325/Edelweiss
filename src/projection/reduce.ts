@@ -1,6 +1,7 @@
 import { enableMapSet, produce } from 'immer';
 
 import type { ICMessage, ICSystemEvent, ICUserState, IntermediateContext } from './types';
+import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
@@ -22,6 +23,11 @@ const findMessageIndex = (nodes: readonly { type: string; messageId?: string }[]
   return -1;
 };
 
+const REPLY_PREVIEW_MAX = 100;
+
+const truncate = (text: string, max: number): string =>
+  text.length <= max ? text : `${text.slice(0, max)}…`;
+
 const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent) => {
   if (!event.sender) return;
 
@@ -34,6 +40,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
       kind: 'user_renamed',
       receivedAtMs: event.receivedAtMs,
       timestampSec: event.timestampSec,
+      utcOffsetMin: event.utcOffsetMin,
       userId: event.sender.id,
       oldUser: existing.user,
       newUser: event.sender,
@@ -47,10 +54,21 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     sender: event.sender,
     receivedAtMs: event.receivedAtMs,
     timestampSec: event.timestampSec,
+    utcOffsetMin: event.utcOffsetMin,
     content: event.content,
     attachments: event.attachments,
   };
-  if (event.replyToMessageId) message.replyToMessageId = event.replyToMessageId;
+  if (event.replyToMessageId) {
+    message.replyToMessageId = event.replyToMessageId;
+    // Snapshot reply target's sender + preview from current IC state
+    const targetIdx = findMessageIndex(draft.nodes, event.replyToMessageId);
+    if (targetIdx !== -1) {
+      const target = draft.nodes[targetIdx] as ICMessage;
+      message.replyToSender = target.sender;
+      const plain = contentToPlainText(target.content);
+      if (plain) message.replyToPreview = truncate(plain, REPLY_PREVIEW_MAX);
+    }
+  }
   if (event.forwardInfo) message.forwardInfo = event.forwardInfo;
   draft.nodes.push(message);
 
@@ -78,6 +96,7 @@ const reduceEdit = (draft: IntermediateContext, event: CanonicalEditEvent) => {
   node.content = event.content;
   node.attachments = event.attachments;
   node.editedAtSec = event.timestampSec;
+  node.editUtcOffsetMin = event.utcOffsetMin;
 };
 
 const reduceDelete = (draft: IntermediateContext, event: CanonicalDeleteEvent) => {

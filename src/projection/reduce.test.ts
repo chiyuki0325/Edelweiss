@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { reduce } from './reduce';
-import type { ICMessage } from './types';
+import type { ICMessage, ICUserRenamedEvent } from './types';
 import { createEmptyIC } from './types';
 import type {
   CanonicalDeleteEvent,
@@ -62,6 +62,7 @@ describe('reduce', () => {
       expect(node.messageId).toBe('1');
       expect(node.sender).toEqual(alice);
       expect(node.content).toEqual(content);
+      expect(node.utcOffsetMin).toBe(480);
 
       const userState = ic.users.get('1');
       expect(userState).toBeDefined();
@@ -93,6 +94,51 @@ describe('reduce', () => {
       expect(node.forwardInfo).toEqual({ senderName: 'Someone', date: 100 });
     });
 
+    it('snapshots reply target sender and preview', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, msg({
+        messageId: '2',
+        sender: bob,
+        receivedAtMs: 2000,
+        timestampSec: 2,
+        replyToMessageId: '1',
+      }));
+
+      const reply = ic.nodes[1] as ICMessage;
+      expect(reply.replyToMessageId).toBe('1');
+      expect(reply.replyToSender).toEqual(alice);
+      expect(reply.replyToPreview).toBe('hello');
+    });
+
+    it('omits replyToSender/Preview when target not found', () => {
+      const ic = reduce(createEmptyIC('chat1'), msg({
+        replyToMessageId: '999',
+      }));
+
+      const node = ic.nodes[0] as ICMessage;
+      expect(node.replyToMessageId).toBe('999');
+      expect(node.replyToSender).toBeUndefined();
+      expect(node.replyToPreview).toBeUndefined();
+    });
+
+    it('truncates long reply preview', () => {
+      const longText = 'a'.repeat(200);
+      let ic = reduce(createEmptyIC('chat1'), msg({
+        content: [{ type: 'text', text: longText }],
+      }));
+      ic = reduce(ic, msg({
+        messageId: '2',
+        sender: bob,
+        receivedAtMs: 2000,
+        timestampSec: 2,
+        replyToMessageId: '1',
+      }));
+
+      const reply = ic.nodes[1] as ICMessage;
+      expect(reply.replyToPreview).toHaveLength(101); // 100 chars + "…"
+      expect(reply.replyToPreview!.endsWith('…')).toBe(true);
+    });
+
     it('skips messages without sender', () => {
       const ic = reduce(createEmptyIC('chat1'), msg({ sender: undefined }));
       expect(ic.nodes).toHaveLength(0);
@@ -109,6 +155,8 @@ describe('reduce', () => {
       expect(ic.nodes).toHaveLength(3);
       expect(ic.nodes[0]!.type).toBe('message');
       expect(ic.nodes[1]!.type).toBe('system_event');
+      if (ic.nodes[1]!.type !== 'system_event') throw new Error('expected system_event');
+      expect((ic.nodes[1] as ICUserRenamedEvent).utcOffsetMin).toBe(480);
       expect(ic.nodes[2]!.type).toBe('message');
 
       const sysEvent = ic.nodes[1]!;
@@ -155,6 +203,7 @@ describe('reduce', () => {
       const node = ic.nodes[0] as ICMessage;
       expect(node.content).toEqual([{ type: 'text', text: 'edited' }]);
       expect(node.editedAtSec).toBe(2);
+      expect(node.editUtcOffsetMin).toBe(480);
     });
 
     it('is a no-op when target message not found', () => {

@@ -6,11 +6,15 @@ export interface ICMessage {
   sender: CanonicalUser;
   receivedAtMs: number;
   timestampSec: number;
+  utcOffsetMin: number;
   content: ContentNode[];
   replyToMessageId?: string;
+  replyToSender?: CanonicalUser;
+  replyToPreview?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
   editedAtSec?: number;
+  editUtcOffsetMin?: number;
   deleted?: boolean;
 }
 
@@ -19,6 +23,7 @@ export interface ICUserRenamedEvent {
   kind: 'user_renamed';
   receivedAtMs: number;
   timestampSec: number;
+  utcOffsetMin: number;
   userId: string;
   oldUser: CanonicalUser;
   newUser: CanonicalUser;
