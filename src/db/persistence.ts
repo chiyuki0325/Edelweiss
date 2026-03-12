@@ -8,6 +8,7 @@ import type {
   CanonicalEditEvent,
   CanonicalIMEvent,
   CanonicalMessageEvent,
+  ContentNode,
 } from '../adaptation/types';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
@@ -146,6 +147,10 @@ export const persistEvent = (db: DB, event: CanonicalIMEvent) => {
 
 type EventRow = typeof events.$inferSelect;
 
+// Recover content from plain text when content column is null (events persisted before content parsing)
+const recoverContent = (row: EventRow): ContentNode[] =>
+  row.content ?? (row.text ? [{ type: 'text', text: row.text }] : []);
+
 const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
   const event: CanonicalMessageEvent = {
     type: 'message',
@@ -153,7 +158,7 @@ const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
     messageId: row.messageId!,
     receivedAt: row.receivedAt,
     timestamp: row.timestamp,
-    content: row.content ?? [],
+    content: recoverContent(row),
     attachments: row.attachments ?? [],
   };
   if (row.sender) event.sender = row.sender;
@@ -169,7 +174,7 @@ const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
     messageId: row.messageId!,
     receivedAt: row.receivedAt,
     timestamp: row.timestamp,
-    content: row.content ?? [],
+    content: recoverContent(row),
     attachments: row.attachments ?? [],
   };
   if (row.sender) event.sender = row.sender;
