@@ -1,5 +1,4 @@
 export interface RenderParams {
-  systemPrompt: string;
   compactCursorMs?: number;
   compactionSummary?: string;
   // TODO: Late-binding context (recalled memory, cross-session awareness, action directives)
