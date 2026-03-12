@@ -9,6 +9,8 @@ import { setupLogger, useLogger } from './config/logger';
 import { createDatabase, loadEvents, loadKnownChatIds, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
 import { createEmptyIC, reduce } from './projection';
 import type { IntermediateContext } from './projection';
+import { rcToXml, render } from './rendering';
+import type { RenderedContext } from './rendering';
 import { createTelegramManager } from './telegram';
 import { loadSession } from './telegram/session';
 
@@ -17,9 +19,10 @@ setupLogger();
 
 const logger = useLogger('cahciua');
 const projLogger = useLogger('projection');
+const renderLogger = useLogger('rendering');
 
-const IC_DUMP_DIR = '/tmp/cahciua';
-mkdirSync(IC_DUMP_DIR, { recursive: true });
+const DUMP_DIR = '/tmp/cahciua';
+mkdirSync(DUMP_DIR, { recursive: true });
 
 const icToJson = (ic: IntermediateContext): string =>
   JSON.stringify({
@@ -29,7 +32,11 @@ const icToJson = (ic: IntermediateContext): string =>
   }, null, 2);
 
 const dumpIC = (ic: IntermediateContext) => {
-  writeFileSync(`${IC_DUMP_DIR}/${ic.sessionId}.json`, icToJson(ic));
+  writeFileSync(`${DUMP_DIR}/${ic.sessionId}.ic.json`, icToJson(ic));
+};
+
+const dumpRC = (sessionId: string, rc: RenderedContext) => {
+  writeFileSync(`${DUMP_DIR}/${sessionId}.rc.xml`, rcToXml(rc));
 };
 
 const logProjection = (oldIC: IntermediateContext, newIC: IntermediateContext) => {
@@ -40,8 +47,21 @@ const logProjection = (oldIC: IntermediateContext, newIC: IntermediateContext) =
   projLogger.log(`IC diff:\n${patch}`);
 };
 
+const logRendering = (sessionId: string, oldRC: RenderedContext | undefined, newRC: RenderedContext) => {
+  const newXml = rcToXml(newRC);
+  if (!oldRC) {
+    renderLogger.log(`RC(${sessionId}) full:\n${newXml}`);
+    return;
+  }
+  const oldXml = rcToXml(oldRC);
+  if (oldXml === newXml) return;
+  const patch = createPatch(`RC(${sessionId})`, oldXml, newXml, 'before', 'after', { context: 3 });
+  renderLogger.log(`RC diff:\n${patch}`);
+};
+
 const reduceAndLog = (
   sessions: Map<string, IntermediateContext>,
+  renderedSessions: Map<string, RenderedContext>,
   chatId: string,
   event: Parameters<typeof reduce>[1],
 ) => {
@@ -50,6 +70,12 @@ const reduceAndLog = (
   sessions.set(chatId, newIC);
   logProjection(oldIC, newIC);
   dumpIC(newIC);
+
+  const oldRC = renderedSessions.get(chatId);
+  const newRC = render(newIC);
+  renderedSessions.set(chatId, newRC);
+  logRendering(chatId, oldRC, newRC);
+  dumpRC(chatId, newRC);
 };
 
 const main = async () => {
@@ -58,17 +84,23 @@ const main = async () => {
   const db = createDatabase(env.DB_PATH, logger);
   runMigrations(db, logger);
 
-  // Cold-start: replay events per chat to rebuild IC
+  // Cold-start: replay events per chat to rebuild IC + RC
   const sessions = new Map<string, IntermediateContext>();
+  const renderedSessions = new Map<string, RenderedContext>();
   for (const chatId of loadKnownChatIds(db)) {
     let ic = createEmptyIC(chatId);
     const events = loadEvents(db, chatId);
     for (const event of events)
       ic = reduce(ic, event);
     sessions.set(chatId, ic);
-    logger.withFields({ chatId, events: events.length, nodes: ic.nodes.length, users: ic.users.size }).log('Replayed session');
-    projLogger.log(`IC snapshot:\n${icToJson(ic)}`);
     dumpIC(ic);
+
+    const rc = render(ic);
+    renderedSessions.set(chatId, rc);
+    logRendering(chatId, undefined, rc);
+    dumpRC(chatId, rc);
+
+    logger.withFields({ chatId, events: events.length, nodes: ic.nodes.length, users: ic.users.size }).log('Replayed session');
   }
   logger.withFields({ sessions: sessions.size }).log('Cold start complete');
 
@@ -105,7 +137,7 @@ const main = async () => {
       logger.withError(err).error('Failed to persist message');
     }
 
-    reduceAndLog(sessions, event.chatId, event);
+    reduceAndLog(sessions, renderedSessions, event.chatId, event);
   });
 
   telegram.onMessageEdit(edit => {
@@ -131,7 +163,7 @@ const main = async () => {
       logger.withError(err).error('Failed to persist message edit');
     }
 
-    reduceAndLog(sessions, event.chatId, event);
+    reduceAndLog(sessions, renderedSessions, event.chatId, event);
   });
 
   telegram.onMessageDelete(del => {
@@ -154,7 +186,7 @@ const main = async () => {
       logger.withError(err).error('Failed to persist message delete');
     }
 
-    reduceAndLog(sessions, event.chatId, event);
+    reduceAndLog(sessions, renderedSessions, event.chatId, event);
   });
 
   const shutdown = async () => {
