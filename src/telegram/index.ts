@@ -91,7 +91,7 @@ export const createTelegramManager = (
       if (!canGenerateThumbnail(att)) continue;
       try {
         const buffer = await downloadAttachmentMedia(chatId, messageId, att);
-        if (buffer) att.thumbnail = await generateThumbnail(buffer);
+        if (buffer) att.thumbnailWebp = await generateThumbnail(buffer);
       } catch (err) {
         log.withError(err).warn('Failed to generate thumbnail');
       }

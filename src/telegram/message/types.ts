@@ -33,8 +33,8 @@ export interface Attachment {
   height?: number;
   duration?: number;
 
-  // Low-res thumbnail base64 for LLM context (~85 tokens)
-  thumbnail?: string;
+  // Low-res thumbnail (WebP, ≤512px) for LLM context (~85 tokens)
+  thumbnailWebp?: string;
 
   // Sticker-specific
   emoji?: string;

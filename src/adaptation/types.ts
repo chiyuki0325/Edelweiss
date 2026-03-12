@@ -12,7 +12,7 @@ export interface CanonicalAttachment {
   width?: number;
   height?: number;
   duration?: number;
-  thumbnail?: string;
+  thumbnailWebp?: string;
 }
 
 // Rich text content tree — platform-agnostic representation parsed from

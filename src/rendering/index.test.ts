@@ -281,7 +281,7 @@ describe('render', () => {
 
     it('includes thumbnail as image content piece', () => {
       const rc = render(ic([message({
-        attachments: [{ type: 'photo', width: 800, height: 600, thumbnail: 'AAAA' }],
+        attachments: [{ type: 'photo', width: 800, height: 600, thumbnailWebp: 'AAAA' }],
       })]));
       expect(rc).toHaveLength(1);
       const pieces = rc[0]!.content;
@@ -292,7 +292,7 @@ describe('render', () => {
 
     it('shows [thumbnail] placeholder in rcToXml', () => {
       const rc = render(ic([message({
-        attachments: [{ type: 'photo', width: 800, height: 600, thumbnail: 'AAAA' }],
+        attachments: [{ type: 'photo', width: 800, height: 600, thumbnailWebp: 'AAAA' }],
       })]));
       const text = xml(rc);
       expect(text).toContain('[thumbnail]');
@@ -302,8 +302,8 @@ describe('render', () => {
     it('includes multiple thumbnails for album', () => {
       const rc = render(ic([message({
         attachments: [
-          { type: 'photo', width: 800, height: 600, thumbnail: 'AAA' },
-          { type: 'photo', width: 1920, height: 1080, thumbnail: 'BBB' },
+          { type: 'photo', width: 800, height: 600, thumbnailWebp: 'AAA' },
+          { type: 'photo', width: 1920, height: 1080, thumbnailWebp: 'BBB' },
         ],
       })]));
       const pieces = rc[0]!.content;

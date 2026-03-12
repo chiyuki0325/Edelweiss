@@ -114,8 +114,8 @@ const renderMessage = (msg: ICMessage): RenderedContentPiece[] => {
 
   // Append thumbnail images as separate content pieces (Driver converts to provider format)
   for (const att of msg.attachments) {
-    if (att.thumbnail)
-      pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnail}` });
+    if (att.thumbnailWebp)
+      pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnailWebp}` });
   }
 
   return pieces;

@@ -319,14 +319,14 @@ describe('adaptMessage', () => {
         width: 800,
         height: 600,
         fileId: 'abc',
-        thumbnail: 'base64data',
+        thumbnailWebp: 'base64data',
       }],
     }));
     expect(event.attachments).toEqual([{
       type: 'photo',
       width: 800,
       height: 600,
-      thumbnail: 'base64data',
+      thumbnailWebp: 'base64data',
     }]);
   });
 

@@ -34,7 +34,7 @@ const adaptAttachment = (a: Attachment): CanonicalAttachment => {
   if (a.width != null) result.width = a.width;
   if (a.height != null) result.height = a.height;
   if (a.duration != null) result.duration = a.duration;
-  if (a.thumbnail) result.thumbnail = a.thumbnail;
+  if (a.thumbnailWebp) result.thumbnailWebp = a.thumbnailWebp;
   return result;
 };
 
