@@ -1,8 +1,8 @@
-import type { RenderParams, RenderedContext, RenderedContextSegment } from './types';
+import type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';
 import type { CanonicalAttachment, CanonicalUser, ContentNode } from '../adaptation/types';
 import type { ICMessage, ICSystemEvent, IntermediateContext } from '../projection/types';
 
-export type { RenderParams, RenderedContext, RenderedContextSegment } from './types';
+export type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';
 
 // --- Helpers ---
 
@@ -68,9 +68,9 @@ const renderAttachment = (att: CanonicalAttachment): string => {
   return `<attachment ${attrs.join(' ')}/>`;
 };
 
-// --- ICNode → XML ---
+// --- ICNode → content pieces ---
 
-const renderMessage = (msg: ICMessage): string => {
+const renderMessage = (msg: ICMessage): RenderedContentPiece[] => {
   const attrs: string[] = [
     `id="${escapeXml(msg.messageId)}"`,
     `sender="${escapeXml(formatSender(msg.sender))}"`,
@@ -90,7 +90,7 @@ const renderMessage = (msg: ICMessage): string => {
 
   if (msg.deleted) {
     attrs.push('deleted="true"');
-    return `<message ${attrs.join(' ')}/>`;
+    return [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }];
   }
 
   const parts: string[] = [];
@@ -108,7 +108,17 @@ const renderMessage = (msg: ICMessage): string => {
   for (const att of msg.attachments)
     parts.push(renderAttachment(att));
 
-  return `<message ${attrs.join(' ')}>\n${parts.join('\n')}\n</message>`;
+  const pieces: RenderedContentPiece[] = [
+    { type: 'text', text: `<message ${attrs.join(' ')}>\n${parts.join('\n')}\n</message>` },
+  ];
+
+  // Append thumbnail images as separate content pieces (Driver converts to provider format)
+  for (const att of msg.attachments) {
+    if (att.thumbnail)
+      pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnail}` });
+  }
+
+  return pieces;
 };
 
 const renderSystemEvent = (event: ICSystemEvent): string => {
@@ -126,14 +136,11 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
   for (const node of ic.nodes) {
     if (params.compactCursorMs != null && node.receivedAtMs < params.compactCursorMs) continue;
 
-    const xml = node.type === 'message'
+    const content = node.type === 'message'
       ? renderMessage(node)
-      : renderSystemEvent(node);
+      : [{ type: 'text' as const, text: renderSystemEvent(node) }];
 
-    segments.push({
-      receivedAtMs: node.receivedAtMs,
-      content: [{ type: 'text', text: xml }],
-    });
+    segments.push({ receivedAtMs: node.receivedAtMs, content });
   }
 
   return segments;
@@ -142,6 +149,5 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
 export const rcToXml = (rc: RenderedContext): string =>
   rc.map(seg =>
     seg.content
-      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-      .map(p => p.text)
-      .join('')).join('\n');
+      .map(p => p.type === 'text' ? p.text : '[thumbnail]')
+      .join('\n')).join('\n');
