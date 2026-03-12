@@ -224,7 +224,7 @@ const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUse
     chatId: resolveChatId(message.peerId),
     sender: senderInfo,
     date: message.date,
-    text: message.text,
+    text: message.rawText,
     entities: convertGramjsEntities(message.entities),
     replyToMessageId: replyTo?.replyToMsgId,
     replyToTopId: replyTo?.replyToTopId,
