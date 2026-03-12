@@ -120,8 +120,8 @@ export const persistEvent = (db: DB, event: CanonicalIMEvent) => {
   const base = {
     chatId: event.chatId,
     type: event.type,
-    receivedAt: event.receivedAt,
-    timestamp: event.timestamp,
+    receivedAtMs: event.receivedAtMs,
+    timestampSec: event.timestampSec,
   };
 
   if (event.type === 'delete') {
@@ -156,8 +156,8 @@ const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
     type: 'message',
     chatId: row.chatId,
     messageId: row.messageId!,
-    receivedAt: row.receivedAt,
-    timestamp: row.timestamp,
+    receivedAtMs: row.receivedAtMs,
+    timestampSec: row.timestampSec,
     content: recoverContent(row),
     attachments: row.attachments ?? [],
   };
@@ -172,8 +172,8 @@ const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
     type: 'edit',
     chatId: row.chatId,
     messageId: row.messageId!,
-    receivedAt: row.receivedAt,
-    timestamp: row.timestamp,
+    receivedAtMs: row.receivedAtMs,
+    timestampSec: row.timestampSec,
     content: recoverContent(row),
     attachments: row.attachments ?? [],
   };
@@ -185,8 +185,8 @@ const reconstructDeleteEvent = (row: EventRow): CanonicalDeleteEvent => ({
   type: 'delete',
   chatId: row.chatId,
   messageIds: row.messageIds ?? [],
-  receivedAt: row.receivedAt,
-  timestamp: row.timestamp,
+  receivedAtMs: row.receivedAtMs,
+  timestampSec: row.timestampSec,
 });
 
 const reconstructEvent = (row: EventRow): CanonicalIMEvent => {
@@ -201,14 +201,14 @@ const reconstructEvent = (row: EventRow): CanonicalIMEvent => {
 export const loadEvents = (db: DB, chatId: string): CanonicalIMEvent[] => {
   const rows = db.select().from(events)
     .where(eq(events.chatId, chatId))
-    .orderBy(events.receivedAt, events.id)
+    .orderBy(events.receivedAtMs, events.id)
     .all();
   return rows.map(reconstructEvent);
 };
 
 export const loadRecentEvents = (db: DB, limit: number): CanonicalIMEvent[] => {
   const rows = db.select().from(events)
-    .orderBy(desc(events.receivedAt), desc(events.id))
+    .orderBy(desc(events.receivedAtMs), desc(events.id))
     .limit(limit)
     .all();
   return rows.reverse().map(reconstructEvent);

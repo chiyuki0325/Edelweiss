@@ -44,8 +44,8 @@ export interface CanonicalMessageEvent {
   chatId: string;
   messageId: string;
   sender?: CanonicalUser;
-  receivedAt: number;
-  timestamp: number;
+  receivedAtMs: number;
+  timestampSec: number;
   content: ContentNode[];
   replyToMessageId?: string;
   forwardInfo?: CanonicalForwardInfo;
@@ -57,8 +57,8 @@ export interface CanonicalEditEvent {
   chatId: string;
   messageId: string;
   sender?: CanonicalUser;
-  receivedAt: number;
-  timestamp: number;
+  receivedAtMs: number;
+  timestampSec: number;
   content: ContentNode[];
   attachments: CanonicalAttachment[];
 }
@@ -67,8 +67,8 @@ export interface CanonicalDeleteEvent {
   type: 'delete';
   chatId: string;
   messageIds: string[];
-  receivedAt: number;
-  timestamp: number;
+  receivedAtMs: number;
+  timestampSec: number;
 }
 
 export type CanonicalIMEvent =

@@ -176,8 +176,8 @@ export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
     type: 'message',
     chatId: msg.chatId,
     messageId: String(msg.messageId),
-    receivedAt: Date.now(),
-    timestamp: msg.date,
+    receivedAtMs: Date.now(),
+    timestampSec: msg.date,
     content: parseContent(msg.text, msg.entities),
     attachments: adaptAttachments(msg.attachments),
   };
@@ -193,8 +193,8 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
     type: 'edit',
     chatId: edit.chatId,
     messageId: String(edit.messageId),
-    receivedAt: Date.now(),
-    timestamp: edit.editDate,
+    receivedAtMs: Date.now(),
+    timestampSec: edit.editDate,
     content: parseContent(edit.text, edit.entities),
     attachments: adaptAttachments(edit.attachments),
   };
@@ -209,7 +209,7 @@ export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent =>
     type: 'delete',
     chatId: del.chatId,
     messageIds: del.messageIds.map(String),
-    receivedAt: now,
-    timestamp: Math.floor(now / 1000),
+    receivedAtMs: now,
+    timestampSec: Math.floor(now / 1000),
   };
 };

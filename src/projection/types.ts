@@ -4,22 +4,21 @@ export interface ICMessage {
   type: 'message';
   messageId: string;
   sender: CanonicalUser;
-  // receivedAt flows from the source event for merge ordering (see SPEC §RC and TRs — Orthogonal Merge)
-  receivedAt: number;
-  timestamp: number;
+  receivedAtMs: number;
+  timestampSec: number;
   content: ContentNode[];
   replyToMessageId?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
-  editedAt?: number;
+  editedAtSec?: number;
   deleted?: boolean;
 }
 
 export interface ICUserRenamedEvent {
   type: 'system_event';
   kind: 'user_renamed';
-  receivedAt: number;
-  timestamp: number;
+  receivedAtMs: number;
+  timestampSec: number;
   userId: string;
   oldUser: CanonicalUser;
   newUser: CanonicalUser;
@@ -32,8 +31,8 @@ export type ICNode = ICMessage | ICSystemEvent;
 
 export interface ICUserState {
   user: CanonicalUser;
-  firstSeenAt: number;
-  lastSeenAt: number;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
   messageCount: number;
 }
 

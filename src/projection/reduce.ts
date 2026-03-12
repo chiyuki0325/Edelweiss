@@ -32,8 +32,8 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     const systemEvent: ICSystemEvent = {
       type: 'system_event',
       kind: 'user_renamed',
-      receivedAt: event.receivedAt,
-      timestamp: event.timestamp,
+      receivedAtMs: event.receivedAtMs,
+      timestampSec: event.timestampSec,
       userId: event.sender.id,
       oldUser: existing.user,
       newUser: event.sender,
@@ -45,8 +45,8 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     type: 'message',
     messageId: event.messageId,
     sender: event.sender,
-    receivedAt: event.receivedAt,
-    timestamp: event.timestamp,
+    receivedAtMs: event.receivedAtMs,
+    timestampSec: event.timestampSec,
     content: event.content,
     attachments: event.attachments,
   };
@@ -57,13 +57,13 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
   // Update user state
   if (existing) {
     existing.user = event.sender;
-    existing.lastSeenAt = event.receivedAt;
+    existing.lastSeenAtMs = event.receivedAtMs;
     existing.messageCount++;
   } else {
     const state: ICUserState = {
       user: event.sender,
-      firstSeenAt: event.receivedAt,
-      lastSeenAt: event.receivedAt,
+      firstSeenAtMs: event.receivedAtMs,
+      lastSeenAtMs: event.receivedAtMs,
       messageCount: 1,
     };
     draft.users.set(event.sender.id, state);
@@ -77,7 +77,7 @@ const reduceEdit = (draft: IntermediateContext, event: CanonicalEditEvent) => {
   const node = draft.nodes[idx] as ICMessage;
   node.content = event.content;
   node.attachments = event.attachments;
-  node.editedAt = event.timestamp;
+  node.editedAtSec = event.timestampSec;
 };
 
 const reduceDelete = (draft: IntermediateContext, event: CanonicalDeleteEvent) => {

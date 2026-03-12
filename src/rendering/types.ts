@@ -1,6 +1,6 @@
 export interface RenderParams {
   systemPrompt: string;
-  compactCursor?: number;
+  compactCursorMs?: number;
   compactionSummary?: string;
   // TODO: Late-binding context (recalled memory, cross-session awareness, action directives)
   // will be injected at the end of the last user message. Exact fields TBD when implementing
@@ -14,11 +14,11 @@ export type RenderedContentPiece =
   | { type: 'image'; url: string };
 
 // Rendered Context (RC) — the output of the Rendering layer.
-// One segment per IC node. Carries receivedAt from the source event for merge ordering.
+// One segment per IC node. Carries receivedAtMs from the source event for merge ordering.
 // Driver merges RC + TRs by timestamp, grouping consecutive segments between TRs
 // into user messages.
 export interface RenderedContextSegment {
-  receivedAt: number;
+  receivedAtMs: number;
   content: RenderedContentPiece[];
 }
 

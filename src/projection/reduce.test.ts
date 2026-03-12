@@ -20,8 +20,8 @@ const msg = (overrides: Partial<CanonicalMessageEvent> = {}): CanonicalMessageEv
   chatId: 'chat1',
   messageId: '1',
   sender: alice,
-  receivedAt: 1000,
-  timestamp: 1,
+  receivedAtMs: 1000,
+  timestampSec: 1,
   content,
   attachments: [],
   ...overrides,
@@ -32,8 +32,8 @@ const edit = (overrides: Partial<CanonicalEditEvent> = {}): CanonicalEditEvent =
   chatId: 'chat1',
   messageId: '1',
   sender: alice,
-  receivedAt: 2000,
-  timestamp: 2,
+  receivedAtMs: 2000,
+  timestampSec: 2,
   content: [{ type: 'text', text: 'edited' }],
   attachments: [],
   ...overrides,
@@ -43,8 +43,8 @@ const del = (overrides: Partial<CanonicalDeleteEvent> = {}): CanonicalDeleteEven
   type: 'delete',
   chatId: 'chat1',
   messageIds: ['1'],
-  receivedAt: 3000,
-  timestamp: 3,
+  receivedAtMs: 3000,
+  timestampSec: 3,
   ...overrides,
 });
 
@@ -63,19 +63,19 @@ describe('reduce', () => {
       const userState = ic.users.get('1');
       expect(userState).toBeDefined();
       expect(userState!.user).toEqual(alice);
-      expect(userState!.firstSeenAt).toBe(1000);
-      expect(userState!.lastSeenAt).toBe(1000);
+      expect(userState!.firstSeenAtMs).toBe(1000);
+      expect(userState!.lastSeenAtMs).toBe(1000);
       expect(userState!.messageCount).toBe(1);
     });
 
-    it('updates lastSeenAt and messageCount on repeated messages', () => {
+    it('updates lastSeenAtMs and messageCount on repeated messages', () => {
       let ic = reduce(createEmptyIC('chat1'), msg());
-      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2 }));
+      ic = reduce(ic, msg({ messageId: '2', receivedAtMs: 2000, timestampSec: 2 }));
 
       expect(ic.nodes).toHaveLength(2);
       const userState = ic.users.get('1')!;
-      expect(userState.firstSeenAt).toBe(1000);
-      expect(userState.lastSeenAt).toBe(2000);
+      expect(userState.firstSeenAtMs).toBe(1000);
+      expect(userState.lastSeenAtMs).toBe(2000);
       expect(userState.messageCount).toBe(2);
     });
 
@@ -101,7 +101,7 @@ describe('reduce', () => {
     it('inserts ICUserRenamedEvent when displayName changes', () => {
       const renamedAlice: CanonicalUser = { id: '1', displayName: 'Alice New', username: 'alice', isBot: false };
       let ic = reduce(createEmptyIC('chat1'), msg());
-      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2, sender: renamedAlice }));
+      ic = reduce(ic, msg({ messageId: '2', receivedAtMs: 2000, timestampSec: 2, sender: renamedAlice }));
 
       expect(ic.nodes).toHaveLength(3);
       expect(ic.nodes[0]!.type).toBe('message');
@@ -118,7 +118,7 @@ describe('reduce', () => {
     it('inserts ICUserRenamedEvent when username changes', () => {
       const renamedAlice: CanonicalUser = { id: '1', displayName: 'Alice', username: 'alice_new', isBot: false };
       let ic = reduce(createEmptyIC('chat1'), msg());
-      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2, sender: renamedAlice }));
+      ic = reduce(ic, msg({ messageId: '2', receivedAtMs: 2000, timestampSec: 2, sender: renamedAlice }));
 
       expect(ic.nodes).toHaveLength(3);
       expect(ic.nodes[1]!.type).toBe('system_event');
@@ -126,7 +126,7 @@ describe('reduce', () => {
 
     it('does not emit system event when user info unchanged', () => {
       let ic = reduce(createEmptyIC('chat1'), msg());
-      ic = reduce(ic, msg({ messageId: '2', receivedAt: 2000, timestamp: 2 }));
+      ic = reduce(ic, msg({ messageId: '2', receivedAtMs: 2000, timestampSec: 2 }));
 
       expect(ic.nodes).toHaveLength(2);
       expect(ic.nodes.every(n => n.type === 'message')).toBe(true);
@@ -134,14 +134,14 @@ describe('reduce', () => {
   });
 
   describe('edit events', () => {
-    it('updates content, attachments, and sets editedAt on existing message', () => {
+    it('updates content, attachments, and sets editedAtSec on existing message', () => {
       let ic = reduce(createEmptyIC('chat1'), msg());
       ic = reduce(ic, edit());
 
       expect(ic.nodes).toHaveLength(1);
       const node = ic.nodes[0] as ICMessage;
       expect(node.content).toEqual([{ type: 'text', text: 'edited' }]);
-      expect(node.editedAt).toBe(2);
+      expect(node.editedAtSec).toBe(2);
     });
 
     it('is a no-op when target message not found', () => {
@@ -161,7 +161,7 @@ describe('reduce', () => {
 
     it('handles multiple messageIds', () => {
       let ic = reduce(createEmptyIC('chat1'), msg());
-      ic = reduce(ic, msg({ messageId: '2', sender: bob, receivedAt: 2000, timestamp: 2 }));
+      ic = reduce(ic, msg({ messageId: '2', sender: bob, receivedAtMs: 2000, timestampSec: 2 }));
       ic = reduce(ic, del({ messageIds: ['1', '2'] }));
 
       expect((ic.nodes[0] as ICMessage).deleted).toBe(true);

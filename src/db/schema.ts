@@ -55,8 +55,8 @@ export const events = sqliteTable('events', {
 
   chatId: text('chat_id').notNull(),
   type: text('type').notNull().$type<'message' | 'edit' | 'delete'>(),
-  receivedAt: integer('received_at').notNull(),
-  timestamp: integer('timestamp').notNull(),
+  receivedAtMs: integer('received_at').notNull(),
+  timestampSec: integer('timestamp').notNull(),
 
   // message/edit only (canonical string IDs)
   messageId: text('message_id'),

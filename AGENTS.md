@@ -115,8 +115,8 @@ Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no si
 ### Dual Timestamps
 
 Every `CanonicalIMEvent` carries two timestamps:
-- `receivedAt` (milliseconds): local receive time, set by `Date.now()` at adaptation. **Ordering source of truth** — ensures cold-start replay matches live processing.
-- `timestamp` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAt / 1000)`.
+- `receivedAtMs` (milliseconds): local receive time, set by `Date.now()` at adaptation. **Ordering source of truth** — ensures cold-start replay matches live processing.
+- `timestampSec` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAtMs / 1000)`.
 
 DB queries order by `(received_at, id)`.
 
@@ -143,13 +143,13 @@ Debounce lives in Driver (not a separate orchestration layer) because tool call 
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call = one TR (not the entire loop as one TR). Before each loop iteration, Driver re-renders IC to pick up new chat messages. New messages' `receivedAt` > previous TR's `requestedAt` (causality), so they merge correctly after the TR's tool results and before the next assistant response. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+Each LLM API call = one TR (not the entire loop as one TR). Before each loop iteration, Driver re-renders IC to pick up new chat messages. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR's tool results and before the next assistant response. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
 
 ### RC and TRs — Orthogonal Merge
 
 RC (from Rendering) and TRs (from Driver) are two independent sorted streams:
-- RC segments carry `receivedAt` (milliseconds, from source events)
-- TRs carry `requestedAt` (milliseconds, `Date.now()` at API request time)
+- RC segments carry `receivedAtMs` (milliseconds, from source events)
+- TRs carry `requestedAtMs` (milliseconds, `Date.now()` at API request time)
 
 Driver merges them by timestamp into the final LLM API messages array. Causality guarantees correct ordering in online operation. **Mandatory tiebreaker**: when timestamps are equal, RC is ordered before TRs — required because Anthropic Messages API enforces strict user/assistant role alternation.
 
