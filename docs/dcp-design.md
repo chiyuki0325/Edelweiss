@@ -126,8 +126,23 @@ When Projection processes edit or delete events:
 - If the target message is NOT in current IC (already GC'd) → silently ignore
 - Mirrors real IM behavior: edits and deletes modify the original position, not new timeline entries
 
+Edit and delete events come exclusively from the userbot (gramjs / MTProto). Bot API does not push edit or delete notifications. Without the userbot client, the system would not need to handle edits or deletes at all.
+
 ### User State Change Detection (MetaReducer pattern)
-Reducer compares `event.sender` against `ic.users` on each message. If displayName or username changed, inserts an `ICSystemEvent` at the current position. Gives the LLM temporal awareness of identity changes without dedicated platform events. Core MetaReducer idea — a step within the reducer, not a separate abstraction.
+Reducer compares `event.sender` against `ic.users` on each message. If displayName or username changed, inserts an `ICSystemEvent` at the current position. Old messages retain their original `sender` — Rendering uses `node.sender` (the name at message time), not the latest from `ic.users`. Gives the LLM temporal awareness of identity changes without dedicated platform events. Core MetaReducer idea — a step within the reducer, not a separate abstraction.
+
+### IC Mutation Semantics and KV Cache
+
+IC mutations fall into two categories with different KV cache properties:
+
+**In-place mutations** (edit, delete): modify existing IC nodes at their original position. Rendering renders the current state of each node. This invalidates the KV cache from the mutation point onward — an edit near the start of the context causes a near-full cache miss. Acceptable because:
+- Edit/delete events are infrequent (~5-10% of messages) and usually target recent messages (small cache invalidation range)
+- Messages already covered by compaction are not in IC — edits targeting them are silently ignored
+- Semantic inconsistency with past TRs (assistant responded to pre-edit content, but context now shows post-edit content) does not block any LLM API and does not break thinking signatures (Anthropic signatures attest only to thinking block content, not the conversation prefix)
+
+**Append-only mutations** (user rename, future: join/leave): insert new system event nodes at the end of IC. Old messages are not modified. Naturally KV-cache friendly — the rendered prefix is unchanged.
+
+Design rule: **metadata changes about entities (users, chat settings) are append-only; content changes to specific messages are in-place with marks.** This keeps the common case (new messages + metadata events) cache-friendly and limits cache invalidation to the uncommon case (edits/deletes).
 
 ### Unidirectional Data Flow
 Data flows strictly forward. No backflow from Driver to events/Projection:
