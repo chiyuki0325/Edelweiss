@@ -16,3 +16,13 @@ export interface DriverConfig {
   chatIds: string[];
   reasoningSignatureCompat?: string;
 }
+
+export interface ToolDef {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+  execute: (args: unknown) => Promise<unknown>;
+}

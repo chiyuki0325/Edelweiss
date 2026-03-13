@@ -2,12 +2,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
-import { generateText } from 'xsai';
 
 import { mergeContext } from './merge';
 import { renderSystemPrompt } from './prompt';
 import { createSendMessageTool } from './tools';
-import type { DriverConfig, TurnResponse } from './types';
+import type { DriverConfig, ToolDef, TurnResponse } from './types';
 import type { DB } from '../db/client';
 import { loadTurnResponses, persistTurnResponse } from '../db/persistence';
 import type { RenderedContext } from '../rendering/types';
@@ -153,6 +152,42 @@ export const createDriver = (config: DriverConfig, deps: {
   const running = new Set<string>();
   const pendingRetrigger = new Set<string>();
 
+  // Single chat completion API call. No automatic tool execution or multi-step loop —
+  // we handle tools and step control ourselves for full visibility and interruptibility.
+  const chatCompletion = async (params: {
+    messages: Message[];
+    system?: string;
+    tools?: ToolDef[];
+  }) => {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      messages: params.messages,
+    };
+    if (params.system) body.system = params.system;
+    if (params.tools?.length)
+      body.tools = params.tools.map(t => ({ type: t.type, function: t.function }));
+
+    const url = `${config.apiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`LLM API ${res.status}: ${text}`);
+    }
+
+    return res.json() as Promise<{
+      choices: Array<{ finish_reason: string; message: AnyMsg }>;
+      usage: { prompt_tokens: number; completion_tokens: number };
+    }>;
+  };
+
   // Load RC + TRs, run self-loop check, sanitize reasoning, merge and trim.
   // Returns null if nothing to do (no RC, no new external messages).
   const prepareContext = (chatId: string) => {
@@ -222,12 +257,7 @@ export const createDriver = (config: DriverConfig, deps: {
     running.add(chatId);
     log.withFields({ chatId }).log('Triggering LLM call');
 
-    // Accumulators for the current turn — outside try so catch can access them
-    let requestedAtMs = Date.now();
-    let accNewMessages: unknown[] = [];
-    let accInputTokens = 0;
-    let accOutputTokens = 0;
-
+    let stepRequestedAt = Date.now();
     try {
       let currentMessages = ctx.messages;
       let system = await renderSystemPrompt({
@@ -239,67 +269,99 @@ export const createDriver = (config: DriverConfig, deps: {
         log.withFields({ chatId, text: text.length > 100 ? `${text.slice(0, 100)}...` : text, replyTo }).log('send_message tool called');
         await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined);
       });
+      const tools = [sendMessageTool];
 
-      // Manual step loop: one LLM call per iteration (xsai maxSteps defaults to 1).
-      // Tools are executed within each step, but the model doesn't see tool results
-      // until the next iteration. Between steps we check for new messages that should
-      // interrupt the current turn — if found, persist the partial TR and start a
-      // new turn with fresh context (including the new events).
+      // Manual step loop: one API call per iteration with manual tool execution.
+      // Each step is persisted as its own TR immediately. Between steps we check
+      // for new messages that should interrupt the current turn.
       let step = 0;
       while (step < MAX_STEPS) {
         step++;
 
-        writeFileSync(`${DUMP_DIR}/${chatId}.request.json`, JSON.stringify({ system, messages: currentMessages }, null, 2));
+        writeFileSync(`${DUMP_DIR}/${chatId}.request.json`, JSON.stringify({
+          model: config.model, system, messages: currentMessages,
+          tools: tools.map(t => ({ type: t.type, function: t.function })),
+        }, null, 2));
 
-        const result = await generateText({
-          baseURL: config.apiBaseUrl,
-          apiKey: config.apiKey,
-          model: config.model,
-          messages: currentMessages,
-          system,
-          tools: [sendMessageTool],
-        });
+        // Capture timestamp BEFORE the API call so events arriving during
+        // the (potentially slow) request have receivedAtMs > requestedAtMs
+        // and won't be missed by the self-loop check on the next turn.
+        stepRequestedAt = Date.now();
 
-        const stepNewMsgs = result.messages.slice(currentMessages.length);
-        accNewMessages.push(...stepNewMsgs);
-        accInputTokens += result.usage.prompt_tokens;
-        accOutputTokens += result.usage.completion_tokens;
+        const response = await chatCompletion({ messages: currentMessages, system, tools });
+        const choice = response.choices[0];
+
+        if (!choice) {
+          // Model stayed silent — persist empty TR to advance lastTrTime
+          log.withFields({ chatId, step }).log('Model chose to stay silent (no choices)');
+          persistTurnResponse(db, chatId, {
+            requestedAtMs: stepRequestedAt,
+            provider: 'openai-chat',
+            data: [],
+            inputTokens: response.usage.prompt_tokens,
+            outputTokens: response.usage.completion_tokens,
+          });
+          break;
+        }
+
+        const assistantMsg = choice.message;
+        const stepData: unknown[] = [assistantMsg];
+
+        // Execute tools manually — we control this so every tool call and result
+        // is visible in stepData and persisted in the TR.
+        if (assistantMsg.tool_calls?.length) {
+          for (const tc of assistantMsg.tool_calls) {
+            const tool = tools.find(t => t.function.name === tc.function.name);
+            try {
+              const args = JSON.parse(tc.function.arguments);
+              const result = tool
+                ? await tool.execute(args)
+                : { error: `Unknown tool: ${tc.function.name}` };
+              stepData.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: typeof result === 'string' ? result : JSON.stringify(result),
+              });
+            } catch (err) {
+              log.withError(err).error(`Tool ${tc.function.name} failed`);
+              stepData.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: String(err) }),
+              });
+            }
+          }
+        }
 
         log.withFields({
           chatId,
           step,
-          finishReason: result.finishReason,
-          newMessages: stepNewMsgs.length,
-          usage: result.usage,
+          finishReason: choice.finish_reason,
+          hasToolCalls: !!assistantMsg.tool_calls?.length,
+          newMessages: stepData.length,
+          usage: response.usage,
         }).log('Step completed');
 
-        // Check if model wants to continue (last new message is a tool result
-        // that needs to be fed back to the model in the next step)
-        const lastNewMsg = stepNewMsgs[stepNewMsgs.length - 1] as AnyMsg | undefined;
-        if (lastNewMsg?.role !== 'tool') break;
+        // Persist this step as its own TR immediately
+        persistTurnResponse(db, chatId, {
+          requestedAtMs: stepRequestedAt,
+          provider: 'openai-chat',
+          data: stepData,
+          inputTokens: response.usage.prompt_tokens,
+          outputTokens: response.usage.completion_tokens,
+          reasoningCompat: config.reasoningSignatureCompat ?? '',
+        });
+
+        // No tool calls → model is done
+        if (!assistantMsg.tool_calls?.length) break;
 
         // Model wants to continue — check for interruption by new events.
-        // If new messages arrived during this step, interrupt the current turn:
-        // persist the partial TR (tool calls + results so far) and start fresh
-        // with the new events merged into context. This lets the model see new
-        // user messages ASAP instead of waiting for the entire tool loop to finish.
+        // The TR we just saved is already durable, so prepareContext will
+        // include it along with the new events.
         if (pendingRetrigger.has(chatId)) {
           pendingRetrigger.delete(chatId);
           log.withFields({ chatId, step }).log('Turn interrupted by new messages');
 
-          // Persist current turn before starting new one
-          if (accNewMessages.length > 0) {
-            persistTurnResponse(db, chatId, {
-              requestedAtMs,
-              provider: 'openai-chat',
-              data: accNewMessages,
-              inputTokens: accInputTokens,
-              outputTokens: accOutputTokens,
-              reasoningCompat: config.reasoningSignatureCompat ?? '',
-            });
-          }
-
-          // Re-prepare context with new events + the TR we just saved
           const newCtx = prepareContext(chatId);
           if (!newCtx) return;
 
@@ -308,58 +370,15 @@ export const createDriver = (config: DriverConfig, deps: {
             currentChannel: 'telegram',
             timeNow: new Date().toISOString(),
           });
-
-          // Reset accumulators for new turn
-          accNewMessages = [];
-          accInputTokens = 0;
-          accOutputTokens = 0;
-          requestedAtMs = Date.now();
           step = 0;
           continue;
         }
 
-        // No interruption — feed tool results back to model in next step
-        currentMessages = result.messages as Message[];
-      }
-
-      // Persist final turn
-      if (accNewMessages.length > 0) {
-        persistTurnResponse(db, chatId, {
-          requestedAtMs,
-          provider: 'openai-chat',
-          data: accNewMessages,
-          inputTokens: accInputTokens,
-          outputTokens: accOutputTokens,
-          reasoningCompat: config.reasoningSignatureCompat ?? '',
-        });
+        // No interruption — append step data and continue
+        currentMessages = [...currentMessages, ...stepData] as Message[];
       }
     } catch (err) {
-      // "No choices returned" = model decided to stay silent (e.g. Claude returns
-      // empty choices with only 2 completion tokens for the stop sequence).
-      // Persist accumulated messages (or empty TR to advance lastTrTime).
-      if (err instanceof Error && err.message.includes('No choices returned')) {
-        log.withFields({ chatId }).log('Model chose to stay silent (no choices returned)');
-        persistTurnResponse(db, chatId, {
-          requestedAtMs,
-          provider: 'openai-chat',
-          data: accNewMessages,
-          inputTokens: accInputTokens,
-          outputTokens: accOutputTokens,
-        });
-      } else {
-        log.withError(err).error('LLM call failed');
-        // Persist accumulated messages if any (tool side effects already executed)
-        if (accNewMessages.length > 0) {
-          persistTurnResponse(db, chatId, {
-            requestedAtMs,
-            provider: 'openai-chat',
-            data: accNewMessages,
-            inputTokens: accInputTokens,
-            outputTokens: accOutputTokens,
-            reasoningCompat: config.reasoningSignatureCompat ?? '',
-          });
-        }
-      }
+      log.withError(err).error('LLM call failed');
     } finally {
       running.delete(chatId);
       if (pendingRetrigger.has(chatId)) {
