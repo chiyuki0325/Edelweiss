@@ -19,10 +19,9 @@ describe('system prompt (velin)', () => {
     expect(rendered).toContain('You just woke up.');
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('Chat Context Format');
-    expect(rendered).toContain('IDENTITY.md');
+    expect(rendered).toContain('only available tool');
 
     // Defaults applied
-    expect(rendered).toContain('/data');
     expect(rendered).toContain('telegram');
     expect(rendered).toContain('1440');
 
@@ -42,19 +41,15 @@ describe('system prompt (velin)', () => {
     expect(rendered).not.toContain('use_skill');
     expect(rendered).not.toContain('search_memory');
     expect(rendered).not.toContain('get_contacts');
+    expect(rendered).not.toContain('read_media');
+    expect(rendered).not.toContain('`read`');
+    expect(rendered).not.toContain('`write`');
+    expect(rendered).not.toContain('`exec`');
   });
 
   it('renders language header', async () => {
     const rendered = await renderPrompt({ language: 'zh', timeNow: '2025-01-01T00:00:00Z' });
     expect(rendered).toContain('language: zh');
-  });
-
-  it('conditionally includes read_media', async () => {
-    const withMedia = await renderPrompt({ supportsImageInput: true, timeNow: '2025-01-01T00:00:00Z' });
-    expect(withMedia).toContain('read_media');
-
-    const withoutMedia = await renderPrompt({ supportsImageInput: false, timeNow: '2025-01-01T00:00:00Z' });
-    expect(withoutMedia).not.toContain('read_media');
   });
 
   it('renders system files', async () => {
