@@ -4,6 +4,8 @@ import type { Logger } from '@guiiai/logg';
 import type { Message, Tool } from 'xsai';
 import { chat, responseJSON } from 'xsai';
 
+import { isToolResult } from './tools';
+
 const DUMP_DIR = '/tmp/cahciua';
 mkdirSync(DUMP_DIR, { recursive: true });
 
@@ -83,20 +85,31 @@ export const createRunner = (config: RunnerConfig) => {
 
       // Execute tools manually — we control this so every tool call and result
       // is visible in stepData and persisted in the TR.
+      let anyRequiresFollowUp = false;
       if (assistantMsg.tool_calls?.length) {
         for (const tc of assistantMsg.tool_calls) {
           const tool = params.tools.find(t => t.function.name === tc.function.name);
           try {
             const args = JSON.parse(tc.function.arguments);
-            const result = tool
+            const rawResult = tool
               ? await tool.execute(args, { messages: currentMessages, toolCallId: tc.id })
               : { error: `Unknown tool: ${tc.function.name}` };
+
+            // Extract follow-up signal — tools returning ToolResult control loop continuation;
+            // plain results (backward compat) default to requiring follow-up.
+            const { content, requiresFollowUp } = isToolResult(rawResult)
+              ? rawResult
+              : { content: rawResult, requiresFollowUp: true };
+            if (requiresFollowUp) anyRequiresFollowUp = true;
+
             stepData.push({
               role: 'tool',
               tool_call_id: tc.id,
-              content: typeof result === 'string' ? result : JSON.stringify(result),
+              content: typeof content === 'string' ? content : JSON.stringify(content),
             });
           } catch (err) {
+            // Errors always require follow-up (model should see the failure)
+            anyRequiresFollowUp = true;
             params.log.withError(err).error(`Tool ${tc.function.name} failed`);
             stepData.push({
               role: 'tool',
@@ -120,6 +133,12 @@ export const createRunner = (config: RunnerConfig) => {
 
       // No tool calls -> model is done
       if (!assistantMsg.tool_calls?.length) break;
+
+      // All tool calls opted out of follow-up — no need for another LLM round
+      if (!anyRequiresFollowUp) {
+        params.log.withFields({ chatId: params.chatId, step }).log('All tool calls completed without follow-up');
+        break;
+      }
 
       // Model wants to continue — check for interruption by new events.
       // The TR we just saved is already durable, so the next run will

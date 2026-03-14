@@ -1,5 +1,13 @@
 import type { Tool } from 'xsai';
 
+export interface ToolResult {
+  content: unknown;
+  requiresFollowUp: boolean;
+}
+
+export const isToolResult = (v: unknown): v is ToolResult =>
+  typeof v === 'object' && v !== null && 'requiresFollowUp' in v;
+
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string) => Promise<{ messageId: string }>,
 ): Tool => ({
@@ -12,13 +20,20 @@ export const createSendMessageTool = (
       properties: {
         text: { type: 'string', description: 'The message to send.' },
         reply_to: { type: 'string', description: 'A message id to reply to.' },
+        await_response: {
+          type: 'boolean',
+          description: 'Set to true if you need to perform additional actions after this message (e.g., send another message, use another tool). Defaults to false.',
+        },
       },
       required: ['text'],
     },
   },
   execute: async input => {
-    const { text, reply_to } = input as { text: string; reply_to?: string };
+    const { text, reply_to, await_response } = input as { text: string; reply_to?: string; await_response?: boolean };
     const result = await send(text, reply_to);
-    return { ok: true, message_id: result.messageId };
+    return {
+      content: { ok: true, message_id: result.messageId },
+      requiresFollowUp: await_response ?? false,
+    };
   },
 });
