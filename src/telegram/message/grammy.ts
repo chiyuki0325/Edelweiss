@@ -4,7 +4,7 @@ import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramU
 
 // --- entity conversion ---
 
-const convertGrammyEntities = (
+export const convertGrammyEntities = (
   entities?: GrammyMessage['entities'],
 ): MessageEntity[] | undefined => {
   if (!entities || entities.length === 0) return undefined;

@@ -4,8 +4,10 @@ import { Bot } from 'grammy';
 
 import { httpGetBuffer, registerHttpSecret } from '../http';
 import { createEventBus } from './event-bus';
+import { renderMarkdownToTelegramHTML } from './markdown';
 import type { TelegramMessage } from './message';
-import { fromGrammyMessage } from './message';
+import { convertGrammyEntities, fromGrammyMessage } from './message';
+import type { MessageEntity } from './message/types';
 
 export interface BotClientOptions {
   token: string;
@@ -20,6 +22,8 @@ export interface BotInfo {
 export interface SentMessage {
   messageId: number;
   date: number;
+  text: string;
+  entities?: MessageEntity[];
 }
 
 export interface BotClient {
@@ -92,13 +96,19 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
   };
 
   const sendMessage = async (chatId: string | number, text: string, options?: SendOptions): Promise<SentMessage> => {
-    const sent = await bot.api.sendMessage(chatId, text, {
+    const html = renderMarkdownToTelegramHTML(text);
+    const sent = await bot.api.sendMessage(chatId, html, {
       reply_parameters: options?.replyToMessageId
         ? { message_id: options.replyToMessageId }
         : undefined,
-      parse_mode: options?.parseMode,
+      parse_mode: options?.parseMode ?? 'HTML',
     });
-    return { messageId: sent.message_id, date: sent.date };
+    return {
+      messageId: sent.message_id,
+      date: sent.date,
+      text: sent.text ?? '',
+      entities: convertGrammyEntities(sent.entities),
+    };
   };
 
   return {

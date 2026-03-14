@@ -15,6 +15,6 @@ export {
   resolveGramjsSender,
 } from './gramjs';
 
-export { fromGrammyMessage } from './grammy';
+export { convertGrammyEntities, fromGrammyMessage } from './grammy';
 
 export { createMessageDedup } from './dedup';

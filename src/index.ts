@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createPatch } from 'diff';
 import dotenv from 'dotenv';
 
-import { adaptDelete, adaptEdit, adaptMessage, captureUtcOffset } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, captureUtcOffset, parseContent } from './adaptation';
 import type { CanonicalMessageEvent } from './adaptation';
 import { loadEnv } from './config/env';
 import { loadFeatureFlags } from './config/features';
@@ -152,7 +152,7 @@ const main = async () => {
         receivedAtMs: now,
         timestampSec: sent.date,
         utcOffsetMin: captureUtcOffset(),
-        content: [{ type: 'text', text }],
+        content: parseContent(sent.text, sent.entities),
         attachments: [],
         isSelfSent: true,
       };
