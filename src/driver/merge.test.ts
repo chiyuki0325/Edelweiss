@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { mergeContext } from './merge';
-import type { TurnResponse } from './types';
+import type { TRDataEntry, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
 
 const textSeg = (ts: number, text: string): RenderedContext[number] => ({
@@ -9,7 +9,7 @@ const textSeg = (ts: number, text: string): RenderedContext[number] => ({
   content: [{ type: 'text', text }],
 });
 
-const tr = (ts: number, data: unknown[]): TurnResponse => ({
+const tr = (ts: number, data: TRDataEntry[]): TurnResponse => ({
   requestedAtMs: ts,
   provider: 'openai-chat',
   data,
@@ -17,13 +17,13 @@ const tr = (ts: number, data: unknown[]): TurnResponse => ({
   outputTokens: 0,
 });
 
-const assistantMsg = (text: string) => ({ role: 'assistant', content: text });
-const toolCallMsg = (id: string, name: string, args: string) => ({
+const assistantMsg = (text: string): TRDataEntry => ({ role: 'assistant', content: text });
+const toolCallMsg = (id: string, name: string, args: string): TRDataEntry => ({
   role: 'assistant',
   content: null,
   tool_calls: [{ id, type: 'function', function: { name, arguments: args } }],
 });
-const toolResultMsg = (id: string, content: string) => ({
+const toolResultMsg = (id: string, content: string): TRDataEntry => ({
   role: 'tool',
   tool_call_id: id,
   content,

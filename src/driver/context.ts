@@ -1,7 +1,7 @@
 import type { Message } from 'xsai';
 
 import { mergeContext } from './merge';
-import type { TurnResponse } from './types';
+import type { TRAssistantEntry, TRDataEntry, TurnResponse } from './types';
 import type { FeatureFlags } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
 
@@ -92,29 +92,26 @@ const trimContext = (messages: Message[], maxTokens: number): { messages: Messag
 //   - Different / empty  -> strip all reasoning (signature invalid, would error)
 //
 // The pair is always kept or stripped together — never one without the other.
-const sanitizeReasoningForTR = (tr: TurnResponse, currentCompat: string | undefined): unknown[] =>
+const sanitizeReasoningForTR = (tr: TurnResponse, currentCompat: string | undefined): TRDataEntry[] =>
   tr.data.map(entry => {
-    const m = entry as AnyMsg;
-    if (m.role !== 'assistant') return entry;
+    if (entry.role !== 'assistant') return entry;
 
     const compatMatch = !!currentCompat && !!tr.reasoningSignatureCompat && tr.reasoningSignatureCompat === currentCompat;
     if (compatMatch) return entry;
 
-    // Compat mismatch — strip all reasoning
-    let result = { ...m };
-    if ('reasoning_text' in result)
-      delete result.reasoning_text;
-    if ('reasoning_opaque' in result)
-      delete result.reasoning_opaque;
+    // Compat mismatch — strip all reasoning fields, keeping only role/content/tool_calls
+    const rest: TRAssistantEntry = { role: 'assistant' };
+    if (entry.content !== undefined) rest.content = entry.content;
+    if (entry.tool_calls) rest.tool_calls = entry.tool_calls;
 
     // Strip thinking blocks from content array
-    if (Array.isArray(result.content)) {
-      const filtered = (result.content as AnyMsg[]).filter(part => part.type !== 'thinking');
-      if (filtered.length !== result.content.length)
-        result = { ...result, content: filtered.length > 0 ? filtered : '' };
+    if (Array.isArray(rest.content)) {
+      const filtered = rest.content.filter(part =>
+        typeof part !== 'object' || part === null || !('type' in part) || part.type !== 'thinking');
+      rest.content = filtered.length > 0 ? filtered : '';
     }
 
-    return result;
+    return rest;
   });
 
 // Returns the receivedAtMs of the latest external message after afterMs,
@@ -138,10 +135,8 @@ export const latestExternalEventMs = (
 const KEEP_NO_TOOL_CALL_TRS = 5;
 
 const trHasToolCalls = (tr: TurnResponse): boolean =>
-  tr.data.some(entry => {
-    const m = entry as AnyMsg;
-    return m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
-  });
+  tr.data.some(entry =>
+    entry.role === 'assistant' && Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0);
 
 const trimStaleNoToolCallTRs = (trs: TurnResponse[]): TurnResponse[] => {
   // Partition: indices of TRs without tool calls

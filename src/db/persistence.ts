@@ -9,6 +9,7 @@ import type {
   CanonicalIMEvent,
   CanonicalMessageEvent,
 } from '../adaptation/types';
+import type { TRDataEntry } from '../driver/types';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
 export const upsertUser = (db: DB, user: TelegramUser) => {
@@ -241,7 +242,7 @@ export const loadKnownChatIds = (db: DB): string[] => {
 export const persistTurnResponse = (db: DB, chatId: string, tr: {
   requestedAtMs: number;
   provider: string;
-  data: unknown[];
+  data: TRDataEntry[];
   sessionMeta?: unknown;
   inputTokens: number;
   outputTokens: number;

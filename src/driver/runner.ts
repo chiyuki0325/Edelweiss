@@ -5,6 +5,7 @@ import type { Message, Tool } from 'xsai';
 import { chat, responseJSON } from 'xsai';
 
 import { isToolResult } from './tools';
+import type { TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
 
 const DUMP_DIR = '/tmp/cahciua';
 mkdirSync(DUMP_DIR, { recursive: true });
@@ -44,7 +45,7 @@ export const createRunner = (config: RunnerConfig) => {
     system: string;
     tools: Tool[];
     maxSteps: number;
-    onStepComplete: (stepData: unknown[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
+    onStepComplete: (stepData: TRDataEntry[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
     checkInterrupt: () => boolean;
     log: Logger;
   }): Promise<void> => {
@@ -80,8 +81,8 @@ export const createRunner = (config: RunnerConfig) => {
         break;
       }
 
-      const assistantMsg = choice.message;
-      const stepData: unknown[] = [assistantMsg];
+      const assistantMsg = choice.message as AnyMsg;
+      const stepData: TRDataEntry[] = [assistantMsg as TRAssistantEntry];
 
       // Execute tools manually — we control this so every tool call and result
       // is visible in stepData and persisted in the TR.
@@ -102,20 +103,22 @@ export const createRunner = (config: RunnerConfig) => {
               : { content: rawResult, requiresFollowUp: true };
             if (requiresFollowUp) anyRequiresFollowUp = true;
 
-            stepData.push({
+            const toolResult: TRToolResultEntry = {
               role: 'tool',
               tool_call_id: tc.id,
               content: typeof content === 'string' ? content : JSON.stringify(content),
-            });
+            };
+            stepData.push(toolResult);
           } catch (err) {
             // Errors always require follow-up (model should see the failure)
             anyRequiresFollowUp = true;
             params.log.withError(err).error(`Tool ${tc.function.name} failed`);
-            stepData.push({
+            const toolResult: TRToolResultEntry = {
               role: 'tool',
               tool_call_id: tc.id,
               content: JSON.stringify({ error: String(err) }),
-            });
+            };
+            stepData.push(toolResult);
           }
         }
       }

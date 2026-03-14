@@ -2,11 +2,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { createPatch } from 'diff';
 
-import { adaptDelete, adaptEdit, adaptMessage, captureUtcOffset, contentToPlainText, parseContent } from './adaptation';
-import type { CanonicalMessageEvent } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, contentToPlainText } from './adaptation';
 import { loadConfig } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
-import { createDatabase, loadEvents, loadKnownChatIds, loadLatestMessageContent, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
+import { createDatabase, loadEvents, loadKnownChatIds, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, persistTurnResponse, runMigrations } from './db';
 import { createDriver } from './driver';
 import { createEmptyIC, reduce } from './projection';
 import type { IntermediateContext } from './projection';
@@ -127,32 +126,46 @@ const main = async () => {
     reasoningSignatureCompat: config.llm.reasoningSignatureCompat,
     featureFlags: config.features,
   }, {
-    db,
+    loadTurnResponses: chatId => {
+      const rows = loadTurnResponses(db, chatId);
+      return rows.map(r => ({
+        requestedAtMs: r.requestedAt,
+        provider: r.provider,
+        data: r.data,
+        sessionMeta: r.sessionMeta,
+        inputTokens: r.inputTokens,
+        outputTokens: r.outputTokens,
+        reasoningSignatureCompat: r.reasoningSignatureCompat ?? '',
+      }));
+    },
+    persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, {
+      ...tr,
+      requestedAtMs: tr.requestedAtMs,
+    }),
     sendMessage: async (chatId, text, replyToMessageId) => {
       const sent = await telegram.sendMessage(chatId, text, replyToMessageId ? { replyToMessageId } : undefined);
 
       // Bypass: inject bot's own sent message as a synthetic event so it
       // enters the pipeline immediately, without relying on userbot reception.
       const botInfo = telegram.bot.botInfo();
-      const now = Date.now();
-      const event: CanonicalMessageEvent = {
-        type: 'message',
+      const syntheticMsg = {
+        messageId: sent.messageId,
         chatId,
-        messageId: String(sent.messageId),
         sender: {
           id: botUserId,
-          displayName: botInfo?.firstName ?? 'Bot',
+          firstName: botInfo?.firstName ?? 'Bot',
           username: botInfo?.username,
           isBot: true,
+          isPremium: false,
         },
-        receivedAtMs: now,
-        timestampSec: sent.date,
-        utcOffsetMin: captureUtcOffset(),
-        content: parseContent(sent.text, sent.entities),
-        attachments: [],
-        isSelfSent: true,
+        date: sent.date,
+        text: sent.text,
+        entities: sent.entities,
+        replyToMessageId,
+        source: 'bot' as const,
       };
-      if (replyToMessageId != null) event.replyToMessageId = String(replyToMessageId);
+      const event = adaptMessage(syntheticMsg);
+      event.isSelfSent = true;
 
       // Detect userbot winning the race — message already in IC before synthetic bypass
       const ic = sessions.get(chatId);

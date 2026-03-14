@@ -1,6 +1,6 @@
 import type { Message, UserMessage } from 'xsai';
 
-import type { TurnResponse } from './types';
+import type { TRDataEntry, TurnResponse } from './types';
 import type { RenderedContext, RenderedContentPiece } from '../rendering/types';
 
 const contentPieceToMessagePart = (piece: RenderedContentPiece) =>
@@ -20,7 +20,7 @@ const contentPieceToMessagePart = (piece: RenderedContentPiece) =>
 export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): Message[] => {
   type Entry =
     | { kind: 'rc'; time: number; step: -1; content: RenderedContentPiece[] }
-    | { kind: 'tr'; time: number; step: number; message: unknown };
+    | { kind: 'tr'; time: number; step: number; message: TRDataEntry };
 
   const entries: Entry[] = [];
 
@@ -29,7 +29,7 @@ export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): Message[
 
   for (const t of trs)
     for (let i = 0; i < t.data.length; i++)
-      entries.push({ kind: 'tr', time: t.requestedAtMs, step: i, message: t.data[i] });
+      entries.push({ kind: 'tr', time: t.requestedAtMs, step: i, message: t.data[i]! });
 
   entries.sort((a, b) => {
     if (a.time !== b.time) return a.time - b.time;

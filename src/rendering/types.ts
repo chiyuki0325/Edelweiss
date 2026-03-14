@@ -19,7 +19,15 @@ export type RenderedContentPiece =
 export interface RenderedContextSegment {
   receivedAtMs: number;
   content: RenderedContentPiece[];
+  // Sender is this bot account (used by Driver debounce to ignore bot's own messages
+  // when deciding whether new external input arrived). True for all messages from this
+  // bot regardless of origin — including messages sent by other programs controlling
+  // the same bot account.
   isMyself?: boolean;
+  // Message originated from this bot instance's send_message tool call (used by
+  // trimSelfMessagesCoveredBySendToolCalls to deduplicate — these messages already
+  // exist as tool results in TRs). A message can be isMyself without isSelfSent
+  // if another program sent it through the same bot account.
   isSelfSent?: boolean;
 }
 

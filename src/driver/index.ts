@@ -6,8 +6,6 @@ import { renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { createSendMessageTool } from './tools';
 import type { DriverConfig, TurnResponse } from './types';
-import type { DB } from '../db/client';
-import { loadTurnResponses, persistTurnResponse } from '../db/persistence';
 import type { RenderedContext } from '../rendering/types';
 
 export { mergeContext } from './merge';
@@ -18,11 +16,12 @@ const DEBOUNCE_MS = 2000;
 const MAX_STEPS = 5;
 
 export const createDriver = (config: DriverConfig, deps: {
-  db: DB;
+  loadTurnResponses: (chatId: string) => TurnResponse[];
+  persistTurnResponse: (chatId: string, tr: Omit<TurnResponse, 'sessionMeta'> & { sessionMeta?: unknown }) => void;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number) => Promise<{ messageId: number; date: number }>;
   logger: Logger;
 }) => {
-  const { db, logger } = deps;
+  const { logger } = deps;
   const log = logger.withContext('driver');
   const chatIds = new Set(config.chatIds);
 
@@ -32,23 +31,13 @@ export const createDriver = (config: DriverConfig, deps: {
     model: config.model,
   });
 
-  const loadTRs = (chatId: string): TurnResponse[] => {
-    const rows = loadTurnResponses(db, chatId);
-    return rows.map(r => ({
-      requestedAtMs: r.requestedAt,
-      provider: r.provider,
-      data: r.data,
-      sessionMeta: r.sessionMeta,
-      inputTokens: r.inputTokens,
-      outputTokens: r.outputTokens,
-      reasoningSignatureCompat: r.reasoningSignatureCompat ?? '',
-    }));
-  };
+  const loadTRs = (chatId: string): TurnResponse[] =>
+    deps.loadTurnResponses(chatId);
 
   const getLastTrTime = (chatId: string): number => {
-    const trs = loadTurnResponses(db, chatId);
+    const trs = deps.loadTurnResponses(chatId);
     if (trs.length === 0) return 0;
-    return trs[trs.length - 1]!.requestedAt;
+    return trs[trs.length - 1]!.requestedAtMs;
   };
 
   const chatScopes = new Map<string, {
@@ -128,7 +117,7 @@ export const createDriver = (config: DriverConfig, deps: {
               tools: [sendMessageTool],
               maxSteps: MAX_STEPS,
               onStepComplete: (stepData, usage, requestedAtMs) => {
-                persistTurnResponse(db, chatId, {
+                deps.persistTurnResponse(chatId, {
                   requestedAtMs,
                   provider: 'openai-chat',
                   data: stepData,
