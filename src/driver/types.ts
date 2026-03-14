@@ -1,3 +1,5 @@
+import type { FeatureFlags } from '../config/features';
+
 export interface TurnResponse {
   requestedAtMs: number;
   provider: string;
@@ -15,4 +17,7 @@ export interface DriverConfig {
   maxContextTokens: number;
   chatIds: string[];
   reasoningSignatureCompat?: string;
+  featureFlags: FeatureFlags;
 }
+
+export type { FeatureFlags } from '../config/features';

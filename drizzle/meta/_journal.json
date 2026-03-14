@@ -106,6 +106,13 @@
       "when": 1773496800008,
       "tag": "0014_fix_bot_utc_offset",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1773496800009,
+      "tag": "0015_events_is_self_sent",
+      "breakpoints": true
     }
   ]
 }

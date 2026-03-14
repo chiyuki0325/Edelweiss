@@ -70,8 +70,9 @@ const renderAttachment = (att: CanonicalAttachment): string => {
 
 // --- ICNode → content pieces ---
 
-const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean } => {
+const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean } => {
   const isMyself = !!(params.botUserId && msg.sender?.id === params.botUserId);
+  const isSelfSent = !!msg.isSelfSent;
   const attrs: string[] = [
     `id="${escapeXml(msg.messageId)}"`,
   ];
@@ -92,7 +93,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
 
   if (msg.deleted) {
     attrs.push('deleted="true"');
-    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself };
+    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself, isSelfSent };
   }
 
   const parts: string[] = [];
@@ -120,7 +121,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
       pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnailWebp}` });
   }
 
-  return { content: pieces, isMyself };
+  return { content: pieces, isMyself, isSelfSent };
 };
 
 const renderSystemEvent = (event: ICSystemEvent): string => {
@@ -139,8 +140,8 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
     if (params.compactCursorMs != null && node.receivedAtMs < params.compactCursorMs) continue;
 
     if (node.type === 'message') {
-      const { content, isMyself } = renderMessage(node, params);
-      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }) });
+      const { content, isMyself, isSelfSent } = renderMessage(node, params);
+      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }) });
     } else {
       const content = [{ type: 'text' as const, text: renderSystemEvent(node) }];
       segments.push({ receivedAtMs: node.receivedAtMs, content });

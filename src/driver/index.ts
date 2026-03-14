@@ -92,7 +92,7 @@ export const createDriver = (config: DriverConfig, deps: {
       timer = setTimeout(() => {
         // Heavy work deferred to after debounce expires
         const trs = loadTRs(chatId);
-        const ctx = composeContext(rc(), trs, config.maxContextTokens, config.reasoningSignatureCompat);
+        const ctx = composeContext(rc(), trs, config.maxContextTokens, config.reasoningSignatureCompat, config.featureFlags);
         if (!ctx) return;
 
         const rcAtStart = rc();
@@ -110,7 +110,8 @@ export const createDriver = (config: DriverConfig, deps: {
             text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
             replyTo,
           }).log('send_message tool called');
-          await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined);
+          const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined);
+          return { messageId: String(sent.messageId) };
         });
 
         void (async () => {

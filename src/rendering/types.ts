@@ -20,6 +20,7 @@ export interface RenderedContextSegment {
   receivedAtMs: number;
   content: RenderedContentPiece[];
   isMyself?: boolean;
+  isSelfSent?: boolean;
 }
 
 export type RenderedContext = RenderedContextSegment[];

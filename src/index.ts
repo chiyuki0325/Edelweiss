@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { adaptDelete, adaptEdit, adaptMessage, captureUtcOffset } from './adaptation';
 import type { CanonicalMessageEvent } from './adaptation';
 import { loadEnv } from './config/env';
+import { loadFeatureFlags } from './config/features';
 import { setupLogger, useLogger } from './config/logger';
 import { createDatabase, loadEvents, loadKnownChatIds, lookupChatId, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, runMigrations } from './db';
 import { createDriver } from './driver';
@@ -83,6 +84,7 @@ const reduceAndLog = (
 
 const main = async () => {
   const env = loadEnv();
+  const featureFlags = loadFeatureFlags();
 
   const db = createDatabase(env.DB_PATH, logger);
   runMigrations(db, logger);
@@ -127,6 +129,7 @@ const main = async () => {
     maxContextTokens: env.LLM_MAX_CONTEXT_TOKENS,
     chatIds: env.DRIVER_CHAT_IDS,
     reasoningSignatureCompat: env.LLM_REASONING_SIGNATURE_COMPAT,
+    featureFlags,
   }, {
     db,
     sendMessage: async (chatId, text, replyToMessageId) => {
@@ -151,8 +154,14 @@ const main = async () => {
         utcOffsetMin: captureUtcOffset(),
         content: [{ type: 'text', text }],
         attachments: [],
+        isSelfSent: true,
       };
       if (replyToMessageId != null) event.replyToMessageId = String(replyToMessageId);
+
+      // Detect userbot winning the race — message already in IC before synthetic bypass
+      const ic = sessions.get(chatId);
+      if (ic?.nodes.some(n => n.type === 'message' && n.messageId === event.messageId))
+        logger.withFields({ chatId, messageId: event.messageId }).warn('Synthetic bypass: userbot arrived first (isSelfSent merged via dedup)');
 
       persistEvent(db, event);
       reduceAndLog(sessions, renderedSessions, chatId, event, renderParams);

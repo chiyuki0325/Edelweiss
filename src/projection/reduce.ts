@@ -29,8 +29,14 @@ const truncate = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}…`;
 
 const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent) => {
-  // Dedup: skip if a message with the same ID already exists (bypass + userbot race)
-  if (findMessageIndex(draft.nodes, event.messageId) !== -1) return;
+  // Dedup: skip if a message with the same ID already exists (bypass + userbot race).
+  // Merge isSelfSent from the late-arriving synthetic event into the existing node.
+  const existingIdx = findMessageIndex(draft.nodes, event.messageId);
+  if (existingIdx !== -1) {
+    if (event.isSelfSent)
+      (draft.nodes[existingIdx] as ICMessage).isSelfSent = true;
+    return;
+  }
 
   // MetaReducer: detect user rename before appending the message
   if (event.sender) {
@@ -73,6 +79,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     }
   }
   if (event.forwardInfo) message.forwardInfo = event.forwardInfo;
+  if (event.isSelfSent) message.isSelfSent = true;
   draft.nodes.push(message);
 
   // Update user state

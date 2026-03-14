@@ -16,6 +16,7 @@ export interface ICMessage {
   editedAtSec?: number;
   editUtcOffsetMin?: number;
   deleted?: boolean;
+  isSelfSent?: boolean;
 }
 
 export interface ICUserRenamedEvent {

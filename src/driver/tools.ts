@@ -1,7 +1,7 @@
 import type { Tool } from 'xsai';
 
 export const createSendMessageTool = (
-  send: (text: string, replyTo?: string) => Promise<void>,
+  send: (text: string, replyTo?: string) => Promise<{ messageId: string }>,
 ): Tool => ({
   type: 'function',
   function: {
@@ -18,7 +18,7 @@ export const createSendMessageTool = (
   },
   execute: async input => {
     const { text, reply_to } = input as { text: string; reply_to?: string };
-    await send(text, reply_to);
-    return { ok: true };
+    const result = await send(text, reply_to);
+    return { ok: true, message_id: result.messageId };
   },
 });

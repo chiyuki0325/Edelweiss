@@ -2,6 +2,7 @@ import type { Message } from 'xsai';
 
 import { mergeContext } from './merge';
 import type { TurnResponse } from './types';
+import type { FeatureFlags } from '../config/features';
 import type { RenderedContext } from '../rendering/types';
 
 type AnyMsg = Record<string, any>;
@@ -131,18 +132,57 @@ export const latestExternalEventMs = (
   return latest;
 };
 
+// --- Feature flag: trimStaleNoToolCallTurnResponses ---
+// TRs without tool calls (pure text responses) contribute less to context quality.
+// Keep only the latest N, trim older ones before merge.
+const KEEP_NO_TOOL_CALL_TRS = 5;
+
+const trHasToolCalls = (tr: TurnResponse): boolean =>
+  tr.data.some(entry => {
+    const m = entry as AnyMsg;
+    return m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
+  });
+
+const trimStaleNoToolCallTRs = (trs: TurnResponse[]): TurnResponse[] => {
+  // Partition: indices of TRs without tool calls
+  const noToolIndices: number[] = [];
+  for (let i = 0; i < trs.length; i++) {
+    if (!trHasToolCalls(trs[i]!)) noToolIndices.push(i);
+  }
+
+  if (noToolIndices.length <= KEEP_NO_TOOL_CALL_TRS) return trs;
+
+  // Drop oldest no-tool-call TRs, keeping the latest N
+  const dropSet = new Set(noToolIndices.slice(0, noToolIndices.length - KEEP_NO_TOOL_CALL_TRS));
+  return trs.filter((_, i) => !dropSet.has(i));
+};
+
+// --- Feature flag: trimSelfMessagesCoveredBySendToolCalls ---
+// Bot's own messages enter RC via userbot AND exist in TRs as tool call results.
+// Filter RC segments marked isSelfSent=true to remove the duplicate representation.
+const filterSelfSentSegments = (rc: RenderedContext): RenderedContext =>
+  rc.filter(seg => !seg.isSelfSent);
+
 export const composeContext = (
   rc: RenderedContext,
   trs: TurnResponse[],
   maxTokens: number,
   reasoningSignatureCompat: string | undefined,
+  featureFlags?: FeatureFlags,
 ): { messages: Message[]; estimatedTokens: number } | null => {
-  const sanitizedTRs = trs.map(tr => ({
+  let effectiveRC = rc;
+  if (featureFlags?.trimSelfMessagesCoveredBySendToolCalls)
+    effectiveRC = filterSelfSentSegments(effectiveRC);
+
+  let sanitizedTRs = trs.map(tr => ({
     ...tr,
     data: sanitizeReasoningForTR(tr, reasoningSignatureCompat),
   }));
 
-  const allMessages = mergeContext(rc, sanitizedTRs);
+  if (featureFlags?.trimStaleNoToolCallTurnResponses)
+    sanitizedTRs = trimStaleNoToolCallTRs(sanitizedTRs);
+
+  const allMessages = mergeContext(effectiveRC, sanitizedTRs);
   if (allMessages.length === 0) return null;
 
   return trimContext(allMessages, maxTokens);

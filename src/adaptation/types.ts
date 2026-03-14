@@ -51,6 +51,7 @@ export interface CanonicalMessageEvent {
   replyToMessageId?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
+  isSelfSent?: boolean;
 }
 
 export interface CanonicalEditEvent {

@@ -22,7 +22,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses tables; 13 migrations |
+| DB / Persistence | Done | events, messages, turn_responses tables; 16 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
 | Driver | Done | xsai `chat()` + manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals) |
@@ -50,6 +50,7 @@ src/
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── config/
 │   ├── env.ts              # Environment variable schema (Valibot)
+│   ├── features.ts         # Feature flags — Chromium-style env-controlled toggles
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
 ├── adaptation/             # Layer 1: Platform Event → Canonical Event
 │   ├── types.ts            # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
@@ -224,6 +225,21 @@ User content in the rendered context is fenced with XML structure. Identity info
 - Chat history is append-only within an epoch.
 - Dynamic content (memory recall, cross-session awareness) is injected at the end of the last user message via late binding.
 - Compaction replaces old messages with a summary rather than sliding a window per-turn.
+
+### isSelfSent Pipeline
+
+Bot's own sent messages are marked `isSelfSent: true` at creation time (in the synthetic event bypass in `src/index.ts`). This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
+
+### Feature Flags
+
+Chromium-style feature flags for experimental optimizations. Controlled via env vars (`FEATURE_<NAME>=1`). Defined in `src/config/features.ts`, loaded at startup, passed to Driver via `DriverConfig.featureFlags`.
+
+| Flag | Env Var | Effect |
+|------|---------|--------|
+| `trimStaleNoToolCallTurnResponses` | `FEATURE_TRIM_STALE_NO_TOOL_CALL_TRS` | Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge |
+| `trimSelfMessagesCoveredBySendToolCalls` | `FEATURE_TRIM_SELF_MESSAGES_COVERED_BY_SEND_TOOL_CALLS` | Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results) |
+
+Feature flags must not affect correctness — only context efficiency. Add new flags to `FeatureFlags` interface, `FeaturesSchema` in `src/config/features.ts`, and this table.
 
 ## Coding Conventions
 

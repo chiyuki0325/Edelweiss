@@ -76,6 +76,9 @@ export const events = sqliteTable('events', {
   // message only (canonical string ID)
   replyToMessageId: text('reply_to_message_id'),
   forwardInfo: text('forward_info', { mode: 'json' }).$type<CanonicalForwardInfo>(),
+
+  // Bot's own sent messages — marked at creation time, not derived from sender ID
+  isSelfSent: integer('is_self_sent', { mode: 'boolean' }),
 }, table => [
   index('events_chat_id_idx').on(table.chatId),
 ]);
