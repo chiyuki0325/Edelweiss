@@ -171,7 +171,7 @@ export const contentToPlainText = (nodes: ContentNode[]): string =>
 
 // --- Adapt functions ---
 
-const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
+export const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
 
 export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
   const event: CanonicalMessageEvent = {
