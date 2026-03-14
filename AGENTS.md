@@ -25,7 +25,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses tables; 13 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
-| Driver | Done | xsai `chat()` + manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization |
+| Driver | Done | xsai `chat()` + manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals) |
 
 ## Tech Stack
 
@@ -35,6 +35,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **LLM**: xsAI — `chat()` primitive for single API calls + manual tool execution loop. `generateText()` not used (its internal tool loop swallows per-step data).
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
 - **State management**: Immer — immutable IC updates in Projection reducers.
+- **Reactivity**: alien-signals — signal/computed/effect graph for Driver orchestration.
 - **Validation**: Valibot — schema validation for env, config, canonical events.
 - **Logging**: @guiiai/logg — structured logger with pretty/JSON output.
 - **Testing**: Vitest.
@@ -65,12 +66,14 @@ src/
 │   └── index.test.ts       # Rendering unit tests
 ├── driver/                 # Driver: RC + TRs → LLM API calls
 │   ├── types.ts            # TurnResponse, DriverConfig
+│   ├── context.ts          # Pure functions: context composition, token trimming, reasoning sanitization
 │   ├── merge.ts            # mergeContext(RC, TRs) → Message[] — timestamp-ordered interleave
 │   ├── merge.test.ts       # Merge logic tests
+│   ├── runner.ts           # LLM step loop: xsai chat() + manual tool execution
 │   ├── prompt.ts           # System prompt rendering (velin template)
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── tools.ts            # send_message tool definition (xsai Tool)
-│   └── index.ts            # createDriver() — debounce, step loop, token trimming, reasoning sanitization
+│   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
 │   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses tables
