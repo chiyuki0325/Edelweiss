@@ -155,15 +155,16 @@ Earlier design explored BotTurnEvent as an InternalEvent flowing back through Pr
 
 ### Driver Responsibilities
 - Sole owner of TRs (conversation history)
-- Provides compact cursor + summary to Rendering
 - Merges RC + TRs by timestamp (`receivedAtMs` / `requestedAtMs`) into final API request
-- **Owns debounce/throttle scheduling**: decides when to trigger Rendering + API call. Lives in Driver (not a separate orchestration layer) because tool call loops already require the Driver to decide when to re-render — externalizing debounce would create coordination overhead between the scheduler and the active loop.
-- Manages tool call loop (see §Tool Call Loop Interleaving below)
-- Provider-specific adapters for serialization/deserialization
-- Owns compaction decisions (timing, boundary, summary generation)
+- **Owns debounce/throttle scheduling**: decides when to trigger Rendering + API call. Lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing debounce would create coordination overhead.
+- Manages tool call loop with interrupt + re-schedule on new external messages (see §Tool Call Loop Interleaving below)
 - Standard append-only LLM client with restart consistency
+- **Current provider**: OpenAI Chat Completions compatible endpoints only
+- **Planned**: compact cursor + summary to Rendering, provider-specific adapters, compaction decisions
 
 ### Provider-Specific Metadata (in TRs only)
+
+Current implementation uses **OpenAI Chat Completions compatible endpoints only**. The table below documents the design for future multi-provider support.
 
 | Provider | Tool call ID | Tool result linkage | Extra metadata | Cache |
 |---|---|---|---|---|
@@ -174,7 +175,9 @@ RC (user/system messages) needs NO provider metadata. `cache_control` annotation
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). This enables **new chat messages to appear mid-loop**: Projection runs immediately on every event, so IC is always current. Before each loop iteration, the Driver re-renders IC. New messages' `receivedAtMs` is always > the previous TR's `requestedAtMs` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge.
+Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). When new external chat messages arrive during a tool loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. The reactive effect then re-schedules a new LLM call after debounce, composing fresh context from the latest RC and all persisted TRs. This is an **interrupt + re-schedule** mechanism — the interrupted loop exits completely, and a new call starts with a fresh step budget, updated system prompt, and re-applied token trimming.
+
+New messages' `receivedAtMs` is always > the previous TR's `requestedAtMs` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge. The debounce window also batches multiple rapid messages into a single re-scheduled call.
 
 ```
 TR₁(t=1500): [assistant₁(tool_call)]     ← API call 1 returns
@@ -206,6 +209,8 @@ Store in raw provider format, not a provider-agnostic intermediate format. Ratio
 - **Same provider (common case)**: zero conversion, guaranteed lossless
 - **Cross provider**: explicit A→B conversion function, direct structure mapping, independently testable
 - **Conversion matrix**: N*(N-1) converters. N=2-3 → 2-6 functions, manageable. Implemented lazily as needed.
+
+**Current state**: only OpenAI Chat Completions format is implemented. `TRDataEntry` in `src/driver/types.ts` models the `assistant` + `tool` roles with `tool_calls`/`tool_call_id` structure. The `provider` field in TR storage exists for future multi-provider support but currently always stores `'openai-chat'`.
 
 ```
 TurnResponse {
@@ -316,52 +321,26 @@ on first successful response:
   charsPerToken = totalInputChars / usage.prompt_tokens
 ```
 
-### Reactive Driver Architecture
+### Reactive Driver Architecture (implemented)
 
-The current Driver is imperative: debounce timers, running/pendingRetrigger flags, manual `prepareContext` calls. This works but makes the state propagation graph implicit — it's easy to miss a retrigger path or introduce a state inconsistency.
+The Driver uses alien-signals (signal/computed/effect) for reactive scheduling. Per-chat state is modeled as signals:
 
-The three DCP layers (Adaptation, Projection, Rendering) are already pure functions. The Driver's impure effects can be modeled as a reactive system analogous to React function components:
+- `rc: signal<RenderedContext>` — latest RC snapshot, updated by `handleEvent`
+- `lastTrTimeMs: signal<number>` — timestamp of last TR, updated on persist
+- `running: signal<boolean>` — whether a step loop is active
+- `failedRc: signal<RenderedContext | null>` — failure latch, cleared on new RC
+- `deadline: computed` — derived from latest external event time + debounce window
 
-| React | DCP Driver |
-|-------|-----------|
-| `props` | new events (CanonicalIMEvent) |
-| `useState` | compaction cursor, driver state (running, pending) |
-| `useMemo` / derived state | `render(IC, params)` → RC, `merge(RC, TRs)` → context |
-| `useEffect` | "new external messages → trigger LLM call", "turn complete → check retrigger" |
-| `setState` (async batch) | advance compaction cursor, persist TR |
-| re-render | full pipeline re-derive (event → reduce → render → merge) |
-
-**Key insight**: advancing the compaction cursor is a `setState` — it changes derived state (IC working set, RC, merged context) and may trigger effects (new LLM call with compacted context). The debounce timer is a `useEffect` cleanup. The pendingRetrigger flag is an effect dependency.
+An `effect` watches `deadline` and `running`: when not running and deadline is reached, it composes context and launches a step loop. New events update `rc`, which invalidates `deadline`, which re-triggers the effect. If a loop is running, `checkInterrupt` detects the RC change and breaks the loop; the effect re-fires after `running(false)`.
 
 ```
-// Pseudocode — reactive Driver
-const ic = derive(() => replayEvents(compactCursor()).reduce(reduce, emptyIC()));
-const rc = derive(() => render(ic(), renderParams));
-const context = derive(() => merge(rc(), loadTRs(compactCursor())));
-
-// Effect: new external messages → schedule LLM call
-watch([rc, lastTrTime], ([rc, lastTr]) => {
-  if (hasNewExternal(rc, lastTr))
-    debounce(() => triggerLLMCall());
-});
-
-// Effect: context too large → schedule compaction
-watch([context], ([ctx]) => {
-  if (estimateTokens(ctx) > compactionThreshold)
-    scheduleCompaction();
-});
-
-// State update: compaction advances cursor → re-derives ic, rc, context
-const advanceCompactCursor = (newT: number) => {
-  setCompactCursor(newT);  // triggers re-derive of ic → rc → context
-};
+// Simplified reactive graph (actual code in src/driver/index.ts)
+rc(newRC)                    // handleEvent updates signal
+  → deadline recomputes     // computed: latestExternalEventMs + DEBOUNCE_MS
+  → effect fires            // schedules setTimeout with remaining ms
+  → composeContext + runStepLoop
+  → onStepComplete: persistTR, lastTrTimeMs(now)
+  → running(false)          // effect re-checks for pending events
 ```
 
-**Benefits**:
-- State propagation paths are explicit and declarative
-- Retrigger logic is automatic (effect re-runs when dependencies change)
-- Compaction cursor advancement naturally cascades through the pipeline
-- Testable: mock signal sources, assert effect triggers
-- No manual flag management (running, pendingRetrigger sets become derived state)
-
-**Implementation note**: this does NOT require importing Vue/Solid/React. A minimal signal/effect primitive (20–30 lines) or explicit EventEmitter-based dependency tracking is sufficient. The goal is to make the dependency graph explicit, not to adopt a UI framework.
+**Implementation note**: uses alien-signals (`signal`, `computed`, `effect`) — a minimal reactive primitive library. See `src/driver/index.ts` for the actual implementation.

@@ -12,7 +12,7 @@ Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeli
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
 3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering and late-binding injection, producing Rendered Context (RC).
 
-The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns compaction, provider-specific adaptation, and tool call loops.
+The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns tool call loops and reactive scheduling. Compaction and multi-provider adaptation are designed but not yet implemented (current implementation uses OpenAI Chat Completions compatible endpoints only).
 
 Key design goals: KV Cache friendly (append-only history, static system prompt, epoch-based compaction), group chat native (message batching, multi-user identity tracking, anti-injection via XML fencing), autonomous reply (bot decides whether to respond via Tool Call, not synchronous response).
 
@@ -25,7 +25,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses tables; 16 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
-| Driver | Done | xsai `chat()` + manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals) |
+| Driver | Core done | xsai `chat()` + manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals). Planned: compaction, late-binding injection, multi-provider support |
 
 ## Tech Stack
 
@@ -171,11 +171,11 @@ Design rule: metadata changes about entities → append-only; content changes to
 
 Projection runs immediately on every event — IC is always current. Debounce/throttle is owned by the **Driver** — each trigger produces one `render(IC)` → one RC → one LLM API call. The debounce/throttle parameters are strategy (tunable, graded via fixtures). Bot responds via `send_message` tool call (not 1:1 response).
 
-Debounce lives in Driver (not a separate orchestration layer) because tool call loops already require the Driver to decide when to re-render IC — externalizing debounce would create coordination overhead.
+Debounce lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing debounce would create coordination overhead.
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call = one TR (not the entire loop as one TR). Before each loop iteration, Driver re-renders IC to pick up new chat messages. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR's tool results and before the next assistant response. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+Each LLM API call = one TR (not the entire loop as one TR). When new external chat messages arrive during a tool call loop, the Driver interrupts the loop and re-schedules a new LLM call after debounce. The new call composes fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR's tool results. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
 
 ### Reasoning Signature Sanitization
 
@@ -223,8 +223,8 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - System prompt is static and positioned first.
 - Chat history is append-only within an epoch.
-- Dynamic content (memory recall, cross-session awareness) is injected at the end of the last user message via late binding.
-- Compaction replaces old messages with a summary rather than sliding a window per-turn.
+- **Planned**: Dynamic content (memory recall, cross-session awareness) will be injected at the end of the last user message via late binding.
+- **Planned**: Compaction replaces old messages with a summary rather than sliding a window per-turn.
 
 ### isSelfSent Pipeline
 
