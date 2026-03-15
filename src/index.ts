@@ -50,6 +50,7 @@ const main = async () => {
     model: config.llm.model,
     chatIds: config.driver.chatIds,
     reasoningSignatureCompat: config.llm.reasoningSignatureCompat,
+    maxImagesAllowed: config.llm.maxImagesAllowed,
     featureFlags: config.features,
     compaction: config.compaction,
     probe: {
@@ -58,6 +59,7 @@ const main = async () => {
       apiKey: config.probe.apiKey,
       model: config.probe.model,
       reasoningSignatureCompat: config.probe.reasoningSignatureCompat,
+      maxImagesAllowed: config.probe.maxImagesAllowed,
     },
   }, {
     loadTurnResponses: (chatId, afterMs) => {

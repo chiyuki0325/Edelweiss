@@ -8,6 +8,7 @@ const llmEndpointEntries = {
   apiKey: v.string(),
   model: v.string(),
   reasoningSignatureCompat: v.optional(v.string()),
+  maxImagesAllowed: v.optional(v.number()),
 };
 
 const ConfigSchema = v.object({
@@ -37,6 +38,7 @@ const ConfigSchema = v.object({
     apiKey: v.optional(v.string(), ''),
     model: v.optional(v.string(), ''),
     reasoningSignatureCompat: v.optional(v.string()),
+    maxImagesAllowed: v.optional(v.number()),
   }), {}),
   features: v.optional(v.object({
     trimStaleNoToolCallTurnResponses: v.optional(v.boolean(), false),

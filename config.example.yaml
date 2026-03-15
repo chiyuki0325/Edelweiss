@@ -9,6 +9,7 @@ llm:
   apiKey: ""
   model: "claude-opus-4-6"
   reasoningSignatureCompat: "anthropic"
+  # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
 
 driver:
   chatIds: []
@@ -33,6 +34,7 @@ probe:
   apiKey: ""
   model: "claude-haiku-4-5"
   reasoningSignatureCompat: "anthropic"
+  # maxImagesAllowed: 10     # optional: Gemini Flash allows max 10 images
 
 # All feature flags should be enabled in local dev config.
 features:

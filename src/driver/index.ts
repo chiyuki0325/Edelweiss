@@ -2,7 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import { computed, effect, signal } from 'alien-signals';
 
 import { runCompaction } from './compaction';
-import { composeContext, findWorkingWindowCursor, latestExternalEventMs } from './context';
+import { composeContext, findWorkingWindowCursor, latestExternalEventMs, trimImages } from './context';
 import { renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { streamingChat } from './streaming';
@@ -157,11 +157,19 @@ export const createDriver = (config: DriverConfig, deps: {
               if (needsProbe) {
                 log.withFields({ chatId, lastMentionedAtMs, lastTrTimeMs: lastTrTimeMs() }).log('Running probe');
 
+                // Probe may have stricter image limits — trim a shallow copy
+                const probeMessages = ctx.messages.map(m => {
+                  const a = m as Record<string, any>;
+                  return Array.isArray(a.content) ? { ...m, content: [...a.content] } : m;
+                });
+                if (config.probe.maxImagesAllowed != null)
+                  trimImages(probeMessages, config.probe.maxImagesAllowed);
+
                 const probeResult = await streamingChat({
                   baseURL: config.probe.apiBaseUrl,
                   apiKey: config.probe.apiKey,
                   model: config.probe.model,
-                  messages: ctx.messages,
+                  messages: probeMessages,
                   system,
                   tools: [sendMessageTool],
                   log,
@@ -189,6 +197,9 @@ export const createDriver = (config: DriverConfig, deps: {
                 log.withFields({ chatId }).log('Probe: tool calls detected, activating primary model');
               }
             }
+
+            if (config.maxImagesAllowed != null)
+              trimImages(ctx.messages, config.maxImagesAllowed);
 
             await runner.runStepLoop({
               chatId,

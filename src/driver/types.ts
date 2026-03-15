@@ -39,6 +39,7 @@ export interface LlmEndpoint {
   apiKey: string;
   model: string;
   reasoningSignatureCompat?: string;
+  maxImagesAllowed?: number;
 }
 
 export interface ProbeConfig extends LlmEndpoint {
@@ -51,6 +52,7 @@ export interface DriverConfig {
   model: string;
   chatIds: string[];
   reasoningSignatureCompat?: string;
+  maxImagesAllowed?: number;
   featureFlags: FeatureFlags;
   compaction: CompactionConfig;
   probe: ProbeConfig;

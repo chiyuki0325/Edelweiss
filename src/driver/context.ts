@@ -226,6 +226,35 @@ const trimToolResults = (trs: TurnResponse[]): TurnResponse[] => {
 const filterSelfSentSegments = (rc: RenderedContext): RenderedContext =>
   rc.filter(seg => !seg.isSelfSent);
 
+// Drop excess image_url parts from messages (oldest first) to stay within
+// a model's image limit. Mutates the messages array in place.
+export const trimImages = (messages: Message[], maxImages: number): void => {
+  // Count total images
+  let total = 0;
+  for (const msg of messages) {
+    const m = asMsg(msg);
+    if (Array.isArray(m.content))
+      total += (m.content as AnyMsg[]).filter(p => p.type === 'image_url').length;
+  }
+  if (total <= maxImages) return;
+
+  // Drop from the front (oldest messages first)
+  let toDrop = total - maxImages;
+  for (const msg of messages) {
+    if (toDrop <= 0) break;
+    const m = asMsg(msg);
+    if (!Array.isArray(m.content)) continue;
+    const before = m.content.length;
+    m.content = (m.content as AnyMsg[]).filter(p => {
+      if (toDrop > 0 && p.type === 'image_url') { toDrop--; return false; }
+      return true;
+    });
+    // If user message has no content left, push a placeholder
+    if (m.content.length === 0 && before > 0)
+      m.content = [{ type: 'text', text: '[images omitted]' }];
+  }
+};
+
 export const composeContext = (
   rc: RenderedContext,
   trs: TurnResponse[],
