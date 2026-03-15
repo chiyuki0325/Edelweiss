@@ -23,6 +23,17 @@ compaction:
   # compactModel: ""          # optional: override model for compaction calls (defaults to llm.model)
   dryRun: false               # true = call LLM and log summary, but don't persist or apply
 
+# Probe: use a small/cheap model to decide whether to respond in group chats.
+# When the bot is not @'d or replied to, the probe model runs first. If it
+# chooses silence (no tool calls), the primary model is skipped entirely.
+# If it produces tool calls, the primary model is activated for the real response.
+probe:
+  enabled: false
+  apiBaseUrl: ""
+  apiKey: ""
+  model: "claude-haiku-4-5"
+  reasoningSignatureCompat: "anthropic"
+
 # All feature flags should be enabled in local dev config.
 features:
   trimStaleNoToolCallTurnResponses: false

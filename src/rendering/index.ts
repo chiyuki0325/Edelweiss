@@ -68,11 +68,20 @@ const renderAttachment = (att: CanonicalAttachment): string => {
   return `<attachment ${attrs.join(' ')}/>`;
 };
 
+// --- Mention detection ---
+
+const hasMention = (nodes: ContentNode[], userId: string): boolean =>
+  nodes.some(n =>
+    (n.type === 'mention' && n.userId === userId)
+    || ('children' in n && hasMention(n.children, userId)));
+
 // --- ICNode → content pieces ---
 
-const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean } => {
+const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean; mentionsMe: boolean; repliesToMe: boolean } => {
   const isMyself = !!(params.botUserId && msg.sender?.id === params.botUserId);
   const isSelfSent = !!msg.isSelfSent;
+  const mentionsMe = !!(params.botUserId && hasMention(msg.content, params.botUserId));
+  const repliesToMe = !!(params.botUserId && msg.replyToSender?.id === params.botUserId);
   const attrs: string[] = [
     `id="${escapeXml(msg.messageId)}"`,
   ];
@@ -93,7 +102,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
 
   if (msg.deleted) {
     attrs.push('deleted="true"');
-    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself, isSelfSent };
+    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself, isSelfSent, mentionsMe, repliesToMe };
   }
 
   const parts: string[] = [];
@@ -121,7 +130,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
       pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnailWebp}` });
   }
 
-  return { content: pieces, isMyself, isSelfSent };
+  return { content: pieces, isMyself, isSelfSent, mentionsMe, repliesToMe };
 };
 
 const renderSystemEvent = (event: ICSystemEvent): string => {
@@ -140,8 +149,8 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
     if (params.compactCursorMs != null && node.receivedAtMs < params.compactCursorMs) continue;
 
     if (node.type === 'message') {
-      const { content, isMyself, isSelfSent } = renderMessage(node, params);
-      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }) });
+      const { content, isMyself, isSelfSent, mentionsMe, repliesToMe } = renderMessage(node, params);
+      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }) });
     } else {
       const content = [{ type: 'text' as const, text: renderSystemEvent(node) }];
       segments.push({ receivedAtMs: node.receivedAtMs, content });

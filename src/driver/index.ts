@@ -5,6 +5,7 @@ import { runCompaction } from './compaction';
 import { composeContext, findWorkingWindowCursor, latestExternalEventMs } from './context';
 import { renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
+import { streamingChat } from './streaming';
 import { createSendMessageTool } from './tools';
 import type { CompactionSessionMeta, DriverConfig, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
@@ -13,12 +14,20 @@ export { mergeContext } from './merge';
 export { renderSystemPrompt } from './prompt';
 export type { DriverConfig, TurnResponse } from './types';
 
-const DEBOUNCE_MS = 2000;
 const MAX_STEPS = 5;
 
 export const createDriver = (config: DriverConfig, deps: {
   loadTurnResponses: (chatId: string, afterMs?: number) => TurnResponse[];
   persistTurnResponse: (chatId: string, tr: TurnResponse) => void;
+  persistProbeResponse: (chatId: string, probe: {
+    requestedAtMs: number;
+    provider: string;
+    data: Record<string, any>[];
+    inputTokens: number;
+    outputTokens: number;
+    reasoningSignatureCompat: string;
+    isActivated: boolean;
+  }) => void;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number) => Promise<{ messageId: number; date: number }>;
   loadCompaction: (chatId: string) => CompactionSessionMeta | null;
   persistCompaction: (chatId: string, meta: CompactionSessionMeta) => void;
@@ -82,13 +91,14 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     // --- Main LLM reply effect ---
-    const deadline = computed(() => {
+    // Triggers immediately when new external messages arrive (no debounce).
+    // Natural batching: `running` prevents concurrent calls, so messages
+    // arriving during an LLM call accumulate and get picked up on the next run.
+    const needsReply = computed(() => {
       const rcVal = rc();
-      if (rcVal.length === 0) return null;
-      if (rcVal === failedRc()) return null;
-      const latestMs = latestExternalEventMs(rcVal, lastTrTimeMs());
-      if (latestMs == null) return null;
-      return latestMs + DEBOUNCE_MS;
+      if (rcVal.length === 0) return false;
+      if (rcVal === failedRc()) return false;
+      return latestExternalEventMs(rcVal, lastTrTimeMs()) != null;
     });
 
     const disposeReplyEffect = effect(() => {
@@ -96,10 +106,9 @@ export const createDriver = (config: DriverConfig, deps: {
       if (timer) { clearTimeout(timer); timer = undefined; }
       if (isRunning) return;
 
-      const d = deadline();
-      if (d == null) return;
+      if (!needsReply()) return;
 
-      const remaining = Math.max(0, d - Date.now());
+      // setTimeout(0) to exit the synchronous signal graph before starting async work
       timer = setTimeout(() => {
         const rcAtStart = rc();
         running(true);
@@ -135,6 +144,52 @@ export const createDriver = (config: DriverConfig, deps: {
               timeNow: new Date().toISOString(),
             });
 
+            // --- Probe gate ---
+            // In group chats, if the bot was not recently @'d or replied to, use a
+            // small/cheap probe model to decide whether to respond. If the probe
+            // chooses silence (no tool calls), we skip the primary model entirely.
+            if (config.probe.enabled) {
+              const lastMentionedAtMs = rc().reduce((max, seg) =>
+                (seg.mentionsMe || seg.repliesToMe) ? Math.max(max, seg.receivedAtMs) : max, 0);
+
+              const needsProbe = lastMentionedAtMs <= lastTrTimeMs();
+
+              if (needsProbe) {
+                log.withFields({ chatId, lastMentionedAtMs, lastTrTimeMs: lastTrTimeMs() }).log('Running probe');
+
+                const probeResult = await streamingChat({
+                  baseURL: config.probe.apiBaseUrl,
+                  apiKey: config.probe.apiKey,
+                  model: config.probe.model,
+                  messages: ctx.messages,
+                  system,
+                  tools: [sendMessageTool],
+                  log,
+                  label: `probe:${chatId}`,
+                });
+
+                const probeMsg = probeResult.choices[0]?.message;
+                const hasToolCalls = !!(probeMsg?.tool_calls as unknown[] | undefined)?.length;
+
+                deps.persistProbeResponse(chatId, {
+                  requestedAtMs: Date.now(),
+                  provider: 'openai-chat',
+                  data: probeMsg ? [probeMsg] : [],
+                  inputTokens: probeResult.usage.prompt_tokens,
+                  outputTokens: probeResult.usage.completion_tokens,
+                  reasoningSignatureCompat: config.probe.reasoningSignatureCompat ?? '',
+                  isActivated: hasToolCalls,
+                });
+
+                if (!hasToolCalls) {
+                  log.withFields({ chatId }).log('Probe: model chose silence');
+                  return;
+                }
+
+                log.withFields({ chatId }).log('Probe: tool calls detected, activating primary model');
+              }
+            }
+
             await runner.runStepLoop({
               chatId,
               messages: ctx.messages,
@@ -165,7 +220,7 @@ export const createDriver = (config: DriverConfig, deps: {
             running(false);
           }
         })();
-      }, remaining);
+      }, 0);
     });
 
     // --- Independent compaction effect ---

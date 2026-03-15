@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs';
 import * as v from 'valibot';
 import { parse as parseYaml } from 'yaml';
 
+const llmEndpointEntries = {
+  apiBaseUrl: v.string(),
+  apiKey: v.string(),
+  model: v.string(),
+  reasoningSignatureCompat: v.optional(v.string()),
+};
+
 const ConfigSchema = v.object({
   telegram: v.object({
     botToken: v.string(),
@@ -10,12 +17,7 @@ const ConfigSchema = v.object({
     apiHash: v.string(),
     session: v.optional(v.string(), ''),
   }),
-  llm: v.object({
-    apiBaseUrl: v.string(),
-    apiKey: v.string(),
-    model: v.string(),
-    reasoningSignatureCompat: v.optional(v.string()),
-  }),
+  llm: v.object(llmEndpointEntries),
   driver: v.object({
     chatIds: v.array(v.string()),
   }),
@@ -28,6 +30,13 @@ const ConfigSchema = v.object({
     workingWindowEstTokens: v.optional(v.number(), 8000),
     compactModel: v.optional(v.string()),
     dryRun: v.optional(v.boolean(), false),
+  }), {}),
+  probe: v.optional(v.object({
+    enabled: v.optional(v.boolean(), false),
+    apiBaseUrl: v.optional(v.string(), ''),
+    apiKey: v.optional(v.string(), ''),
+    model: v.optional(v.string(), ''),
+    reasoningSignatureCompat: v.optional(v.string()),
   }), {}),
   features: v.optional(v.object({
     trimStaleNoToolCallTurnResponses: v.optional(v.boolean(), false),

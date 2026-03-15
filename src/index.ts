@@ -1,7 +1,7 @@
 import { adaptDelete, adaptEdit, adaptMessage, contentToPlainText } from './adaptation';
 import { loadConfig } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
-import { createDatabase, loadCompaction, loadEvents, loadKnownChatIds, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, persistTurnResponse, runMigrations } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadKnownChatIds, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations } from './db';
 import { createDriver } from './driver';
 import { createPipeline } from './pipeline';
 import type { RenderParams } from './rendering';
@@ -52,6 +52,13 @@ const main = async () => {
     reasoningSignatureCompat: config.llm.reasoningSignatureCompat,
     featureFlags: config.features,
     compaction: config.compaction,
+    probe: {
+      enabled: config.probe.enabled,
+      apiBaseUrl: config.probe.apiBaseUrl,
+      apiKey: config.probe.apiKey,
+      model: config.probe.model,
+      reasoningSignatureCompat: config.probe.reasoningSignatureCompat,
+    },
   }, {
     loadTurnResponses: (chatId, afterMs) => {
       const rows = loadTurnResponses(db, chatId, afterMs);
@@ -68,6 +75,7 @@ const main = async () => {
       ...tr,
       requestedAtMs: tr.requestedAtMs,
     }),
+    persistProbeResponse: (chatId, probe) => persistProbeResponse(db, chatId, probe),
     sendMessage: async (chatId, text, replyToMessageId) => {
       const sent = await telegram.sendMessage(chatId, text, replyToMessageId ? { replyToMessageId } : undefined);
 

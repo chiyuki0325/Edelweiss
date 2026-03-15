@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 
 import type { DB } from './client';
-import { compactions, events, messages, turnResponses, users } from './schema';
+import { compactions, events, messages, probeResponses, turnResponses, users } from './schema';
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalDeleteEvent,
@@ -299,4 +299,30 @@ export const loadCompaction = (db: DB, chatId: string): CompactionSessionMeta | 
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
   };
+};
+
+// --- Probe response storage ---
+
+type AnyMsg = Record<string, any>;
+
+export const persistProbeResponse = (db: DB, chatId: string, probe: {
+  requestedAtMs: number;
+  provider: string;
+  data: AnyMsg[];
+  inputTokens: number;
+  outputTokens: number;
+  reasoningSignatureCompat: string;
+  isActivated: boolean;
+}) => {
+  db.insert(probeResponses).values({
+    chatId,
+    requestedAt: probe.requestedAtMs,
+    provider: probe.provider,
+    data: probe.data,
+    inputTokens: probe.inputTokens,
+    outputTokens: probe.outputTokens,
+    reasoningSignatureCompat: probe.reasoningSignatureCompat,
+    isActivated: probe.isActivated,
+    createdAt: Date.now(),
+  }).run();
 };

@@ -34,6 +34,17 @@ export interface TurnResponse {
   reasoningSignatureCompat?: string;
 }
 
+export interface LlmEndpoint {
+  apiBaseUrl: string;
+  apiKey: string;
+  model: string;
+  reasoningSignatureCompat?: string;
+}
+
+export interface ProbeConfig extends LlmEndpoint {
+  enabled: boolean;
+}
+
 export interface DriverConfig {
   apiBaseUrl: string;
   apiKey: string;
@@ -42,6 +53,7 @@ export interface DriverConfig {
   reasoningSignatureCompat?: string;
   featureFlags: FeatureFlags;
   compaction: CompactionConfig;
+  probe: ProbeConfig;
 }
 
 export interface CompactionConfig {

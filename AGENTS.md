@@ -22,10 +22,10 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, compactions tables; 18 migrations |
+| DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses tables; 19 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
-| Driver | Done | SSE streaming via xsai `chat()`, manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history). Planned: late-binding injection, multi-provider support |
+| Driver | Done | SSE streaming via xsai `chat()`, manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization, reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation). Planned: late-binding injection, multi-provider support |
 
 ## Tech Stack
 
@@ -80,7 +80,7 @@ src/
 │   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
-│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, compactions tables
+│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, compactions, probeResponses tables
 │   ├── persistence.ts      # CRUD: persistEvent, persistMessage, persistTurnResponse, persistCompaction, loadEvents, loadTurnResponses, loadCompaction, etc.
 │   └── index.ts            # Barrel exports
 └── telegram/
@@ -285,6 +285,47 @@ Compaction proactively summarizes historical conversation context to prevent LLM
 - `dryRun` (boolean, default `false`): call LLM and log summary, but don't persist or apply.
 
 **Empty content sanitization**: Anthropic API rejects assistant messages with empty `content` (empty string, null, or pure-thinking entries with no content/tool_calls). `composeContext` sanitizes these: `content: '' | null | undefined` → `delete content`; empty-shell assistant messages (no content, no tool_calls) are filtered out entirely.
+
+### Probe / Activate Gate
+
+In group chats, most messages don't require a bot response. To avoid wasting tokens on the primary (large) model, the Driver supports a **probe gate**: when the bot hasn't been recently @'d or replied to, a small/cheap probe model runs first. If the probe chooses silence (no tool calls), the primary model is skipped. If the probe produces tool calls (intent to act), its result is discarded and the primary model is activated with the same context.
+
+**Terminology**:
+- **Probe model**: small/cheap model configured independently (`probe` config section)
+- **Primary model**: the main `llm` section model
+- **Probe**: single-step LLM call with no tool execution, result stored but not acted upon
+- **Activate**: probe detected tool calls → discard probe, run primary model step loop
+
+**Flow** (in Driver reply effect, after debounce):
+1. Compose context (same as normal flow)
+2. Check `needsProbe`: `probe.enabled && lastMentionedAtMs <= lastTrTimeMs`
+   - `lastMentionedAtMs`: max `receivedAtMs` of RC segments with `mentionsMe` or `repliesToMe` set
+   - `mentionsMe`: RC segment's source message content contains a `<mention>` node targeting bot's userId
+   - `repliesToMe`: RC segment's source message replies to a bot message
+3. If probe needed: call `streamingChat` with probe model (same context, same tools, single call)
+   - No tool calls → persist probe response (`is_activated=false`), return (bot stays silent)
+   - Has tool calls → persist probe response (`is_activated=true`), fall through to primary step loop
+4. If probe not needed (bot was mentioned/replied to): skip probe, run primary step loop directly
+
+**Probe responses** are stored in a dedicated `probe_responses` table (not in `turn_responses`). They do not participate in `composeContext` — probe TRs never enter the LLM context. They exist purely for debugging and analysis.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | autoincrement |
+| chat_id | TEXT NOT NULL | indexed |
+| requested_at | INTEGER NOT NULL | millisecond timestamp |
+| provider | TEXT NOT NULL | e.g. 'openai-chat' |
+| data | TEXT (JSON) NOT NULL | probe LLM output |
+| input_tokens | INTEGER NOT NULL | token stats |
+| output_tokens | INTEGER NOT NULL | token stats |
+| reasoning_signature_compat | TEXT DEFAULT '' | provider compat group |
+| is_activated | INTEGER NOT NULL DEFAULT 0 | whether probe triggered primary activation |
+| created_at | INTEGER NOT NULL | millisecond timestamp |
+
+**Config** (`probe` section in `config.yaml`):
+- `enabled` (boolean, default `false`): whether to use probe gate
+- `apiBaseUrl`, `apiKey`, `model`: probe model endpoint (independent from `llm` section)
+- `reasoningSignatureCompat` (string, optional): provider compat group for reasoning sanitization
 
 ## Coding Conventions
 

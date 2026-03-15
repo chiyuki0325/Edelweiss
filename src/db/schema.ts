@@ -4,6 +4,8 @@ import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentN
 import type { TRDataEntry } from '../driver/types';
 import type { Attachment, ForwardInfo, MessageEntity } from '../telegram/message/types';
 
+type AnyMsg = Record<string, any>;
+
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   firstName: text('first_name').notNull(),
@@ -109,4 +111,19 @@ export const compactions = sqliteTable('compactions', {
   createdAt: integer('created_at').notNull(),
 }, table => [
   index('compactions_chat_id_idx').on(table.chatId),
+]);
+
+export const probeResponses = sqliteTable('probe_responses', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: text('chat_id').notNull(),
+  requestedAt: integer('requested_at').notNull(),
+  provider: text('provider').notNull(),
+  data: text('data', { mode: 'json' }).notNull().$type<AnyMsg[]>(),
+  inputTokens: integer('input_tokens').notNull(),
+  outputTokens: integer('output_tokens').notNull(),
+  reasoningSignatureCompat: text('reasoning_signature_compat').default(''),
+  isActivated: integer('is_activated', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  index('probe_responses_chat_idx').on(table.chatId),
 ]);

@@ -29,6 +29,10 @@ export interface RenderedContextSegment {
   // exist as tool results in TRs). A message can be isMyself without isSelfSent
   // if another program sent it through the same bot account.
   isSelfSent?: boolean;
+  // Content contains a <mention> node targeting this bot's userId
+  mentionsMe?: boolean;
+  // Reply-to target is a message sent by this bot
+  repliesToMe?: boolean;
 }
 
 export type RenderedContext = RenderedContextSegment[];
