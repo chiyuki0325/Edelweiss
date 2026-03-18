@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { composeContext } from './context';
-import type { TRDataEntry, TurnResponse } from './types';
+import type { ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { FeatureFlags } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
 
@@ -20,7 +20,7 @@ const tr = (ts: number, data: TRDataEntry[]): TurnResponse => ({
   outputTokens: 0,
 });
 
-const responsesTR = (ts: number, data: unknown[], compat?: string): TurnResponse => ({
+const responsesTR = (ts: number, data: ResponsesTRDataItem[], compat?: string): TurnResponse => ({
   requestedAtMs: ts,
   provider: 'responses',
   data,

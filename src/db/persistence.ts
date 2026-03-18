@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { compactions, events, messages, probeResponses, turnResponses, users } from './schema';
@@ -9,7 +9,7 @@ import type {
   CanonicalIMEvent,
   CanonicalMessageEvent,
 } from '../adaptation/types';
-import type { CompactionSessionMeta } from '../driver/types';
+import type { CompactionSessionMeta, ResponsesTRDataItem, TRDataEntry, TurnResponse } from '../driver/types';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
 export const upsertUser = (db: DB, user: TelegramUser) => {
@@ -65,6 +65,13 @@ export const persistMessage = (db: DB, msg: TelegramMessage) => {
         entities: msg.entities,
         editDate: msg.editDate,
         attachments: msg.attachments,
+        // Converge fields that may arrive from different sources (bot vs userbot).
+        // COALESCE(new, existing) ensures a non-null value is never overwritten by null.
+        replyToMessageId: sql`coalesce(${msg.replyToMessageId ?? null}, ${messages.replyToMessageId})`,
+        replyToTopId: sql`coalesce(${msg.replyToTopId ?? null}, ${messages.replyToTopId})`,
+        forwardInfo: sql`coalesce(${msg.forwardInfo ? JSON.stringify(msg.forwardInfo) : null}, ${messages.forwardInfo})`,
+        mediaGroupId: sql`coalesce(${msg.mediaGroupId ?? null}, ${messages.mediaGroupId})`,
+        viaBotId: sql`coalesce(${msg.viaBotId ?? null}, ${messages.viaBotId})`,
       },
     })
     .run();
@@ -239,14 +246,7 @@ export const loadKnownChatIds = (db: DB): string[] => {
   return rows.map(r => r.chatId);
 };
 
-export const persistTurnResponse = (db: DB, chatId: string, tr: {
-  requestedAtMs: number;
-  provider: string;
-  data: unknown[];
-  inputTokens: number;
-  outputTokens: number;
-  reasoningSignatureCompat?: string;
-}) => {
+export const persistTurnResponse = (db: DB, chatId: string, tr: TurnResponse) => {
   db.insert(turnResponses).values({
     chatId,
     requestedAt: tr.requestedAtMs,
@@ -259,14 +259,41 @@ export const persistTurnResponse = (db: DB, chatId: string, tr: {
   }).run();
 };
 
-export const loadTurnResponses = (db: DB, chatId: string, afterMs?: number) => {
+type TurnResponseRow = typeof turnResponses.$inferSelect;
+
+const reconstructTurnResponse = (row: TurnResponseRow): TurnResponse => {
+  switch (row.provider) {
+  case 'openai-chat':
+    return {
+      requestedAtMs: row.requestedAt,
+      provider: 'openai-chat',
+      data: row.data as TRDataEntry[],
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      reasoningSignatureCompat: row.reasoningSignatureCompat ?? '',
+    };
+  case 'responses':
+    return {
+      requestedAtMs: row.requestedAt,
+      provider: 'responses',
+      data: row.data as ResponsesTRDataItem[],
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      reasoningSignatureCompat: row.reasoningSignatureCompat ?? '',
+    };
+  default:
+    throw new Error(`Unknown turn response provider: ${row.provider}`);
+  }
+};
+
+export const loadTurnResponses = (db: DB, chatId: string, afterMs?: number): TurnResponse[] => {
   const query = afterMs != null
     ? db.select().from(turnResponses)
         .where(and(eq(turnResponses.chatId, chatId), gte(turnResponses.requestedAt, afterMs)))
     : db.select().from(turnResponses)
         .where(eq(turnResponses.chatId, chatId));
 
-  return query.orderBy(turnResponses.requestedAt, turnResponses.id).all();
+  return query.orderBy(turnResponses.requestedAt, turnResponses.id).all().map(reconstructTurnResponse);
 };
 
 // --- Compaction storage (append-only) ---

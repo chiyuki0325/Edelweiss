@@ -32,7 +32,7 @@ const toolResultData = (id: string, content: string): TRDataEntry => ({
 const rcChunk = (time: number, content: RenderedContext[number]['content']): ContextChunk =>
   ({ type: 'rc', time, step: -1, content });
 
-const trChunk = (time: number, step: number, data: unknown): ContextChunk =>
+const trChunk = (time: number, step: number, data: TRDataEntry): ContextChunk =>
   ({ type: 'tr', provider: 'openai-chat', time, step, data });
 
 describe('mergeContext', () => {

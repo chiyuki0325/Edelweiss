@@ -1,4 +1,4 @@
-import type { ContextChunk, ProviderFormat, TurnResponse } from './types';
+import type { ContextChunk, TurnResponse } from './types';
 import type { RenderedContext, RenderedContentPiece } from '../rendering/types';
 
 // Merge RC segments and TRs into a ContextChunk[] array.
@@ -20,16 +20,23 @@ import type { RenderedContext, RenderedContentPiece } from '../rendering/types';
 export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): ContextChunk[] => {
   type Entry =
     | { kind: 'rc'; time: number; step: -1; content: RenderedContentPiece[] }
-    | { kind: 'tr'; provider: ProviderFormat; time: number; step: number; data: unknown };
+    | { kind: 'tr'; provider: 'openai-chat'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'openai-chat' }>['data'] }
+    | { kind: 'tr'; provider: 'responses'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'responses' }>['data'] };
 
   const entries: Entry[] = [];
 
   for (const seg of rc)
     entries.push({ kind: 'rc', time: seg.receivedAtMs, step: -1, content: seg.content });
 
-  for (const t of trs)
-    for (let i = 0; i < t.data.length; i++)
-      entries.push({ kind: 'tr', provider: t.provider, time: t.requestedAtMs, step: i, data: t.data[i]! });
+  for (const t of trs) {
+    if (t.provider === 'responses') {
+      for (let i = 0; i < t.data.length; i++)
+        entries.push({ kind: 'tr', provider: 'responses', time: t.requestedAtMs, step: i, data: t.data[i]! });
+    } else {
+      for (let i = 0; i < t.data.length; i++)
+        entries.push({ kind: 'tr', provider: 'openai-chat', time: t.requestedAtMs, step: i, data: t.data[i]! });
+    }
+  }
 
   entries.sort((a, b) => {
     if (a.time !== b.time) return a.time - b.time;
@@ -56,7 +63,10 @@ export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): ContextC
       pendingTime = entry.time;
     } else {
       flushRC();
-      chunks.push({ type: 'tr', provider: entry.provider, time: entry.time, step: entry.step, data: entry.data });
+      if (entry.provider === 'responses')
+        chunks.push({ type: 'tr', provider: 'responses', time: entry.time, step: entry.step, data: entry.data });
+      else
+        chunks.push({ type: 'tr', provider: 'openai-chat', time: entry.time, step: entry.step, data: entry.data });
     }
   }
   flushRC();

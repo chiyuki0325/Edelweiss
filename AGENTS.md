@@ -10,7 +10,7 @@ Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeli
 
 1. **Adaptation**: Platform Event → CanonicalIMEvent (anti-corruption layer).
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
-3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering and late-binding injection, producing Rendered Context (RC).
+3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering, producing Rendered Context (RC).
 
 The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns tool call loops, reactive scheduling, and context compaction. Supports two API formats: OpenAI Chat Completions (`openai-chat`, via xsai with SSE streaming) and OpenAI Responses API (`responses`, via direct fetch with SSE streaming). TRs are stored in raw provider format; conversion happens at API boundaries when composing context or sending requests.
 
@@ -22,7 +22,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses tables; 19 migrations |
+| DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses tables; 20 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
 | Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries |
@@ -36,7 +36,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
 - **State management**: Immer — immutable IC updates in Projection reducers.
 - **Reactivity**: alien-signals — signal/computed/effect graph for Driver orchestration.
-- **Validation**: Valibot — schema validation for config, canonical events.
+- **Validation**: Valibot — schema validation for config and other runtime inputs where schemas are defined.
 - **Prompts**: @velin-dev/core — all LLM prompts are velin templates (`.velin.md`) in the `prompts/` directory, rendered via `renderMarkdownString`. Never hardcode prompt strings in source code.
 - **Logging**: @guiiai/logg — structured logger with pretty/JSON output.
 - **Testing**: Vitest.
@@ -74,7 +74,9 @@ src/
 │   ├── merge.test.ts       # Merge logic tests
 │   ├── convert.ts          # Format conversion: openai-chat ↔ responses (chatTRToResponsesInput, responsesOutputToMessages, messagesToResponsesInput, xsaiToolToResponsesTool)
 │   ├── convert.test.ts     # Conversion + round-trip fidelity tests
+│   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
 │   ├── responses-types.ts  # OpenAI Responses API type definitions (request/response/stream events)
+│   ├── sse.ts              # Shared SSE line-buffer parser used by both provider streamers
 │   ├── runner.ts           # LLM step loop: dual-provider SSE streaming + manual tool execution
 │   ├── streaming.ts        # SSE streaming chat: parses OpenAI-compat SSE into ChatCompletion result with per-chunk logging
 │   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE into output items with per-chunk logging
@@ -95,6 +97,7 @@ src/
     ├── event-bus.ts         # Simple typed pub/sub
     ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
     ├── gramjs-logger.ts     # Patches gramjs internal logger to @guiiai/logg
+    ├── markdown.ts          # Markdown → Telegram HTML converter (MarkdownIt-based)
     ├── session.ts           # Session file load/save
     ├── login.ts             # Interactive MTProto login script (pnpm login)
     └── message/
@@ -114,7 +117,6 @@ Top-level directories:
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
 - `dcp-updates.md` — implementation deltas from the original RFC
-- `gpt-review.md` — repository-wide code/doc review notes and consistency audit
 
 ### Type Ownership
 
@@ -135,7 +137,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm dev` — run with file watching (tsx watch).
 - `pnpm start` — run once (tsx).
 - `pnpm build` — bundle with tsdown.
-- `pnpm typecheck` — `tsc --noEmit`.
+- `pnpm typecheck` — `tsc --noEmit` (current `tsconfig.json` only includes `src/**/*.ts`).
 - `pnpm lint` / `pnpm lint:fix` — ESLint.
 - `pnpm test` / `pnpm test:run` — Vitest.
 - `pnpm login` — interactive MTProto session login.
@@ -145,7 +147,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 
 ### DCP Layers Are Pure Functions
 
-Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no side effects, no network calls. Projection only processes IM platform events — bot's own LLM interactions live exclusively in the Driver layer (unidirectional data flow, no backflow). External data (memory, user profiles) enters through Rendering's late-binding mechanism or as pre-fetched fields on the event.
+Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no side effects, no network calls. Projection only processes IM platform events — bot's own LLM interactions live exclusively in the Driver layer (unidirectional data flow, no backflow). External data (memory, user profiles) enters either through Driver-level late binding (current implementation) or as pre-fetched fields on the event.
 
 ### Dual Timestamps
 
@@ -181,15 +183,15 @@ Design rule: metadata changes about entities → append-only; content changes to
 
 `src/http.ts` exposes `registerHttpSecret(secret)`. Registered strings are masked with equal-length `*` in all `HttpError` messages. Bot token is registered at client creation.
 
-### Message Batching and Debounce
+### Message Scheduling
 
-Projection runs immediately on every event — IC is always current. Debounce/throttle is owned by the **Driver** — each trigger produces one `render(IC)` → one RC → one LLM API call. The debounce/throttle parameters are strategy (tunable, graded via fixtures). Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **immediate trigger + natural batching** — the reply effect fires as soon as new external messages are detected (`setTimeout(0)` only exits the synchronous signal graph). The `running` flag prevents concurrent LLM calls; messages arriving during a call accumulate and are picked up on the next run. No debounce/throttle is currently implemented. Bot responds via `send_message` tool call (not 1:1 response).
 
-Debounce lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing debounce would create coordination overhead.
+Scheduling lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing it would create coordination overhead.
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call = one TR (not the entire loop as one TR). When new external chat messages arrive during a tool call loop, the Driver interrupts the loop and re-schedules a new LLM call after debounce. The new call composes fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR's tool results. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the complete output of one step: assistant response + tool results produced by executing that step's tool calls. When new external chat messages arrive during a tool call loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. The reactive effect then re-schedules a new LLM call, composing fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
 
 ### Reasoning Signature Sanitization
 
@@ -237,7 +239,8 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - System prompt is static and positioned first.
 - Chat history is append-only within an epoch.
-- **Planned**: Dynamic content (memory recall, cross-session awareness) will be injected at the end of the last user message via late binding.
+- **Current**: Dynamic action hints (probe / mention / reply state) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`.
+- **Planned**: Richer dynamic content (memory recall, cross-session awareness) should continue to be injected by the Driver through a more structured late-binding mechanism.
 - Compaction creates epoch boundaries — see [Context Compaction](#context-compaction) below.
 
 ### isSelfSent Pipeline
@@ -362,6 +365,7 @@ In group chats, most messages don't require a bot response. To avoid wasting tok
 - Use Vitest. Test files live next to source as `*.test.ts`.
 - Projection reducers are pure functions — test them with static CanonicalIMEvent fixtures.
 - Mock Telegram clients and DB for integration tests.
+- Driver, persistence, and Telegram integration are now complexity hotspots — expand test coverage there when behavior changes.
 - When fixing a bug, add a test that reproduces the previous failure.
 
 ## Comments & Markers

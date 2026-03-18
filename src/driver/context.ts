@@ -2,12 +2,21 @@ import type { Message, UserMessage } from 'xsai';
 
 import { responsesOutputToMessages } from './convert';
 import { mergeContext } from './merge';
-import type { ContextChunk, TRAssistantEntry, TRDataEntry, TurnResponse } from './types';
+import type {
+  ChatTurnResponse,
+  ContextChunk,
+  ExtendedMessage,
+  ExtendedMessagePart,
+  ResponsesTurnResponse,
+  ResponsesTRDataItem,
+  TRAssistantEntry,
+  TRDataEntry,
+  TurnResponse,
+} from './types';
 import type { FeatureFlags } from '../config/config';
 import type { RenderedContext, RenderedContentPiece } from '../rendering/types';
 
-type AnyMsg = Record<string, any>;
-const asMsg = (m: Message): AnyMsg => m as unknown as AnyMsg;
+const asMsg = (m: Message): ExtendedMessage => m as unknown as ExtendedMessage;
 
 // ~2 chars per token for mixed CJK/English/XML.
 // For images, use actual base64 URL length (dominates HTTP payload).
@@ -19,15 +28,15 @@ const CHARS_PER_TOKEN = 2;
 // time, so use a fixed constant matching our thumbnail budget.
 const IMAGE_TOKENS = 100;
 
-const estimatePartTokens = (part: Record<string, any>): number => {
+const estimatePartTokens = (part: ExtendedMessagePart): number => {
   if (part.type === 'image_url' || (part.type === 'image' && part.source))
     return IMAGE_TOKENS;
-  return Math.ceil(((part.text as string)?.length ?? 0) / CHARS_PER_TOKEN);
+  return Math.ceil((part.text?.length ?? 0) / CHARS_PER_TOKEN);
 };
 
-const estimateMessageTokens = (m: AnyMsg): number => {
+const estimateMessageTokens = (m: ExtendedMessage): number => {
   if (Array.isArray(m.content))
-    return (m.content as AnyMsg[]).reduce((a, p) => a + estimatePartTokens(p), 0);
+    return (m.content as ExtendedMessagePart[]).reduce((a, p) => a + estimatePartTokens(p), 0);
   if (typeof m.content === 'string')
     return Math.ceil(m.content.length / CHARS_PER_TOKEN);
   return Math.ceil(JSON.stringify(m).length / CHARS_PER_TOKEN);
@@ -45,7 +54,7 @@ const trimContext = (messages: Message[], maxTokens: number): { messages: Messag
   // Deep-clone user messages' content arrays for mutation
   const result = messages.map(msg =>
     asMsg(msg).role === 'user' && Array.isArray(asMsg(msg).content)
-      ? { ...msg, content: [...asMsg(msg).content] }
+      ? { ...msg, content: [...(asMsg(msg).content as ExtendedMessagePart[])] }
       : msg) as Message[];
 
   while (totalTokens > maxTokens) {
@@ -55,7 +64,7 @@ const trimContext = (messages: Message[], maxTokens: number): { messages: Messag
       // Keep at least the last content part of the last message
       if (first.content.length <= 1 && result.length <= 1) break;
 
-      const dropped = first.content.shift() as AnyMsg;
+      const dropped = first.content.shift() as ExtendedMessagePart;
       totalTokens -= estimatePartTokens(dropped);
 
       // User message emptied — remove it
@@ -77,51 +86,51 @@ const trimContext = (messages: Message[], maxTokens: number): { messages: Messag
 
   // Don't start with orphaned tool results
   while (result.length > 1 && asMsg(result[0]!).role === 'tool')
-    result.shift();
+    totalTokens -= estimateMessageTokens(asMsg(result.shift()!));
 
   return { messages: result, estimatedTokens: totalTokens };
 };
 
 // Sanitize reasoning from historical TRs before merging into LLM context.
 //
-// Anthropic models return reasoning as thinking text + cryptographic signature.
-// The signature validates that the thinking text hasn't been tampered with;
-// replaying requires BOTH — signature alone is useless without the text it signs.
+// Different providers store reasoning in different fields:
+//   Anthropic compat: reasoning_text (text) + reasoning_opaque (signature)
+//   DeepSeek/xAI/Qwen: reasoning_content
+//   vLLM/Groq/OpenRouter: reasoning
+//   Anthropic content array: thinking blocks in content[]
+//   Responses API: output items with type 'reasoning'
 //
-// In OpenAI Chat Completions compatible format, this pair appears as:
-//   - reasoning_text  (the thinking text)     + reasoning_opaque (the signature)
-// In Anthropic native content-array format:
-//   - thinking block with `thinking` field    + `signature` field
+// All are persisted raw in TRs. On replay, signatures are only valid within the
+// same provider family (identified by reasoningSignatureCompat). On mismatch:
+//   - openai-chat: whitelist approach — reconstruct with only role/content/tool_calls,
+//     implicitly stripping all reasoning fields regardless of field name
+//   - responses: filter out type==='reasoning' items
 //
-// In Responses API format, reasoning appears as output items with type 'reasoning',
-// carrying id, summary, and encrypted_content fields.
-//
-// Signatures are only valid within the same provider family (e.g. "anthropic").
-// Each TR records which compat group produced it. On replay:
-//   - Same compat group  -> keep all reasoning (signature valid, model can resume)
-//   - Different / empty  -> strip all reasoning (signature invalid, would error)
-//
-// The pair is always kept or stripped together — never one without the other.
-const sanitizeReasoningForTR = (tr: TurnResponse, currentCompat: string | undefined): unknown[] => {
+// On match, the entire TR data is replayed unmodified.
+const sanitizeResponsesReasoningForTR = (
+  tr: ResponsesTurnResponse,
+  currentCompat: string | undefined,
+): ResponsesTRDataItem[] => {
   const compatMatch = !!currentCompat && !!tr.reasoningSignatureCompat && tr.reasoningSignatureCompat === currentCompat;
 
-  if (tr.provider === 'responses') {
-    if (compatMatch) return tr.data;
-    // Strip reasoning items from responses data
-    return (tr.data as AnyMsg[]).filter(item => item.type !== 'reasoning');
-  }
+  if (compatMatch) return tr.data;
+  return tr.data.filter(item => item.type !== 'reasoning');
+};
 
-  // openai-chat provider
+const sanitizeChatReasoningForTR = (
+  tr: ChatTurnResponse,
+  currentCompat: string | undefined,
+): TRDataEntry[] => {
+  const compatMatch = !!currentCompat && !!tr.reasoningSignatureCompat && tr.reasoningSignatureCompat === currentCompat;
+  if (compatMatch) return tr.data;
+
   return tr.data.map(entry => {
-    const e = entry as TRDataEntry;
-    if (e.role !== 'assistant') return entry;
-
-    if (compatMatch) return entry;
+    if (entry.role !== 'assistant') return entry;
 
     // Compat mismatch — strip all reasoning fields, keeping only role/content/tool_calls
     const rest: TRAssistantEntry = { role: 'assistant' };
-    if (e.content !== undefined) rest.content = e.content;
-    if (e.tool_calls) rest.tool_calls = e.tool_calls;
+    if (entry.content !== undefined) rest.content = entry.content;
+    if (entry.tool_calls) rest.tool_calls = entry.tool_calls;
 
     // Strip thinking blocks from content array
     if (Array.isArray(rest.content)) {
@@ -152,6 +161,13 @@ export const latestExternalEventMs = (
   return latest;
 };
 
+const estimateTRTokens = (tr: TurnResponse): number => {
+  const chunks: ContextChunk[] = tr.provider === 'responses'
+    ? tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'responses' as const, time: tr.requestedAtMs, step, data }))
+    : tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'openai-chat' as const, time: tr.requestedAtMs, step, data }));
+  return chunksToMessages(chunks).reduce((acc, msg) => acc + estimateMessageTokens(asMsg(msg)), 0);
+};
+
 // Walk backward from the newest RC segment, accumulate estimated tokens
 // from both RC and TRs (interleaved by timestamp), stop when the budget
 // is reached. Returns the receivedAtMs of the cutoff point.
@@ -171,9 +187,7 @@ export const findWorkingWindowCursor = (
   }
 
   for (const tr of trs) {
-    const tokens = (tr.data as unknown[]).reduce<number>((a, entry) =>
-      a + Math.ceil(JSON.stringify(entry).length / CHARS_PER_TOKEN), 0);
-    entries.push({ timeMs: tr.requestedAtMs, tokens });
+    entries.push({ timeMs: tr.requestedAtMs, tokens: estimateTRTokens(tr) });
   }
 
   // Sort newest-first
@@ -193,10 +207,9 @@ export const findWorkingWindowCursor = (
 const KEEP_NO_TOOL_CALL_TRS = 5;
 
 const trHasToolCalls = (tr: TurnResponse): boolean =>
-  (tr.data as AnyMsg[]).some(item =>
-    tr.provider === 'responses'
-      ? item.type === 'function_call'
-      : item.role === 'assistant' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0);
+  tr.provider === 'responses'
+    ? tr.data.some(item => item.type === 'function_call')
+    : tr.data.some(item => item.role === 'assistant' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0);
 
 const trimStaleNoToolCallTRs = (trs: TurnResponse[]): TurnResponse[] => {
   // Partition: indices of TRs without tool calls
@@ -228,13 +241,17 @@ const trimToolResults = (trs: TurnResponse[]): TurnResponse[] =>
   trs.length <= TOOL_RESULT_KEEP_RECENT ? trs
     : trs.map((tr, i) =>
         i >= trs.length - TOOL_RESULT_KEEP_RECENT ? tr
-          : {
-              ...tr,
-              data: (tr.data as AnyMsg[]).map(item =>
-                tr.provider === 'responses'
-                  ? (item.type === 'function_call_output' ? { ...item, output: trimLongResult(item.output as string) } : item)
-                  : (item.role === 'tool' ? { ...item, content: trimLongResult(item.content as string) } : item)),
-            });
+          : tr.provider === 'responses'
+            ? {
+                ...tr,
+                data: tr.data.map(item =>
+                  item.type === 'function_call_output' ? { ...item, output: trimLongResult(item.output) } : item),
+              }
+            : {
+                ...tr,
+                data: tr.data.map(item =>
+                  item.role === 'tool' ? { ...item, content: trimLongResult(item.content) } : item),
+              });
 
 // --- Feature flag: trimSelfMessagesCoveredBySendToolCalls ---
 // Bot's own messages enter RC via userbot AND exist in TRs as tool call results.
@@ -250,7 +267,7 @@ export const trimImages = (messages: Message[], maxImages: number): void => {
   for (const msg of messages) {
     const m = asMsg(msg);
     if (Array.isArray(m.content))
-      total += (m.content as AnyMsg[]).filter(p => p.type === 'image_url').length;
+      total += (m.content as ExtendedMessagePart[]).filter(p => p.type === 'image_url').length;
   }
   if (total <= maxImages) return;
 
@@ -261,7 +278,7 @@ export const trimImages = (messages: Message[], maxImages: number): void => {
     const m = asMsg(msg);
     if (!Array.isArray(m.content)) continue;
     const before = m.content.length;
-    m.content = (m.content as AnyMsg[]).filter(p => {
+    m.content = (m.content as ExtendedMessagePart[]).filter(p => {
       if (toDrop > 0 && p.type === 'image_url') { toDrop--; return false; }
       return true;
     });
@@ -281,11 +298,11 @@ const contentPieceToMessagePart = (piece: RenderedContentPiece) =>
 const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
   const messages: Message[] = [];
   let pendingParts: ReturnType<typeof contentPieceToMessagePart>[] = [];
-  let responsesBuffer: unknown[] = [];
+  let responsesBuffer: ResponsesTRDataItem[] = [];
 
   const flush = () => {
     if (responsesBuffer.length > 0) {
-      messages.push(...responsesOutputToMessages(responsesBuffer as any[]));
+      messages.push(...responsesOutputToMessages(responsesBuffer));
       responsesBuffer = [];
     }
     if (pendingParts.length > 0) {
@@ -297,7 +314,7 @@ const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
   for (const chunk of chunks) {
     if (chunk.type === 'rc') {
       if (responsesBuffer.length > 0) {
-        messages.push(...responsesOutputToMessages(responsesBuffer as any[]));
+        messages.push(...responsesOutputToMessages(responsesBuffer));
         responsesBuffer = [];
       }
       pendingParts.push(...chunk.content.map(contentPieceToMessagePart));
@@ -329,10 +346,10 @@ export const composeContext = (
   if (featureFlags?.trimSelfMessagesCoveredBySendToolCalls)
     effectiveRC = filterSelfSentSegments(effectiveRC);
 
-  let sanitizedTRs = trs.map(tr => ({
-    ...tr,
-    data: sanitizeReasoningForTR(tr, reasoningSignatureCompat),
-  }));
+  let sanitizedTRs: TurnResponse[] = trs.map(tr =>
+    tr.provider === 'responses'
+      ? { ...tr, data: sanitizeResponsesReasoningForTR(tr, reasoningSignatureCompat) }
+      : { ...tr, data: sanitizeChatReasoningForTR(tr, reasoningSignatureCompat) });
 
   if (featureFlags?.trimStaleNoToolCallTurnResponses)
     sanitizedTRs = trimStaleNoToolCallTRs(sanitizedTRs);
@@ -352,7 +369,7 @@ export const composeContext = (
   // message only carries tool_calls. For user/tool roles this shouldn't happen,
   // but guard defensively.
   for (const msg of allMessages) {
-    const m = msg as Record<string, any>;
+    const m = asMsg(msg);
     if (m.content === '' || m.content === null || m.content === undefined)
       delete m.content;
   }
@@ -360,7 +377,7 @@ export const composeContext = (
   // Drop assistant messages that became completely empty after reasoning stripping
   // (pure-thinking entries with no content and no tool_calls).
   const cleaned = allMessages.filter(msg => {
-    const m = msg as Record<string, any>;
+    const m = asMsg(msg);
     return !(m.role === 'assistant' && !('content' in m) && !m.tool_calls);
   });
 

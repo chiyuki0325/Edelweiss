@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Message } from 'xsai';
 
 import { chatTRToResponsesInput, messagesToResponsesInput, responsesOutputToMessages } from './convert';
-import type { TRDataEntry } from './types';
+import type { ResponsesTRDataItem, TRDataEntry } from './types';
 
 type AnyMsg = Record<string, any>;
 
 describe('responsesOutputToMessages', () => {
   it('converts message items to assistant messages', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] },
     ];
     const result = responsesOutputToMessages(items);
@@ -18,7 +18,7 @@ describe('responsesOutputToMessages', () => {
   });
 
   it('converts function_call items to assistant tool_calls', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       { type: 'function_call', call_id: 'fc1', name: 'send_message', arguments: '{"text":"hi"}', status: 'completed' },
     ];
     const result = responsesOutputToMessages(items);
@@ -31,7 +31,7 @@ describe('responsesOutputToMessages', () => {
   });
 
   it('converts function_call_output items to tool messages', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }] },
       { type: 'function_call', call_id: 'fc1', name: 'send_message', arguments: '{}', status: 'completed' },
       { type: 'function_call_output', call_id: 'fc1', output: '{"ok":true}' },
@@ -48,7 +48,7 @@ describe('responsesOutputToMessages', () => {
   });
 
   it('preserves reasoning when present', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       {
         type: 'reasoning', id: 'rs1',
         summary: [{ type: 'summary_text', text: 'thinking about it' }],
@@ -66,7 +66,7 @@ describe('responsesOutputToMessages', () => {
   });
 
   it('handles full tool loop: reasoning + message + function_call + function_call_output', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       { type: 'reasoning', id: 'rs1', summary: [], encrypted_content: 'sig1' },
       { type: 'message', role: 'assistant', content: [] },
       { type: 'function_call', call_id: 'fc1', name: 'send_message', arguments: '{"text":"hi"}', status: 'completed' },
@@ -90,7 +90,7 @@ describe('responsesOutputToMessages', () => {
   });
 
   it('handles refusal blocks', () => {
-    const items = [
+    const items: ResponsesTRDataItem[] = [
       { type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'I cannot do that' }] },
     ];
     const result = responsesOutputToMessages(items);
@@ -217,7 +217,7 @@ describe('messagesToResponsesInput', () => {
 
 describe('round-trip fidelity', () => {
   it('responses → chat → responses preserves structure', () => {
-    const original = [
+    const original: ResponsesTRDataItem[] = [
       { type: 'reasoning', id: 'rs1', summary: [{ type: 'summary_text', text: 'hmm' }], encrypted_content: 'sig1' },
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '' }] },
       { type: 'function_call', call_id: 'fc1', name: 'send_message', arguments: '{"text":"hi"}', status: 'completed' },
@@ -251,7 +251,10 @@ describe('round-trip fidelity', () => {
     ];
 
     const responsesItems = chatTRToResponsesInput(original);
-    const chatMessages = responsesOutputToMessages(responsesItems);
+    // chatTRToResponsesInput returns ResponseInputItem[] which are structurally
+    // identical to ResponsesTRDataItem[] for assistant-originated content.
+    // The round-trip test verifies this structural equivalence.
+    const chatMessages = responsesOutputToMessages(responsesItems as unknown as ResponsesTRDataItem[]);
 
     // Responses format merges consecutive assistant items (reasoning + message + function_call)
     // into a single assistant message — so 3 entries become 2.

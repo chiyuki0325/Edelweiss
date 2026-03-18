@@ -138,6 +138,10 @@ const renderSystemEvent = (event: ICSystemEvent): string => {
   case 'user_renamed':
     return `<event type="name_change" t="${formatTimestamp(event.timestampSec, event.utcOffsetMin)}" from_name="${escapeXml(formatSender(event.oldUser))}" to_name="${escapeXml(formatSender(event.newUser))}"/>`;
   }
+  // Exhaustive: if a new kind is added to ICSystemEvent, TypeScript errors here.
+  // TODO: Add explicit rendering for future system events such as join/leave.
+  event.kind satisfies never;
+  return '';
 };
 
 // --- Public API ---

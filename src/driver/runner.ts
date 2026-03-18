@@ -1,34 +1,34 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
 import type { Logger } from '@guiiai/logg';
-import type { Message, Tool } from 'xsai';
+import type { Message } from 'xsai';
 
-import { messagesToResponsesInput, responsesOutputToMessages, xsaiToolToResponsesTool } from './convert';
-import type { ResponseFunctionCallOutputItem, ResponseOutputFunctionCall } from './responses-types';
+import { DUMP_DIR, ensureDumpDir } from './constants';
+import { messagesToResponsesInput, xsaiToolToResponsesTool } from './convert';
+import type { ResponseFunctionCallOutputItem, ResponseInputItem, ResponseOutputFunctionCall, ResponseOutputItem } from './responses-types';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
+import type { CahciuaTool } from './tools';
 import { isToolResult } from './tools';
-import type { ProviderFormat, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
+import type { ExtendedMessage, ProviderFormat, ResponsesTRDataItem, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
 
-const DUMP_DIR = '/tmp/cahciua';
-mkdirSync(DUMP_DIR, { recursive: true });
-
-type AnyMsg = Record<string, any>;
+ensureDumpDir();
 
 export interface RunnerConfig {
   apiBaseUrl: string;
   apiKey: string;
   model: string;
   apiFormat?: ProviderFormat;
+  timeoutSec?: number;
 }
 
 interface StepLoopParams {
   chatId: string;
   messages: Message[];
   system: string;
-  tools: Tool[];
+  tools: CahciuaTool[];
   maxSteps: number;
-  onStepComplete: (stepData: unknown[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
+  onStepComplete: (stepData: TRDataEntry[] | ResponsesTRDataItem[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
   checkInterrupt: () => boolean;
   log: Logger;
 }
@@ -37,13 +37,13 @@ interface StepLoopParams {
 // Shared by both openai-chat and responses step loops.
 const executeToolCall = async (
   id: string, name: string, args: string,
-  tools: Tool[], messages: Message[], log: Logger,
+  tools: CahciuaTool[], log: Logger,
 ): Promise<{ id: string; output: string; requiresFollowUp: boolean }> => {
   const tool = tools.find(t => t.function.name === name);
   try {
     const parsed = JSON.parse(args);
     const rawResult = tool
-      ? await tool.execute(parsed, { messages, toolCallId: id })
+      ? await tool.execute(parsed, { toolCallId: id })
       : { error: `Unknown tool: ${name}` };
     const { content, requiresFollowUp } = isToolResult(rawResult)
       ? rawResult
@@ -77,7 +77,7 @@ export const createRunner = (config: RunnerConfig) => {
       const response = await streamingChat({
         baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
         messages: currentMessages, system: params.system, tools: params.tools,
-        log: params.log, label: `step:${step}`,
+        log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
       });
 
       const choice = response.choices[0];
@@ -87,13 +87,13 @@ export const createRunner = (config: RunnerConfig) => {
         break;
       }
 
-      const assistantMsg = choice.message as AnyMsg;
+      const assistantMsg = choice.message as ExtendedMessage;
       const stepData: TRDataEntry[] = [assistantMsg as TRAssistantEntry];
       const toolCalls = assistantMsg.tool_calls ?? [];
 
       let anyRequiresFollowUp = false;
       for (const tc of toolCalls) {
-        const result = await executeToolCall(tc.id, tc.function.name, tc.function.arguments, params.tools, currentMessages, params.log);
+        const result = await executeToolCall(tc.id, tc.function.name, tc.function.arguments, params.tools, params.log);
         anyRequiresFollowUp ||= result.requiresFollowUp;
         stepData.push({ role: 'tool', tool_call_id: tc.id, content: result.output } as TRToolResultEntry);
       }
@@ -120,8 +120,7 @@ export const createRunner = (config: RunnerConfig) => {
   };
 
   const runStepLoopResponses = async (params: StepLoopParams): Promise<void> => {
-    let currentInput = messagesToResponsesInput(params.messages);
-    let currentMessages = [...params.messages];
+    let currentInput: (ResponseInputItem | ResponseOutputItem | ResponseFunctionCallOutputItem)[] = messagesToResponsesInput(params.messages);
     const responsesTools = params.tools.map(xsaiToolToResponsesTool);
 
     for (let step = 1; step <= params.maxSteps; step++) {
@@ -133,7 +132,7 @@ export const createRunner = (config: RunnerConfig) => {
       const response = await streamingResponses({
         baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
         input: currentInput, instructions: params.system, tools: responsesTools,
-        log: params.log, label: `step:${step}`,
+        log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
       });
 
       if (response.output.length === 0) {
@@ -142,13 +141,13 @@ export const createRunner = (config: RunnerConfig) => {
         break;
       }
 
-      const stepData: unknown[] = [...response.output];
+      const stepData: ResponsesTRDataItem[] = [...response.output];
       const functionCalls = response.output.filter((item): item is ResponseOutputFunctionCall => item.type === 'function_call');
       const callOutputs: ResponseFunctionCallOutputItem[] = [];
 
       let anyRequiresFollowUp = false;
       for (const fc of functionCalls) {
-        const result = await executeToolCall(fc.call_id, fc.name, fc.arguments, params.tools, currentMessages, params.log);
+        const result = await executeToolCall(fc.call_id, fc.name, fc.arguments, params.tools, params.log);
         anyRequiresFollowUp ||= result.requiresFollowUp;
         callOutputs.push({ type: 'function_call_output', call_id: fc.call_id, output: result.output });
       }
@@ -171,8 +170,7 @@ export const createRunner = (config: RunnerConfig) => {
         break;
       }
 
-      currentInput = [...currentInput, ...response.output as any[], ...callOutputs as any[]];
-      currentMessages = [...currentMessages, ...responsesOutputToMessages([...response.output, ...callOutputs])];
+      currentInput = [...currentInput, ...response.output, ...callOutputs];
     }
   };
 

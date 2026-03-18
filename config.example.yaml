@@ -5,12 +5,14 @@ models:
     model: "claude-opus-4-6"
     reasoningSignatureCompat: "anthropic"
     # apiFormat: "responses"        # optional: 'openai-chat' (default) or 'responses'
+    # timeoutSec: 120                # optional: abort requests that stream for too long
     # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
   probe:
     apiBaseUrl: ""
     apiKey: ""
     model: "claude-haiku-4-5"
     reasoningSignatureCompat: "anthropic"
+    # timeoutSec: 60                 # optional: abort requests that stream for too long
     # maxImagesAllowed: 10     # optional: Gemini Flash allows max 10 images
 
 telegram:
@@ -43,7 +45,7 @@ probe:
   enabled: false
   model: "probe"              # references a key in models
 
-# All feature flags should be enabled in local dev config.
+# Feature flags should be enabled in local dev config when first introduced.
 features:
   trimStaleNoToolCallTurnResponses: false
   trimSelfMessagesCoveredBySendToolCalls: false

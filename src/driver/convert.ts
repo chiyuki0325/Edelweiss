@@ -8,7 +8,7 @@
 // Mapping: responses encrypted_content ↔ openai-chat reasoning_opaque
 //          responses summary           ↔ openai-chat reasoning_text
 
-import type { Message, Tool } from 'xsai';
+import type { Message } from 'xsai';
 
 import type {
   ResponseFunctionCallOutputItem,
@@ -21,9 +21,7 @@ import type {
   ResponseOutputMessage,
   ResponseTool,
 } from './responses-types';
-import type { TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
-
-type AnyMsg = Record<string, any>;
+import type { ExtendedMessage, ExtendedMessagePart, ResponsesTRDataItem, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
 
 // ── Shared assistant → Responses input items ──
 // Extracts reasoning, message content, and tool_calls from an openai-chat-shaped
@@ -31,7 +29,7 @@ type AnyMsg = Record<string, any>;
 // and messagesToResponsesInput — the two functions differ only in how they handle
 // user and tool roles.
 const assistantToResponsesItems = (
-  m: AnyMsg,
+  m: ExtendedMessage,
   items: ResponseInputItem[],
 ) => {
   // Reasoning → ResponseInputReasoning (before message/tool_calls)
@@ -47,7 +45,7 @@ const assistantToResponsesItems = (
     const content: ResponseInputContent[] = typeof m.content === 'string'
       ? [{ type: 'output_text', text: m.content }]
       : Array.isArray(m.content)
-        ? (m.content as AnyMsg[]).flatMap(p => p.type === 'text' ? [{ type: 'output_text' as const, text: p.text as string }] : [])
+        ? (m.content as ExtendedMessagePart[]).flatMap(p => p.type === 'text' && typeof p.text === 'string' ? [{ type: 'output_text' as const, text: p.text }] : [])
         : [];
     if (content.length > 0)
       items.push({ type: 'message', role: 'assistant', content } as ResponseInputMessage);
@@ -79,7 +77,7 @@ export const chatTRToResponsesInput = (entries: TRDataEntry[]): ResponseInputIte
 // ── Responses TR data → openai-chat Message[] ──
 // Used when replaying responses TRs to a Chat Completions model.
 // Handles all 4 item types: message, function_call, reasoning, function_call_output.
-export const responsesOutputToMessages = (items: unknown[]): Message[] => {
+export const responsesOutputToMessages = (items: ResponsesTRDataItem[]): Message[] => {
   const messages: Message[] = [];
 
   let pendingContent: string | undefined;
@@ -90,7 +88,7 @@ export const responsesOutputToMessages = (items: unknown[]): Message[] => {
   const flushAssistant = () => {
     if (pendingContent == null && pendingToolCalls.length === 0
         && pendingReasoningOpaque == null && pendingReasoningText == null) return;
-    const msg: AnyMsg = { role: 'assistant' };
+    const msg: ExtendedMessage = { role: 'assistant' };
     if (pendingContent != null) msg.content = pendingContent;
     if (pendingToolCalls.length > 0) msg.tool_calls = pendingToolCalls;
     if (pendingReasoningOpaque != null) msg.reasoning_opaque = pendingReasoningOpaque;
@@ -102,9 +100,7 @@ export const responsesOutputToMessages = (items: unknown[]): Message[] => {
     pendingReasoningText = undefined;
   };
 
-  for (const raw of items) {
-    const item = raw as AnyMsg;
-
+  for (const item of items) {
     if (item.type === 'message') {
       for (const block of (item as ResponseOutputMessage).content)
         pendingContent = (pendingContent ?? '')
@@ -135,15 +131,15 @@ export const messagesToResponsesInput = (messages: Message[]): ResponseInputItem
   const items: ResponseInputItem[] = [];
 
   for (const msg of messages) {
-    const m = msg as AnyMsg;
+    const m = msg as ExtendedMessage;
 
     if (m.role === 'user') {
       if (typeof m.content === 'string') {
         items.push({ type: 'message', role: 'user', content: m.content } as ResponseInputMessage);
       } else if (Array.isArray(m.content)) {
-        const content = (m.content as AnyMsg[]).flatMap((part): ResponseInputContent[] =>
-          part.type === 'text' ? [{ type: 'input_text', text: part.text as string }]
-            : part.type === 'image_url' ? [{ type: 'input_image', image_url: part.image_url.url as string, detail: (part.image_url.detail ?? 'auto') as 'auto' | 'low' | 'high' }]
+        const content = (m.content as ExtendedMessagePart[]).flatMap((part): ResponseInputContent[] =>
+          part.type === 'text' && typeof part.text === 'string' ? [{ type: 'input_text', text: part.text }]
+            : part.type === 'image_url' && part.image_url ? [{ type: 'input_image', image_url: part.image_url.url, detail: (part.image_url.detail ?? 'auto') as 'auto' | 'low' | 'high' }]
               : []);
         if (content.length > 0) items.push({ type: 'message', role: 'user', content } as ResponseInputMessage);
       }
@@ -157,8 +153,13 @@ export const messagesToResponsesInput = (messages: Message[]): ResponseInputItem
   return items;
 };
 
-// ── xsai Tool → Responses API function tool ──
-export const xsaiToolToResponsesTool = (t: Tool): ResponseTool => ({
+// ── Tool schema → Responses API function tool ──
+interface ToolLike {
+  type: 'function';
+  function: { name: string; description?: string; parameters: Record<string, unknown>; strict?: boolean };
+}
+
+export const xsaiToolToResponsesTool = (t: ToolLike): ResponseTool => ({
   type: 'function',
   name: t.function.name,
   parameters: t.function.parameters as Record<string, unknown>,

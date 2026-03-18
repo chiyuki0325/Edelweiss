@@ -19,7 +19,7 @@ The events table is the system's external input layer. Currently it stores IM pl
 ```
 events ──→ Projection ──→ IC (always current)
                             │
-                      Driver [debounce/throttle]
+                      Driver [scheduling]
                             ↓
                       Rendering ──→ RC
                                      \
@@ -27,11 +27,12 @@ events ──→ Projection ──→ IC (always current)
                                      /
                             TRs (Driver storage)
 ```
+NOTE: Current scheduling is immediate — no debounce. See §Event Processing and Batching.
 
 - `IC' = reduce(IC, CanonicalIMEvent)` — Projection runs immediately on every event. IC is always current.
-- `RC = render(IC)` — pure function, triggered by debounce/throttle. IC nodes and RC segments carry `receivedAtMs` from their source events.
+- `RC = render(IC)` — pure function, triggered by Driver scheduling. IC nodes and RC segments carry `receivedAtMs` from their source events.
 - Driver merges RC + TRs by timestamp (`receivedAtMs` / `requestedAtMs`) → final LLM API context array. One merge = one LLM API call.
-- Debounce/throttle is owned by the Driver. Its parameters (timing, thresholds) are strategy, not architecture.
+- Scheduling is owned by the Driver. Currently immediate (no debounce). Its parameters (timing, thresholds) are strategy, not architecture.
 
 In the theoretical model, IC and RC are unbounded sequences. No SessionState, no compact cursor — those are practical concerns (see below).
 
@@ -74,7 +75,7 @@ When compaction happens:
 
 ### Cross-Session Interaction (open question, not yet designed)
 The system runs multiple Sessions (one per chat). Cross-session awareness (e.g., knowledge from chat A influencing chat B) is desirable for thought continuity but the mechanism is TBD:
-- **Late-binding memory injection**: a separate memory system captures facts across sessions, injects relevant ones at rendering time. Clean separation, no event stream pollution.
+- **Driver-level late-binding memory injection**: a separate memory system captures facts across sessions, and the Driver injects relevant ones when assembling the LLM request. Clean separation, no event stream pollution.
 - **Cross-session event emission**: Session A emits a derived event into Session B's stream. Richer but introduces internal-event backflow (previously rejected for intra-session use).
 - Likely a combination. Not designed or implemented now.
 
@@ -84,7 +85,7 @@ This document describes the **architecture**: pipeline structure, data flow, sto
 
 Within the architecture, each layer contains **strategies** — specific behavioral choices that determine output quality:
 
-- **Batching strategy**: debounce/throttle parameters for triggering Rendering + Driver (timing, thresholds)
+- **Scheduling strategy**: parameters for triggering Rendering + Driver (timing, thresholds — currently immediate with natural batching)
 - **Projection strategy**: how the reducer handles each event type, what system events to emit, what IC state to maintain
 - **Rendering strategy**: serialization format (XML structure, attributes), what information to include/exclude, how to represent attachments, edits, deletions
 - **Compaction strategy**: when to compact, how to generate summaries, what to preserve vs discard
@@ -105,14 +106,18 @@ This document does not prescribe specific strategies. It describes the mechanism
 ### IC: Theoretically Complete, Practically a Working Set
 IC is conceptually the complete history of all chat events. In practice, it's the working set after the compact cursor — nodes with `receivedAtMs < T` are GC'd since they'll never be rendered again (replaced by compaction summary). The events table retains complete history for research/audit purposes (but completeness is not a business requirement).
 
-Cold start: load compact cursor T from Driver storage → load TRs with `requestedAtMs >= T` → replay events with `receivedAtMs >= T` through Projection → rebuild IC working set. O(events since last compaction), not O(all events ever).
+**TODO — IC GC is not yet implemented.** Currently, Projection replays ALL events on cold start and IC retains all nodes in memory. The compact cursor only affects Rendering (viewport filtering). Implementing IC GC requires `loadEvents(db, chatId, afterMs)` filtering and careful handling of MetaReducer state (user map must still be built from events before the cursor).
+
+Cold start: load compact cursor T from compactions table → load TRs with `requestedAtMs >= T` → replay events through Projection → rebuild IC. **Current implementation**: replays ALL events regardless of cursor (see TODO above). Target: replay only events with `receivedAtMs >= T`, O(events since last compaction).
 
 ### Rendering Parameters
 In the theoretical model, `render(IC) → RC` with no extra parameters. In practice, Rendering needs:
 - **Compact cursor**: from Driver, to skip IC nodes before the cursor (viewport filtering)
-- **Late-binding context**: computed at request time (recalled memory, cross-session awareness)
+- **Bot identity**: from Driver, for `mentionsMe` / `repliesToMe` annotations on rendered segments
 
 Compaction summary is NOT a Rendering concern — the Driver prepends the summary at merge time when assembling the final LLM API request. Rendering is unaware of compaction semantics; it only receives a cursor timestamp for filtering.
+
+**Current implementation**: late binding lives in the Driver. `injectLateBindingPrompt()` appends a final synthetic user message containing probe / mention / reply state. Rendering does not receive late-binding data; `RenderParams` only carries the compact cursor and bot identity.
 
 These are all provided by the Driver or computed at call time — there is no persistent "SessionState" entity in the theoretical model. Notably, Rendering does NOT need to know about TR positions — it serializes IC nodes sequentially (each carrying `receivedAtMs`), and the Driver groups RC segments into user messages based on TR `requestedAtMs` timestamps during merge.
 
@@ -124,7 +129,7 @@ These are all provided by the Driver or computed at call time — there is no pe
 ### Edit/Delete Handling
 When Projection processes edit or delete events:
 - If the target message exists in current IC → mark it in-place (edit: update content/attachments + set `editedAtSec`; delete: set `deleted: true`)
-- If the target message is NOT in current IC (already GC'd) → silently ignore
+- If the target message is NOT in current IC (already GC'd) → silently ignore. (NOTE: with IC GC not yet implemented, this path is rarely hit — only when a message was never in IC to begin with.)
 - Mirrors real IM behavior: edits and deletes modify the original position, not new timeline entries
 
 Edit and delete events come exclusively from the userbot (gramjs / MTProto). Bot API does not push edit or delete notifications. Without the userbot client, the system would not need to handle edits or deletes at all.
@@ -156,78 +161,82 @@ Earlier design explored BotTurnEvent as an InternalEvent flowing back through Pr
 ### Driver Responsibilities
 - Sole owner of TRs (conversation history)
 - Merges RC + TRs by timestamp (`receivedAtMs` / `requestedAtMs`) into final API request
-- **Owns debounce/throttle scheduling**: decides when to trigger Rendering + API call. Lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing debounce would create coordination overhead.
+- **Owns scheduling**: decides when to trigger Rendering + API call. Currently immediate (no debounce) — lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect)
 - Manages tool call loop with interrupt + re-schedule on new external messages (see §Tool Call Loop Interleaving below)
 - Standard append-only LLM client with restart consistency
-- **Current provider**: OpenAI Chat Completions compatible endpoints only
-- **Planned**: compact cursor + summary to Rendering, provider-specific adapters, compaction decisions
+- **Dual provider**: OpenAI Chat Completions (`openai-chat`) and OpenAI Responses API (`responses`), selected per-model via `apiFormat` config
+- **Probe gate**: cheap pre-check model decides whether to respond in group chats when not explicitly mentioned
+- **Compaction**: dual water mark (trigger at `maxContextTokens`, retain `workingWindowTokens`). Compaction state stored in dedicated `compactions` table (append-only). Compact cursor passed to Rendering for viewport filtering.
 
 ### Provider-Specific Metadata (in TRs only)
 
-Current implementation uses **OpenAI Chat Completions compatible endpoints only**. The table below documents the design for future multi-provider support.
+Two providers are implemented: **OpenAI Chat Completions** (`openai-chat`) and **OpenAI Responses API** (`responses`).
 
 | Provider | Tool call ID | Tool result linkage | Extra metadata | Cache |
 |---|---|---|---|---|
 | OpenAI Chat Comp | `tool_calls[].id` | `role: "tool"`, `tool_call_id` | — | Auto prefix ≥1024 tokens |
-| Anthropic Messages | `tool_use.id` | `tool_result.tool_use_id` | thinking `signature`, `redacted_thinking.data` | Explicit `cache_control` breakpoints (max 4) |
+| OpenAI Responses | `function_call.call_id` | `function_call_output.call_id` | reasoning items (`encrypted_content`, `id`) | Stored prefix via `previous_response_id` (not used) |
 
 RC (user/system messages) needs NO provider metadata. `cache_control` annotations are added by Driver at request-assembly time, not persisted.
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). When new external chat messages arrive during a tool loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. The reactive effect then re-schedules a new LLM call after debounce, composing fresh context from the latest RC and all persisted TRs. This is an **interrupt + re-schedule** mechanism — the interrupted loop exits completely, and a new call starts with a fresh step budget, updated system prompt, and re-applied token trimming.
+Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). When new external chat messages arrive during a tool loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. The reactive effect then re-schedules a new LLM call, composing fresh context from the latest RC and all persisted TRs. This is an **interrupt + re-schedule** mechanism — the interrupted loop exits completely, and a new call starts with a fresh step budget, updated system prompt, and re-applied token trimming.
 
-New messages' `receivedAtMs` is always > the previous TR's `requestedAtMs` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge. The debounce window also batches multiple rapid messages into a single re-scheduled call.
+New messages' `receivedAtMs` is always > the previous TR's `requestedAtMs` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge.
 
 ```
-TR₁(t=1500): [assistant₁(tool_call)]     ← API call 1 returns
-                                            tool executes... new messages arrive at t=2200, 2800
-TR₂(t=3500): [tool_result₁, assistant₂]  ← API call 2 returns
+TR₁(t=1500): [assistant₁, tool_result₁]  ← API call 1 returns, tool executes, result stored in same TR
+                                            new messages arrive at t=2200, 2800
+                                            checkInterrupt detects → loop breaks
+                                            re-schedule triggers new LLM call
+TR₂(t=3500): [assistant₂]                ← API call 2 returns (no tool calls)
 
 Merge result:
   [user]      RC(≤1000)                   ← original context
-  [assistant]  TR₁(1500)                  ← tool_call
-  [tool/user]  TR₂.tool_result₁           ← tool result (anchored after TR₁)
+  [assistant]  TR₁.assistant₁             ← tool_call
+  [tool]       TR₁.tool_result₁           ← tool result (same TR as the call)
   [user]       RC(2200, 2800)             ← new messages that arrived during tool execution
   [assistant]  TR₂.assistant₂             ← LLM sees new messages, decides next action
 ```
 
-**TR structure**: each TR stores the tool results that were *sent with* that API call (input) + the assistant response that was *received* (output). TR₁ = `[assistant₁]`, TR₂ = `[tool_result₁, assistant₂]`. This is append-only: each TR is written once when its API call returns.
+**TR structure**: each TR stores the assistant response + the tool results executed in that step. TR₁ = `[assistant₁, tool_result₁]` (if assistant₁ made a tool call), TR₂ = `[assistant₂]` (if no tool call). This is append-only: each TR is written once when its API call returns and tools (if any) have been executed.
 
-**Merge rule for tool results**: tool results in a TR are anchored immediately after the previous TR (which contained the tool_call that triggered them), before any interleaved RC segments. This preserves the tool_call → tool_result adjacency required by all LLM APIs.
+**Merge rule for tool results**: tool results within a TR are anchored immediately after the assistant message in the same TR. New RC segments (from messages arriving during tool execution) sort after the entire TR by timestamp. This preserves the tool_call → tool_result adjacency required by all LLM APIs.
 
 **Provider-specific detail**: Anthropic requires strict user/assistant alternation. Since tool_result is `role: "user"` and new RC is also `role: "user"`, they must be merged into a single user message (tool_result content blocks + text content blocks). OpenAI has separate `role: "tool"` for tool results, so no merging needed.
 
 ### Top-Level Request Fields from Previous Response
-All three major APIs are stateless in headers and URLs — none depend on previous responses. For the request body top-level (outside the messages/input array), only OpenAI Responses API has a field that comes from the previous response: `response.id` → next request's `previous_response_id`. OpenAI Chat Completions and Anthropic Messages have no such fields.
-
-This is stored in the latest TR's `sessionMeta`. When constructing the next request, Driver reads the last TR's `sessionMeta`; if the provider matches, it uses the value. If the provider changed, it ignores it.
+All implemented APIs are stateless in headers and URLs — none depend on previous responses. For the request body top-level (outside the messages/input array), no cross-turn state is currently used. OpenAI Responses API has `previous_response_id` but it is not implemented (we don't persist response IDs across turns).
 
 ### Conversation History Storage
 Store in raw provider format, not a provider-agnostic intermediate format. Rationale: an intermediate format risks losing provider-specific information through normalization (bugs hide in "does the union format cover all providers' semantics?"). Direct storage is simpler:
 
 - **Same provider (common case)**: zero conversion, guaranteed lossless
 - **Cross provider**: explicit A→B conversion function, direct structure mapping, independently testable
-- **Conversion matrix**: N*(N-1) converters. N=2-3 → 2-6 functions, manageable. Implemented lazily as needed.
+- **Conversion matrix**: N*(N-1) converters. N=2 → 2 functions, manageable. Implemented lazily as needed.
 
-**Current state**: only OpenAI Chat Completions format is implemented. `TRDataEntry` in `src/driver/types.ts` models the `assistant` + `tool` roles with `tool_calls`/`tool_call_id` structure. The `provider` field in TR storage exists for future multi-provider support but currently always stores `'openai-chat'`.
+**Implemented providers**:
+- `openai-chat`: Chat Completions format. `TRDataEntry[]` — assistant messages with `tool_calls` + tool role messages with `tool_call_id`.
+- `responses`: Responses API format. `ResponseOutputItem[]` — output items (`message`, `function_call`, `reasoning`) + `function_call_output` items.
+
+**Conversion architecture**: `composeContext` always outputs openai-chat format `Message[]` as the lingua franca. Responses format TR data is converted to openai-chat messages via `responsesOutputToMessages` during context composition. If the target API is Responses, the runner converts `Message[]` → `ResponseInputItem[]` via `messagesToResponsesInput` before sending. Reasoning is preserved during same-provider replay (`encrypted_content` ↔ `reasoning_opaque`), stripped on cross-provider replay by `sanitizeReasoningForTR`.
 
 ```
 TurnResponse {
   requestedAtMs: number            — Date.now() at API request. Forms total order with events' receivedAtMs.
-  provider: string               — 'openai-chat' | 'anthropic-messages' | 'openai-responses'
-  data: unknown                  — raw provider array entries (assistant message + tool results),
-                                   exactly as they'd appear in the request array, unwrapped from
-                                   response envelope
-  sessionMeta?: unknown          — reserved for compaction: compressed summaries replace full
-                                   historical replay
+  provider: 'openai-chat' | 'responses'
+  data: unknown[]                  — raw provider array entries (assistant message + tool results),
+                                     exactly as they'd appear in the request array, unwrapped from
+                                     response envelope
+  inputTokens: number
+  outputTokens: number
   reasoningSignatureCompat?: string — provider compat group for reasoning signature validation
 }
 ```
 
 What `data` contains per provider (the extracted array entries, NOT the full response body):
 - **OpenAI Chat Comp**: `[assistantMessage, ...toolMessages]` — `choices[0].message` + `{ role: "tool" }` entries
-- **Anthropic Messages**: `[assistantMessage, toolResultUserMessage]` — `{ role: "assistant", content }` + `{ role: "user", content: [tool_result, ...] }`
 - **OpenAI Responses**: `[...outputItems, ...functionCallOutputItems]` — output items + `function_call_output` items
 
 ### TR Storage
@@ -239,21 +248,21 @@ TRs are stored in a `turn_responses` DB table, one row per TR:
 | id | INTEGER PK | autoincrement |
 | chat_id | TEXT NOT NULL | Session ID (= Telegram chat ID) |
 | requested_at | INTEGER NOT NULL | millisecond timestamp, merge ordering key |
-| provider | TEXT NOT NULL | e.g. 'openai-chat', 'anthropic-messages' |
+| provider | TEXT NOT NULL | `'openai-chat'` or `'responses'` |
 | data | TEXT (JSON) NOT NULL | raw provider response entries |
-| session_meta | TEXT (JSON) | reserved for compaction summaries |
+| session_meta | TEXT (JSON) | **deprecated** — no longer used. Compaction state is in `compactions` table. |
 | input_tokens | INTEGER NOT NULL | for statistics / cost tracking |
 | output_tokens | INTEGER NOT NULL | for statistics / cost tracking |
 | reasoning_signature_compat | TEXT DEFAULT '' | provider compat group for reasoning signature validation |
 
 Index: `(chat_id, requested_at)` for loading a session's TRs in order.
 
-Compaction state (cursor + summary) is session-level, not per-TR. Stored in `session_meta` of a dedicated compaction TR (or the first TR after GC). Exact mechanism TBD — see §Aggressive Compaction below.
+Compaction state (cursor + summary) is stored in the `compactions` table (append-only, one row per compaction run). See §Compaction below.
 
 ## Other Design Decisions
 
-### Event Processing and Batching
-Projection runs immediately on every event — IC is always current. The Driver owns debounce/throttle: when it fires, Driver calls `render(IC)` to produce RC, then merges RC + TRs into one LLM API call. The debounce/throttle parameters (timing, thresholds) are strategy. Bot responds via `send_message` tool call (not 1:1 response).
+### Event Processing and Scheduling
+Projection runs immediately on every event — IC is always current. The Driver owns scheduling: when triggered, Driver calls `render(IC)` to produce RC, then merges RC + TRs into one LLM API call. **Current implementation**: immediate trigger (no debounce). `setTimeout(0)` exits the synchronous signal graph; the `running` signal provides natural batching — messages arriving during an LLM call accumulate and are processed in the next run. Bot responds via `send_message` tool call (not 1:1 response).
 
 ### Multimodal
 - Low-res thumbnails (~85 tokens) kept in context — cheaper than text descriptions
@@ -265,42 +274,100 @@ Projection runs immediately on every event — IC is always current. The Driver 
 - JSON for output (tool calls)
 
 ### Cold Start
-- Load compact cursor T from turn_responses table (or session-state storage)
+- Load compact cursor T from `compactions` table
 - Load TRs with `requested_at >= T`
-- Replay events with `received_at >= T` through Projection to rebuild IC
+- Replay events through Projection to rebuild IC
+- **Current limitation**: `loadEvents(db, chatId)` replays ALL events, not just those after T. IC GC is not implemented — the cursor only affects Rendering viewport. See §IC: Theoretically Complete for the TODO.
 - Optional catch-up: fetch missed messages from Telegram API by comparing DB max messageId with Telegram history
+
+## Implemented Extensions
+
+### Compaction (implemented)
+
+**Dual water mark**: compaction triggers when estimated context tokens exceed `maxContextTokens` (high water mark). After compaction, the working window retains `workingWindowTokens` (low water mark) of recent content.
+
+**Compaction flow**:
+1. Driver detects context exceeds `maxContextTokens`
+2. `findWorkingWindowCursor` walks backward from newest content, counting both RC and TR tokens, finds the cut point T at `workingWindowTokens`
+3. Runs a compaction LLM call with the full pre-compaction context (no send_message tool, only summarize)
+4. Stores `CompactionSessionMeta` (summary + cursor) in `compactions` table (append-only, one row per compaction)
+5. Advances compact cursor T → Rendering skips IC nodes before T
+6. Deletes TRs with `requestedAtMs < T`
+7. Subsequent turns: summary prefix + working window
+
+**Storage**: `compactions` table, NOT in TR `session_meta` (which is deprecated). Append-only — rollback by deleting the latest row.
+
+### Reasoning Sanitization
+
+Different providers store reasoning (chain-of-thought) in different fields on assistant messages/output items:
+
+| Provider family | Delta field(s) | Storage |
+|---|---|---|
+| DeepSeek, xAI, Qwen | `reasoning_content` | Accumulated as `reasoning_content` on assistant message |
+| vLLM, Groq, OpenRouter | `reasoning` | Accumulated as `reasoning` on assistant message |
+| Anthropic compat endpoints | `reasoning_text` + `reasoning_opaque` | Text + opaque signature on assistant message |
+| Anthropic content array | `thinking` blocks in `content[]` | Thinking blocks with `signature` field |
+| Responses API | Output items with `type: 'reasoning'` | `encrypted_content` + `id` fields |
+
+**Design principle**: all reasoning fields are persisted raw in TRs, exactly as received from the provider. On replay within the same provider family (matched by `reasoningSignatureCompat`), the entire TR data is replayed unmodified — signatures remain valid.
+
+**Cross-provider sanitization** (`sanitizeReasoningForTR` in `context.ts`): when `reasoningSignatureCompat` doesn't match between the stored TR and the current model:
+- **openai-chat**: whitelist approach — reconstruct each assistant entry with only `role`, `content`, `tool_calls`. This implicitly strips all reasoning fields regardless of their field name. Also filters `thinking` blocks from `content[]`.
+- **responses**: filter out output items where `type === 'reasoning'`.
+
+None of these reasoning field names are part of the official OpenAI Chat Completions spec. The official OpenAI Responses API uses a different mechanism (reasoning output items). All are provider-specific extensions.
+
+### Reactive Driver Architecture
+
+The Driver uses alien-signals (signal/computed/effect) for reactive scheduling. Per-chat state is modeled as signals:
+
+- `rc: signal<RenderedContext>` — latest RC snapshot, updated by `handleEvent`
+- `lastProcessedMs: signal<number>` — timestamp of last TR or probe, updated on persist
+- `running: signal<boolean>` — whether a step loop is active
+- `failedRc: signal<RenderedContext | null>` — failure latch, cleared on new RC
+- `compactionMeta: signal<CompactionSessionMeta | null>` — loaded from DB on scope creation, updated on compaction
+- `needsReply: computed` — true when new external messages exist after `lastProcessedMs` (and RC is not the same reference as `failedRc`)
+
+An `effect` watches `needsReply` and `running`: when not running and `needsReply` is true, it immediately schedules a step loop via `setTimeout(0)` (to exit the synchronous signal graph). New events update `rc`, which invalidates `needsReply`, which re-triggers the effect. If a loop is running, `checkInterrupt` detects the RC change and breaks the loop; the effect re-fires after `running(false)`.
+
+```
+// Simplified reactive graph (actual code in src/driver/index.ts)
+rc(newRC)                    // handleEvent updates signal
+  → needsReply recomputes   // computed: latestExternalEventMs(rc, lastProcessedMs) != null
+  → effect fires            // schedules setTimeout(0)
+  → composeContext + runStepLoop
+  → onStepComplete: persistTR, lastProcessedMs(now)
+  → running(false)          // effect re-checks for pending events
+```
+
+**No debounce**: the effect triggers immediately. Natural batching is achieved through the `running` signal — messages arriving during an active LLM call accumulate in RC, and the next run picks them all up.
+
+**Implementation note**: uses alien-signals (`signal`, `computed`, `effect`) — a minimal reactive primitive library. See `src/driver/index.ts` for the actual implementation.
 
 ## Planned Directions
 
-### Aggressive Compaction with Topic Index and Recall Tool
+### Planned: Topic Index and Recall Tool
 
-Human cognition model: people reading group chat don't retain more than a screenful of recent messages. Older content exists as vague "topic impressions" that can be actively recalled when needed. The compaction design mirrors this:
+Not yet implemented. The compaction summary is currently unstructured text.
 
-**Small working window** (16k–32k tokens of raw messages): recent messages kept verbatim. This is sufficient for the LLM to understand the active conversation flow — who's talking, current tone, immediate context.
-
-**Compaction summary with topic index**: when context exceeds the working window, a compaction turn runs (larger context budget) and produces a structured summary:
-- Recent topics (2–5 bullet points) with message ID ranges
-- Key participants and their positions
-- Unresolved questions or action items
-- Prepended as a "previously on..." block before the working window
-
-**`recall_messages` tool**: when the LLM needs details from older context, it calls a recall tool with message IDs (referenced from the topic index). The tool returns the original rendered messages. This makes old context accessible on-demand without bloating every turn.
-
-```
-Compaction turn flow:
-1. Driver detects context exceeds working window threshold
-2. Runs a compaction LLM call with larger budget (no send_message tool, only summarize)
-3. Stores summary + topic index in sessionMeta of a compaction TR
-4. Advances compact cursor T
-5. Subsequent turns: summary prefix + working window + recall tool
-```
-
-Compaction is itself a special TR — a turn where the LLM's job is to compress rather than respond. The compaction summary is not user-visible and has no tool side effects. Its `data` contains the LLM's compaction output; `sessionMeta` stores the structured topic index.
+**Future direction**: structured summary with topic index (2-5 bullet points with message ID ranges), plus a `recall_messages` tool that lets the LLM retrieve original rendered messages by ID.
 
 **Open questions**:
 - Should the recall tool return rendered XML (same as original context) or raw text?
 - How many message IDs should the topic index carry? Too many defeats the purpose.
-- Should compaction be proactive (triggered by token budget) or lazy (triggered when the LLM hits the window boundary)?
+- Should compaction be proactive (triggered by token budget — current) or lazy (triggered when the LLM hits the window boundary)?
+
+### Cold Start Working-Set Optimization (TODO)
+
+**Current state**: `loadEvents(db, chatId)` loads ALL events. `reduce()` replays all of them to rebuild IC. The compact cursor only affects Rendering (viewport filtering). Cold start cost is O(all events), not O(events since last compaction).
+
+**Target state**:
+1. `loadEvents(db, chatId, afterMs)` — filter events by `received_at >= afterMs`
+2. Projection replays only post-cursor events to build the working set IC
+3. MetaReducer state (user map) needs special handling — either: (a) persist user map snapshot at compaction time, or (b) always replay user-relevant data from all events (cheap — only sender fields)
+4. IC GC: nodes with `receivedAtMs < cursor` are dropped from memory after compaction
+
+This is required for production scalability but not yet blocking (current chat histories are small enough for full replay).
 
 ### Token Estimation Calibration
 
@@ -320,27 +387,3 @@ calibration state per model:
 on first successful response:
   charsPerToken = totalInputChars / usage.prompt_tokens
 ```
-
-### Reactive Driver Architecture (implemented)
-
-The Driver uses alien-signals (signal/computed/effect) for reactive scheduling. Per-chat state is modeled as signals:
-
-- `rc: signal<RenderedContext>` — latest RC snapshot, updated by `handleEvent`
-- `lastTrTimeMs: signal<number>` — timestamp of last TR, updated on persist
-- `running: signal<boolean>` — whether a step loop is active
-- `failedRc: signal<RenderedContext | null>` — failure latch, cleared on new RC
-- `deadline: computed` — derived from latest external event time + debounce window
-
-An `effect` watches `deadline` and `running`: when not running and deadline is reached, it composes context and launches a step loop. New events update `rc`, which invalidates `deadline`, which re-triggers the effect. If a loop is running, `checkInterrupt` detects the RC change and breaks the loop; the effect re-fires after `running(false)`.
-
-```
-// Simplified reactive graph (actual code in src/driver/index.ts)
-rc(newRC)                    // handleEvent updates signal
-  → deadline recomputes     // computed: latestExternalEventMs + DEBOUNCE_MS
-  → effect fires            // schedules setTimeout with remaining ms
-  → composeContext + runStepLoop
-  → onStepComplete: persistTR, lastTrTimeMs(now)
-  → running(false)          // effect re-checks for pending events
-```
-
-**Implementation note**: uses alien-signals (`signal`, `computed`, `effect`) — a minimal reactive primitive library. See `src/driver/index.ts` for the actual implementation.

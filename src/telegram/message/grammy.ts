@@ -196,6 +196,7 @@ export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
     text: textContent,
     entities: convertGrammyEntities(textEntities),
     replyToMessageId: message.reply_to_message?.message_id,
+    replyToTopId: message.message_thread_id,
     forwardInfo: convertGrammyForwardInfo(message.forward_origin),
     mediaGroupId: message.media_group_id,
     viaBotId: message.via_bot ? String(message.via_bot.id) : undefined,

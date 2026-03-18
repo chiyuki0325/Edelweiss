@@ -1,4 +1,4 @@
-import type { Tool } from 'xsai';
+import type { ToolExecuteResult } from 'xsai';
 
 export interface ToolResult {
   content: unknown;
@@ -8,9 +8,25 @@ export interface ToolResult {
 export const isToolResult = (v: unknown): v is ToolResult =>
   typeof v === 'object' && v !== null && 'requiresFollowUp' in v;
 
+// Our tool execute interface — only toolCallId, no messages context.
+export interface CahciuaToolExecuteOptions {
+  toolCallId: string;
+}
+
+export interface CahciuaTool {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+    strict?: boolean;
+  };
+  execute: (input: unknown, options: CahciuaToolExecuteOptions) => Promise<ToolExecuteResult> | ToolExecuteResult;
+}
+
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string) => Promise<{ messageId: string }>,
-): Tool => ({
+): CahciuaTool => ({
   type: 'function',
   function: {
     name: 'send_message',

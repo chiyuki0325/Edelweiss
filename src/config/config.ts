@@ -12,6 +12,7 @@ const llmEndpointEntries = {
   apiFormat: v.optional(v.picklist(['openai-chat', 'responses'])),
   reasoningSignatureCompat: v.optional(v.string()),
   maxImagesAllowed: v.optional(v.number()),
+  timeoutSec: v.optional(v.number()),
 };
 
 const ConfigSchema = v.object({

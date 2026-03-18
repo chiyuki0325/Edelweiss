@@ -1,8 +1,39 @@
 import type { Logger } from '@guiiai/logg';
-import type { Message, Tool } from 'xsai';
-import { chat } from 'xsai';
+import type { Message } from 'xsai';
 
-type AnyMsg = Record<string, any>;
+import { parseSSEStream } from './sse';
+import type { ExtendedMessage } from './types';
+
+// Chat Completions SSE chunk shape (subset we consume)
+interface ChatStreamChunk {
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  choices?: Array<{
+    finish_reason?: string;
+    delta?: {
+      content?: string;
+      reasoning_text?: string;
+      reasoning_content?: string;
+      reasoning?: string;
+      reasoning_opaque?: string;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+  }>;
+}
+
+// Tool schema for API serialization — only the fields sent over the wire.
+interface ToolSchema {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+    strict?: boolean;
+  };
+}
 
 export interface StreamingChatParams {
   baseURL: string;
@@ -10,13 +41,14 @@ export interface StreamingChatParams {
   model: string;
   messages: Message[];
   system?: string;
-  tools?: Tool[];
+  tools?: ToolSchema[];
+  timeoutSec?: number;
   log: Logger;
   label: string; // log prefix, e.g. "step" or "compact"
 }
 
 export interface StreamingChatResult {
-  choices: Array<{ finish_reason: string; message: AnyMsg }>;
+  choices: Array<{ finish_reason: string; message: ExtendedMessage }>;
   usage: { prompt_tokens: number; completion_tokens: number };
 }
 
@@ -24,139 +56,149 @@ export interface StreamingChatResult {
 // Logs every content/reasoning/tool_call delta as it arrives.
 export const streamingChat = async (params: StreamingChatParams): Promise<StreamingChatResult> => {
   const { log, label } = params;
+  const abortController = new AbortController();
+  const timeout = params.timeoutSec
+    ? setTimeout(() => abortController.abort(new Error(`chat request timed out after ${params.timeoutSec}s`)), params.timeoutSec * 1000)
+    : undefined;
 
-  const res = await chat({
-    baseURL: params.baseURL,
-    apiKey: params.apiKey,
-    model: params.model,
-    messages: params.messages,
-    tools: params.tools,
-    system: params.system,
-    stream: true,
-    streamOptions: { includeUsage: true },
-  } as any);
+  try {
+    const body = JSON.stringify({
+      model: params.model,
+      messages: [
+        ...(params.system ? [{ role: 'system', content: params.system }] : []),
+        ...params.messages,
+      ],
+      ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      stream: true,
+      stream_options: { include_usage: true },
+    });
 
-  const body = res.body;
-  if (!body) throw new Error('SSE response has no body');
+    const url = `${params.baseURL.replace(/\/$/, '')}/chat/completions`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${params.apiKey}`,
+      },
+      body,
+      signal: abortController.signal,
+    });
 
-  // Accumulated state for the single choice we care about
-  let finishReason = '';
-  const message: AnyMsg = { role: 'assistant' };
-  let usage = { prompt_tokens: 0, completion_tokens: 0 };
-
-  // Accumulators for logging batched deltas
-  let textBuf = '';
-  let reasoningBuf = '';
-
-  const flushTextBuf = () => {
-    if (textBuf) {
-      log.withFields({ label, text: textBuf }).log('content delta');
-      textBuf = '';
-    }
-  };
-
-  const flushReasoningBuf = () => {
-    if (reasoningBuf) {
-      log.withFields({ label, reasoning: reasoningBuf }).log('reasoning delta');
-      reasoningBuf = '';
-    }
-  };
-
-  // Parse SSE lines from the byte stream
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let lineBuf = '';
-
-  const processLine = (line: string) => {
-    if (!line.startsWith('data: ')) return;
-    const data = line.slice(6).trim();
-    if (data === '[DONE]') return;
-
-    let chunk: any;
-    try { chunk = JSON.parse(data); } catch { return; }
-
-    // Usage (comes in the final chunk when streamOptions.includeUsage is true)
-    if (chunk.usage) {
-      usage = {
-        prompt_tokens: chunk.usage.prompt_tokens ?? 0,
-        completion_tokens: chunk.usage.completion_tokens ?? 0,
-      };
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Chat Completions API ${res.status}: ${text}`);
     }
 
-    const delta = chunk.choices?.[0]?.delta;
-    if (!delta) return;
+    const stream = res.body;
+    if (!stream) throw new Error('SSE response has no body');
 
-    if (chunk.choices[0].finish_reason)
-      finishReason = chunk.choices[0].finish_reason;
+    // Accumulated state for the single choice we care about
+    let finishReason = '';
+    const message: ExtendedMessage = { role: 'assistant' };
+    let usage = { prompt_tokens: 0, completion_tokens: 0 };
 
-    // Content text
-    if (delta.content) {
-      textBuf += delta.content;
-      message.content ??= '';
-      message.content += delta.content;
-    }
+    // Accumulators for logging batched deltas
+    let textBuf = '';
+    let reasoningBuf = '';
 
-    // Reasoning (OpenAI-compat extended thinking)
-    if (delta.reasoning_text) {
-      reasoningBuf += delta.reasoning_text;
-      message.reasoning_text ??= '';
-      message.reasoning_text += delta.reasoning_text;
-    }
-    if (delta.reasoning_content) {
-      reasoningBuf += delta.reasoning_content;
-      message.reasoning_content ??= '';
-      message.reasoning_content += delta.reasoning_content;
-    }
+    const flushTextBuf = () => {
+      if (textBuf) {
+        log.withFields({ label, text: textBuf }).log('content delta');
+        textBuf = '';
+      }
+    };
 
-    // Reasoning opaque signature (comes as a single chunk)
-    if (delta.reasoning_opaque) {
-      message.reasoning_opaque = (message.reasoning_opaque ?? '') + delta.reasoning_opaque;
-    }
+    const flushReasoningBuf = () => {
+      if (reasoningBuf) {
+        log.withFields({ label, reasoning: reasoningBuf }).log('reasoning delta');
+        reasoningBuf = '';
+      }
+    };
 
-    // Tool calls — accumulate incrementally
-    if (delta.tool_calls) {
-      message.tool_calls ??= [];
-      for (const tc of delta.tool_calls) {
-        const idx = tc.index ?? 0;
-        message.tool_calls[idx] ??= {
-          id: tc.id ?? '',
-          type: 'function',
-          function: { name: '', arguments: '' },
+    const processChunk = (chunk: ChatStreamChunk) => {
+      // Usage (comes in the final chunk when streamOptions.includeUsage is true)
+      if (chunk.usage) {
+        usage = {
+          prompt_tokens: chunk.usage.prompt_tokens ?? 0,
+          completion_tokens: chunk.usage.completion_tokens ?? 0,
         };
-        const existing = message.tool_calls[idx];
-        if (tc.id) existing.id = tc.id;
-        if (tc.function?.name) {
-          flushTextBuf();
-          flushReasoningBuf();
-          existing.function.name += tc.function.name;
-          log.withFields({ label, tool: existing.function.name }).log('tool call start');
-        }
-        if (tc.function?.arguments) {
-          existing.function.arguments += tc.function.arguments;
+      }
+
+      const choice = chunk.choices?.[0];
+      const delta = choice?.delta;
+      if (!delta) return;
+
+      if (choice.finish_reason)
+        finishReason = choice.finish_reason;
+
+      // Content text
+      if (delta.content) {
+        textBuf += delta.content;
+        message.content ??= '';
+        message.content += delta.content;
+      }
+
+      // Reasoning — different providers use different delta field names:
+      //   reasoning_text + reasoning_opaque: Anthropic compat (text + signature)
+      //   reasoning_content: DeepSeek, xAI, Qwen
+      //   reasoning: vLLM, Groq, OpenRouter
+      // All are accumulated as-is into the message object and persisted raw.
+      // sanitizeReasoningForTR strips them on compat mismatch via whitelist.
+      if (delta.reasoning_text) {
+        reasoningBuf += delta.reasoning_text;
+        message.reasoning_text ??= '';
+        message.reasoning_text += delta.reasoning_text;
+      }
+      if (delta.reasoning_content) {
+        reasoningBuf += delta.reasoning_content;
+        message.reasoning_content ??= '';
+        message.reasoning_content += delta.reasoning_content;
+      }
+      if (delta.reasoning) {
+        reasoningBuf += delta.reasoning;
+        message.reasoning ??= '';
+        message.reasoning += delta.reasoning;
+      }
+
+      // Reasoning opaque signature (comes as a single chunk)
+      if (delta.reasoning_opaque) {
+        message.reasoning_opaque = (message.reasoning_opaque ?? '') + delta.reasoning_opaque;
+      }
+
+      // Tool calls — accumulate incrementally
+      if (delta.tool_calls) {
+        message.tool_calls ??= [];
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          message.tool_calls[idx] ??= {
+            id: tc.id ?? '',
+            type: 'function',
+            function: { name: '', arguments: '' },
+          };
+          const existing = message.tool_calls[idx];
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) {
+            flushTextBuf();
+            flushReasoningBuf();
+            existing.function.name += tc.function.name;
+            log.withFields({ label, tool: existing.function.name }).log('tool call start');
+          }
+          if (tc.function?.arguments) {
+            existing.function.arguments += tc.function.arguments;
+          }
         }
       }
-    }
-  };
+    };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    await parseSSEStream(stream, processChunk);
+    flushTextBuf();
+    flushReasoningBuf();
 
-    lineBuf += decoder.decode(value, { stream: true });
-    const lines = lineBuf.split('\n');
-    lineBuf = lines.pop()!; // keep incomplete last line
-
-    for (const line of lines)
-      processLine(line);
+    return {
+      choices: [{ finish_reason: finishReason, message }],
+      usage,
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
-
-  // Process any remaining data in buffer
-  if (lineBuf) processLine(lineBuf);
-  flushTextBuf();
-  flushReasoningBuf();
-
-  return {
-    choices: [{ finish_reason: finishReason, message }],
-    usage,
-  };
 };

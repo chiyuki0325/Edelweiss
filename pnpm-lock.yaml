@@ -14,6 +14,9 @@ importers:
       '@guiiai/logg':
         specifier: ^1.2.11
         version: 1.2.11
+      '@velin-dev/core':
+        specifier: ^0.3.4
+        version: 0.3.4(typescript@5.9.3)
       alien-signals:
         specifier: ^3.1.2
         version: 3.1.2
@@ -69,9 +72,6 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.0.0
         version: 8.57.0(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
-      '@velin-dev/core':
-        specifier: ^0.3.4
-        version: 0.3.4(typescript@5.9.3)
       drizzle-kit:
         specifier: ^0.30.0
         version: 0.30.6

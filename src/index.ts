@@ -59,21 +59,8 @@ const main = async () => {
       model: config.probe.model ? resolveModel(config, config.probe.model) : primaryModel,
     },
   }, {
-    loadTurnResponses: (chatId, afterMs) => {
-      const rows = loadTurnResponses(db, chatId, afterMs);
-      return rows.map(r => ({
-        requestedAtMs: r.requestedAt,
-        provider: r.provider as 'openai-chat' | 'responses',
-        data: r.data,
-        inputTokens: r.inputTokens,
-        outputTokens: r.outputTokens,
-        reasoningSignatureCompat: r.reasoningSignatureCompat ?? '',
-      }));
-    },
-    persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, {
-      ...tr,
-      requestedAtMs: tr.requestedAtMs,
-    }),
+    loadTurnResponses: (chatId, afterMs) => loadTurnResponses(db, chatId, afterMs),
+    persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, tr),
     persistProbeResponse: (chatId, probe) => persistProbeResponse(db, chatId, probe),
     sendMessage: async (chatId, text, replyToMessageId) => {
       const sent = await telegram.sendMessage(chatId, text, replyToMessageId ? { replyToMessageId } : undefined);

@@ -10,7 +10,7 @@ import { createRunner } from './runner';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
 import { createSendMessageTool } from './tools';
-import type { CompactionSessionMeta, DriverConfig, ProviderFormat, TurnResponse } from './types';
+import type { CompactionSessionMeta, DriverConfig, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
 
 export { mergeContext } from './merge';
@@ -55,6 +55,7 @@ export const createDriver = (config: DriverConfig, deps: {
     apiKey: config.primaryModel.apiKey,
     model: config.primaryModel.model,
     apiFormat: primaryApiFormat,
+    timeoutSec: config.primaryModel.timeoutSec,
   });
 
   const loadTRs = (chatId: string, afterMs?: number): TurnResponse[] =>
@@ -134,7 +135,7 @@ export const createDriver = (config: DriverConfig, deps: {
             const sum = summary();
 
             const trs = loadTRs(chatId, cursor);
-            const ctx = composeContext(rc(), trs, config.compaction.maxContextEstTokens, config.primaryModel.reasoningSignatureCompat, config.featureFlags, sum);
+            const ctx = composeContext(rcAtStart, trs, config.compaction.maxContextEstTokens, config.primaryModel.reasoningSignatureCompat, config.featureFlags, sum);
             if (!ctx) return;
 
             log.withFields({
@@ -159,7 +160,7 @@ export const createDriver = (config: DriverConfig, deps: {
             });
 
             // --- Compute mention/reply state from RC ---
-            const rcVal = rc();
+            const rcVal = rcAtStart;
             const lastMentionedAtMs = rcVal.reduce((max, seg) =>
               (seg.mentionsMe || seg.repliesToMe) ? Math.max(max, seg.receivedAtMs) : max, 0);
             const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
@@ -197,7 +198,7 @@ export const createDriver = (config: DriverConfig, deps: {
                     baseURL: config.probe.model.apiBaseUrl, apiKey: config.probe.model.apiKey,
                     model: config.probe.model.model, input: messagesToResponsesInput(probeMessages),
                     instructions: system, tools: [sendMessageTool].map(xsaiToolToResponsesTool),
-                    log, label: `probe:${chatId}`,
+                    log, label: `probe:${chatId}`, timeoutSec: config.probe.model.timeoutSec,
                   }).then(r => ({
                     hasToolCalls: r.output.some(item => item.type === 'function_call'),
                     data: r.output as Record<string, any>[],
@@ -206,7 +207,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   : await streamingChat({
                     baseURL: config.probe.model.apiBaseUrl, apiKey: config.probe.model.apiKey,
                     model: config.probe.model.model, messages: probeMessages, system,
-                    tools: [sendMessageTool], log, label: `probe:${chatId}`,
+                    tools: [sendMessageTool], log, label: `probe:${chatId}`, timeoutSec: config.probe.model.timeoutSec,
                   }).then(r => {
                     const msg = r.choices[0]?.message;
                     return {
@@ -250,14 +251,25 @@ export const createDriver = (config: DriverConfig, deps: {
               tools: [sendMessageTool],
               maxSteps: MAX_STEPS,
               onStepComplete: (stepData, usage, requestedAtMs) => {
-                deps.persistTurnResponse(chatId, {
-                  requestedAtMs,
-                  provider: primaryApiFormat,
-                  data: stepData,
-                  inputTokens: usage.prompt_tokens,
-                  outputTokens: usage.completion_tokens,
-                  reasoningSignatureCompat: config.primaryModel.reasoningSignatureCompat ?? '',
-                });
+                if (primaryApiFormat === 'responses') {
+                  deps.persistTurnResponse(chatId, {
+                    requestedAtMs,
+                    provider: 'responses',
+                    data: stepData as ResponsesTRDataItem[],
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    reasoningSignatureCompat: config.primaryModel.reasoningSignatureCompat ?? '',
+                  });
+                } else {
+                  deps.persistTurnResponse(chatId, {
+                    requestedAtMs,
+                    provider: 'openai-chat',
+                    data: stepData as TRDataEntry[],
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    reasoningSignatureCompat: config.primaryModel.reasoningSignatureCompat ?? '',
+                  });
+                }
                 lastProcessedMs(requestedAtMs);
               },
               checkInterrupt: () => {
@@ -267,6 +279,8 @@ export const createDriver = (config: DriverConfig, deps: {
               log,
             });
           } catch (err) {
+            // No retry or backoff — a failed call is recorded via failedRc and
+            // only re-attempted when new external messages produce a fresh RC.
             log.withError(err).error('LLM call failed');
             failedRc(rcAtStart);
           } finally {
@@ -328,6 +342,7 @@ export const createDriver = (config: DriverConfig, deps: {
               apiKey: compactEndpoint.apiKey,
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
+              timeoutSec: compactEndpoint.timeoutSec,
               chatId,
               rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
               trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),
