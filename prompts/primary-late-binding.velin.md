@@ -1,11 +1,14 @@
 <script setup>
 defineProps({
+  timeNow: { type: String, required: true },
   isProbeEnabled: { type: Boolean, default: false },
   isProbing: { type: Boolean, default: false },
   isMentioned: { type: Boolean, default: false },
   isReplied: { type: Boolean, default: false },
 })
 </script>
+
+Current time: {{ timeNow }}
 
 Reminder: call `send_message` to speak (multiple calls = multiple messages). No tool call = silence. Text outside tool calls is private inner monologue, never shown to anyone.
 

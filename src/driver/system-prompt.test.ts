@@ -14,13 +14,20 @@ const renderPrompt = (data: Record<string, unknown> = {}) =>
 
 describe('system prompt (velin)', () => {
   it('renders with minimal props', async () => {
-    const rendered = await renderPrompt({ timeNow: '2025-03-13T12:00:00Z' });
+    const rendered = await renderPrompt({ modelName: 'gpt-4o', timeNow: '2025-03-13T12:00:00Z' });
 
     // Static content present
     expect(rendered).toContain('You just woke up.');
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('Chat Context Format');
     expect(rendered).toContain('only available tool');
+
+    // Model name rendered
+    expect(rendered).toContain('gpt-4o');
+
+    // Markdown formatting section present
+    expect(rendered).toContain('Message Formatting');
+    expect(rendered).toContain('Markdown');
 
     // Defaults applied
     expect(rendered).toContain('telegram');
@@ -49,13 +56,14 @@ describe('system prompt (velin)', () => {
   });
 
   it('renders language header', async () => {
-    const rendered = await renderPrompt({ language: 'zh', timeNow: '2025-01-01T00:00:00Z' });
+    const rendered = await renderPrompt({ language: 'zh', modelName: 'gpt-4o', timeNow: '2025-01-01T00:00:00Z' });
     expect(rendered).toContain('language: zh');
   });
 
   it('renders system files', async () => {
     const rendered = await renderPrompt({
       timeNow: '2025-01-01T00:00:00Z',
+      modelName: 'gpt-4o',
       systemFiles: [
         { filename: 'IDENTITY.md', content: 'I am a test bot.' },
         { filename: 'SOUL.md', content: 'Be helpful.' },
@@ -70,6 +78,7 @@ describe('system prompt (velin)', () => {
     const rendered = await renderPrompt({
       currentChannel: 'discord',
       maxContextLoadTime: 720,
+      modelName: 'gpt-4o',
       timeNow: '2025-06-15T08:30:00Z',
     });
 
@@ -80,7 +89,7 @@ describe('system prompt (velin)', () => {
   });
 
   it('contains send_message instructions, not direct-reply', async () => {
-    const rendered = await renderPrompt({ timeNow: '2025-01-01T00:00:00Z' });
+    const rendered = await renderPrompt({ modelName: 'gpt-4o', timeNow: '2025-01-01T00:00:00Z' });
 
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('internal monologue');
@@ -95,8 +104,9 @@ const renderLateBinding = (data: Record<string, unknown> = {}) =>
 
 describe('late-binding prompt (velin)', () => {
   it('renders static content without conditionals', async () => {
-    const rendered = await renderLateBinding();
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z' });
 
+    expect(rendered).toContain('Current time: 2025-01-01T00:00:00Z');
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('inner monologue');
     expect(rendered).not.toContain('decided to act');
@@ -106,7 +116,7 @@ describe('late-binding prompt (velin)', () => {
   });
 
   it('renders activated state (probe enabled, not probing)', async () => {
-    const rendered = await renderLateBinding({ isProbeEnabled: true, isProbing: false });
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isProbeEnabled: true, isProbing: false });
 
     expect(rendered).toContain('decided to act');
     expect(rendered).not.toContain('mentioned');
@@ -114,7 +124,7 @@ describe('late-binding prompt (velin)', () => {
   });
 
   it('renders mentioned state', async () => {
-    const rendered = await renderLateBinding({ isMentioned: true });
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isMentioned: true });
 
     expect(rendered).toContain('mentioned');
     expect(rendered).not.toContain('decided to act');
@@ -122,7 +132,7 @@ describe('late-binding prompt (velin)', () => {
   });
 
   it('renders replied state', async () => {
-    const rendered = await renderLateBinding({ isReplied: true });
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isReplied: true });
 
     expect(rendered).toContain('replied');
     expect(rendered).not.toContain('decided to act');
@@ -131,6 +141,7 @@ describe('late-binding prompt (velin)', () => {
 
   it('activated takes priority over mentioned/replied', async () => {
     const rendered = await renderLateBinding({
+      timeNow: '2025-01-01T00:00:00Z',
       isProbeEnabled: true, isProbing: false, isMentioned: true, isReplied: true,
     });
 
@@ -140,7 +151,7 @@ describe('late-binding prompt (velin)', () => {
   });
 
   it('probe path does not show activated', async () => {
-    const rendered = await renderLateBinding({ isProbeEnabled: true, isProbing: true });
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isProbeEnabled: true, isProbing: true });
 
     expect(rendered).not.toContain('decided to act');
   });

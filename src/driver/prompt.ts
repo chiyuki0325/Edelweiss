@@ -14,6 +14,7 @@ const compactionUserTemplate = readFileSync(resolve(__dirname, '../../prompts/co
 
 export const renderSystemPrompt = async (params: {
   language?: string;
+  modelName: string;
   currentChannel?: string;
   maxContextLoadTime?: number;
   timeNow: string;
@@ -24,6 +25,7 @@ export const renderSystemPrompt = async (params: {
 };
 
 export const renderLateBindingPrompt = async (params: {
+  timeNow: string;
   isProbeEnabled?: boolean;
   isProbing?: boolean;
   isMentioned?: boolean;

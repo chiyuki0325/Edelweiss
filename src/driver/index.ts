@@ -156,6 +156,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
             const system = await renderSystemPrompt({
               currentChannel: 'telegram',
+              modelName: config.primaryModel.model,
               timeNow: new Date().toISOString(),
             });
 
@@ -185,6 +186,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   trimImages(probeMessages, config.probe.model.maxImagesAllowed);
 
                 const probeLateBinding = await renderLateBindingPrompt({
+                  timeNow: new Date().toISOString(),
                   isProbeEnabled: true, isProbing: true, isMentioned, isReplied,
                 });
                 injectLateBindingPrompt(probeMessages, probeLateBinding);
@@ -240,6 +242,7 @@ export const createDriver = (config: DriverConfig, deps: {
               trimImages(ctx.messages, config.primaryModel.maxImagesAllowed);
 
             const primaryLateBinding = await renderLateBindingPrompt({
+              timeNow: new Date().toISOString(),
               isProbeEnabled: config.probe.enabled, isProbing: false, isMentioned, isReplied,
             });
             injectLateBindingPrompt(ctx.messages, primaryLateBinding);
