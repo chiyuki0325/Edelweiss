@@ -24,6 +24,7 @@ export interface Attachment {
   // Telegram file reference for re-downloading
   fileId?: string;
   fileUniqueId?: string;
+  mediaId?: string;
   fileName?: string;
   mimeType?: string;
   fileSize?: number;
@@ -81,6 +82,10 @@ export interface TelegramMessage {
   newChatPhoto?: boolean;
   deleteChatPhoto?: boolean;
   pinnedMessage?: { messageId: number };
+
+  // Captured at ingress time before any asynchronous transforms block the session.
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
 }
 
 export interface TelegramMessageEdit {
@@ -93,9 +98,13 @@ export interface TelegramMessageEdit {
   entities?: MessageEntity[];
   replyToMessageId?: number;
   attachments?: Attachment[];
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
 }
 
 export interface TelegramMessageDelete {
   messageIds: number[];
   chatId?: string;
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
 }

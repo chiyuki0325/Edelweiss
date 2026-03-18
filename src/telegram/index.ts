@@ -3,8 +3,10 @@ import type { Logger } from '@guiiai/logg';
 import type { BotClient, SendOptions, SentMessage } from './bot';
 import { createBotClient } from './bot';
 import { createEventBus } from './event-bus';
+import type { ImageToTextResolver } from './image-to-text';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attachment } from './message';
+import { createSessionIngressQueue } from './session-ingress-queue';
 import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 import type { FetchOptions, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
@@ -18,7 +20,19 @@ export interface TelegramManagerOptions {
   // Resolve chatId for delete events that lack it (MTProto private chat/basic group deletes).
   // The message IDs in this space are globally unique, so a lookup by messageId suffices.
   resolveChatId?: (messageIds: number[]) => string | undefined;
+  imageToText?: ImageToTextResolver;
+  imageToTextChatIds?: Set<string>;
 }
+
+type IngressEvent =
+  | { kind: 'message'; chatId: string; message: TelegramMessage }
+  | { kind: 'edit'; chatId: string; edit: TelegramMessageEdit }
+  | { kind: 'delete'; chatId: string; del: TelegramMessageDelete };
+
+const captureIngressMeta = () => ({
+  receivedAtMs: Date.now(),
+  utcOffsetMin: -new Date().getTimezoneOffset(),
+});
 
 export interface TelegramManager {
   start(): Promise<void>;
@@ -65,23 +79,80 @@ export const createTelegramManager = (
     return await userbot.downloadMessageMedia(chatId, messageId);
   };
 
-  // Generate thumbnails for all eligible attachments on a message or edit
-  const hydrateThumbnails = async (
+  const imageToText = options.imageToText;
+  const imageToTextChatIds = options.imageToTextChatIds;
+
+  const hydrateAttachments = async (
     chatId: string,
     messageId: number,
+    text: string,
     attachments?: Attachment[],
   ) => {
     if (!attachments) return;
-    for (const att of attachments) {
-      if (!canGenerateThumbnail(att)) continue;
+
+    // Phase 1: Download media + generate thumbnails for eligible attachments.
+    // Keep original buffers for high-res LLM input later.
+    const originalBuffers = new Map<Attachment, Buffer>();
+    await Promise.all(attachments.map(async att => {
+      if (att.thumbnailWebp || !canGenerateThumbnail(att)) return;
       try {
         const buffer = await downloadAttachmentMedia(chatId, messageId, att);
-        if (buffer) att.thumbnailWebp = await generateThumbnail(buffer);
+        if (buffer) {
+          originalBuffers.set(att, buffer);
+          att.thumbnailWebp = await generateThumbnail(buffer);
+        }
       } catch (err) {
         log.withError(err).warn('Failed to generate thumbnail');
       }
+    }));
+
+    // Phase 2: Call image-to-text resolver for each attachment with a thumbnail.
+    // Alt text is NOT set on the Attachment — it goes into the image_alt_texts table
+    // and is hydrated transiently on CanonicalAttachment at query time.
+    // Only resolve for whitelisted chats to avoid wasting LLM calls.
+    if (imageToText && (!imageToTextChatIds || imageToTextChatIds.has(chatId))) {
+      await Promise.all(attachments.map(async att => {
+        if (!att.thumbnailWebp) return;
+        try {
+          const thumbnailBuffer = Buffer.from(att.thumbnailWebp, 'base64');
+          const highResBuffer = originalBuffers.get(att);
+          await imageToText.resolve(thumbnailBuffer, text, highResBuffer);
+        } catch (err) {
+          log.withError(err).warn('Failed to resolve image-to-text');
+        }
+      }));
     }
   };
+
+  const ingressQueue = createSessionIngressQueue<IngressEvent>({
+    logger,
+    transform: async event => {
+      switch (event.kind) {
+      case 'message':
+        await hydrateAttachments(event.chatId, event.message.messageId, event.message.text, event.message.attachments);
+        return event;
+      case 'edit':
+        await hydrateAttachments(event.chatId, event.edit.messageId, event.edit.text, event.edit.attachments);
+        return event;
+      case 'delete':
+        return event;
+      }
+    },
+    commit: event => {
+      switch (event.kind) {
+      case 'message':
+        inflight.delete(`${event.chatId}:${event.message.messageId}`);
+        messageBus.emit(event.message);
+        break;
+      case 'edit':
+        editBus.emit(event.edit);
+        break;
+      case 'delete':
+        deleteBus.emit(event.del);
+        break;
+      }
+    },
+  });
 
   const dispatchMessage = (msg: TelegramMessage) => {
     const key = `${msg.chatId}:${msg.messageId}`;
@@ -96,13 +167,9 @@ export const createTelegramManager = (
       return;
     }
 
-    inflight.set(key, msg);
-    void hydrateThumbnails(msg.chatId, msg.messageId, msg.attachments)
-      .catch(err => log.withError(err).warn('Thumbnail hydration failed'))
-      .finally(() => {
-        inflight.delete(key);
-        messageBus.emit(msg);
-      });
+    const enriched = { ...msg, ...captureIngressMeta() };
+    inflight.set(key, enriched);
+    ingressQueue.enqueue({ kind: 'message', chatId: enriched.chatId, message: enriched });
   };
 
   bot.onMessage(msg => {
@@ -117,15 +184,21 @@ export const createTelegramManager = (
 
   userbot.onMessageEdit(edit => {
     if (!botChats.has(edit.chatId)) return;
-    void hydrateThumbnails(edit.chatId, edit.messageId, edit.attachments)
-      .catch(err => log.withError(err).warn('Thumbnail hydration failed'))
-      .finally(() => editBus.emit(edit));
+    ingressQueue.enqueue({
+      kind: 'edit',
+      chatId: edit.chatId,
+      edit: { ...edit, ...captureIngressMeta() },
+    });
   });
 
   userbot.onMessageDelete(del => {
     const chatId = del.chatId ?? options.resolveChatId?.(del.messageIds);
     if (!chatId || !botChats.has(chatId)) return;
-    deleteBus.emit({ ...del, chatId });
+    ingressQueue.enqueue({
+      kind: 'delete',
+      chatId,
+      del: { ...del, chatId, ...captureIngressMeta() },
+    });
   });
 
   const start = async () => {

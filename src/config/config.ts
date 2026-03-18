@@ -43,6 +43,10 @@ const ConfigSchema = v.object({
     enabled: v.optional(v.boolean(), false),
     model: v.optional(v.string(), ''),
   }), {}),
+  imageToText: v.optional(v.object({
+    enabled: v.optional(v.boolean(), false),
+    model: v.optional(v.string(), ''),
+  }), {}),
   features: v.optional(v.object({
     trimStaleNoToolCallTurnResponses: v.optional(v.boolean(), false),
     trimSelfMessagesCoveredBySendToolCalls: v.optional(v.boolean(), false),

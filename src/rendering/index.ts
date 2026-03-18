@@ -68,6 +68,7 @@ const renderAttachment = (att: CanonicalAttachment): string => {
   if (att.fileName) attrs.push(`name="${escapeXml(att.fileName)}"`);
   if (att.width != null && att.height != null) attrs.push(`size="${att.width}x${att.height}"`);
   if (att.duration != null) attrs.push(`duration="${att.duration}"`);
+  if (att.altText) return `<image ${attrs.join(' ')}>${escapeXml(att.altText)}</image>`;
   return `<attachment ${attrs.join(' ')}/>`;
 };
 
@@ -129,7 +130,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
 
   // Append thumbnail images as separate content pieces (Driver converts to provider format)
   for (const att of msg.attachments) {
-    if (att.thumbnailWebp)
+    if (!att.altText && att.thumbnailWebp)
       pieces.push({ type: 'image', url: `data:image/webp;base64,${att.thumbnailWebp}` });
   }
 

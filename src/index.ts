@@ -1,11 +1,13 @@
 import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
+import type { CanonicalIMEvent } from './adaptation/types';
 import { loadConfig, resolveModel } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
-import { createDatabase, loadCompaction, loadEvents, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations } from './db';
 import { createDriver } from './driver';
 import { createPipeline } from './pipeline';
 import type { RenderParams } from './rendering';
 import { createTelegramManager } from './telegram';
+import { computeThumbnailHash, createImageToTextResolver } from './telegram/image-to-text';
 import { loadSession } from './telegram/session';
 
 setupLogger();
@@ -15,8 +17,33 @@ const logger = useLogger('cahciua');
 const main = async () => {
   const config = loadConfig();
 
+  if (config.imageToText.enabled && !config.imageToText.model)
+    throw new Error('imageToText.model is required when imageToText.enabled=true');
+
   const db = createDatabase(config.database.path, logger);
   runMigrations(db, logger);
+
+  // Image-to-text resolver — shared between cold-start replay and live ingress.
+  const imageToTextResolver = createImageToTextResolver({
+    enabled: config.imageToText.enabled,
+    model: config.imageToText.model ? resolveModel(config, config.imageToText.model) : undefined,
+    logger,
+    lookupByHash: imageHash => loadImageAltTextByHash(db, imageHash),
+    persist: record => persistImageAltText(db, record),
+  });
+
+  // Sync hydration: after persistEvent, set altText transiently on canonical
+  // attachments from the image_alt_texts table so rendering can use it.
+  // This is a sync DB lookup (better-sqlite3) — never stored back into events.
+  const hydrateAltTextFromCache = (event: CanonicalIMEvent) => {
+    if (!config.imageToText.enabled) return;
+    if (event.type !== 'message' && event.type !== 'edit') return;
+    for (const att of event.attachments) {
+      if (att.altText || !att.thumbnailWebp) continue;
+      const cached = loadImageAltTextByHash(db, computeThumbnailHash(att.thumbnailWebp));
+      if (cached) att.altText = cached.altText;
+    }
+  };
 
   // Bot user ID from token — available immediately, used for myself detection
   const botUserId = config.telegram.botToken.split(':')[0]!;
@@ -27,11 +54,27 @@ const main = async () => {
   // Cold-start: replay events per chat to rebuild IC + RC.
   // If a compaction cursor exists, set it before replay so rendering
   // skips nodes before the cursor. IC still replays all events (user map, etc.).
+  // Hydrate alt text for old events that have thumbnails but no altText — uses
+  // the same resolver as live ingress so behavior is identical.
   for (const chatId of loadKnownChatIds(db)) {
     const compaction = loadCompaction(db, chatId);
     if (compaction)
       pipeline.setCompactCursor(chatId, compaction.newCursorMs);
-    pipeline.replayChat(chatId, loadEvents(db, chatId));
+    const events = loadEvents(db, chatId);
+    if (config.imageToText.enabled && config.driver.chatIds.includes(chatId)) {
+      const tasks: Promise<void>[] = [];
+      for (const event of events) {
+        if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
+          const caption = contentToPlainText(event.content);
+          tasks.push(imageToTextResolver.hydrateCanonicalAttachments(event.attachments, caption));
+        }
+      }
+      if (tasks.length > 0) await Promise.all(tasks);
+      // After async hydration resolves, all cache entries exist.
+      // Sync-hydrate every event so altText is set transiently for rendering.
+      for (const event of events) hydrateAltTextFromCache(event);
+    }
+    pipeline.replayChat(chatId, events);
   }
   logger.withFields({ sessions: pipeline.getChatIds().length }).log('Cold start complete');
 
@@ -42,6 +85,8 @@ const main = async () => {
     session: loadSession(config.telegram.session),
     initialChatIds: loadKnownChatIds(db),
     resolveChatId: messageIds => lookupChatId(db, messageIds),
+    imageToText: config.imageToText.enabled ? imageToTextResolver : undefined,
+    imageToTextChatIds: new Set(config.driver.chatIds),
   }, logger);
 
   const primaryModel = resolveModel(config, config.llm.model);
@@ -93,6 +138,7 @@ const main = async () => {
         logger.withFields({ chatId, messageId: event.messageId }).warn('Synthetic bypass: userbot arrived first (isSelfSent merged via dedup)');
 
       persistEvent(db, event);
+      hydrateAltTextFromCache(event);
       pipeline.pushEvent(chatId, event);
       // Don't call driver.handleEvent — we're inside the Driver's LLM call;
       // the self-loop check will prevent re-triggering on bot-only messages.
@@ -145,6 +191,7 @@ const main = async () => {
 
     const event = adaptMessage(msg);
     persistEvent(db, event);
+    hydrateAltTextFromCache(event);
 
     try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
 
@@ -180,6 +227,7 @@ const main = async () => {
     }
 
     persistEvent(db, event);
+    hydrateAltTextFromCache(event);
 
     try { persistMessageEdit(db, edit); } catch (err) { logger.withError(err).error('Failed to persist message edit'); }
 

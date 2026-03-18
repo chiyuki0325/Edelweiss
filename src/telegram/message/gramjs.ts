@@ -95,6 +95,7 @@ const convertGramjsMedia = (media?: Api.TypeMessageMedia): Attachment[] | undefi
       .toSorted((a, b) => b.w * b.h - a.w * a.h)[0];
     const attachment: Attachment = {
       type: 'photo',
+      mediaId: String(media.photo.id.toJSNumber()),
       width: largest?.w,
       height: largest?.h,
       hasSpoiler: media.spoiler,
@@ -129,6 +130,7 @@ const convertGramjsDocument = (doc: Api.Document, spoiler?: boolean): Attachment
   );
 
   const attachment: Attachment = { type: 'document' };
+  attachment.mediaId = String(doc.id.toJSNumber());
 
   if (stickerAttr || isCustomEmoji) {
     attachment.type = 'sticker';

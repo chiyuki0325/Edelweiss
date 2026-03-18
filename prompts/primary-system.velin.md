@@ -84,6 +84,12 @@ Attachments appear within messages:
 <attachment type="photo" size="1920x1080"/>
 ```
 
+Resolved image descriptions may appear inline as:
+
+```xml
+<image type="photo" size="1920x1080">detailed alt text here</image>
+```
+
 Images may follow as separate visual content (thumbnails for context).
 
 ## How to Respond

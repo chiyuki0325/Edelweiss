@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
-import { compactions, events, messages, probeResponses, turnResponses, users } from './schema';
+import { compactions, events, imageAltTexts, messages, probeResponses, turnResponses, users } from './schema';
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalDeleteEvent,
@@ -11,6 +11,7 @@ import type {
   CanonicalServiceEvent,
 } from '../adaptation/types';
 import type { CompactionSessionMeta, ResponsesTRDataItem, TRDataEntry, TurnResponse } from '../driver/types';
+import type { ImageAltTextRecord } from '../telegram/image-to-text';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
 
 export const upsertUser = (db: DB, user: TelegramUser) => {
@@ -384,4 +385,36 @@ export const loadLastProbeTime = (db: DB, chatId: string): number => {
     .limit(1)
     .get();
   return row?.requestedAt ?? 0;
+};
+
+const reconstructImageAltTextRecord = (row: typeof imageAltTexts.$inferSelect): ImageAltTextRecord => ({
+  imageHash: row.imageHash,
+  altText: row.altText,
+  altTextTokens: row.altTextTokens,
+});
+
+export const loadImageAltTextByHash = (db: DB, imageHash: string): ImageAltTextRecord | null => {
+  const row = db.select().from(imageAltTexts)
+    .where(eq(imageAltTexts.imageHash, imageHash))
+    .limit(1)
+    .get();
+  return row ? reconstructImageAltTextRecord(row) : null;
+};
+
+export const persistImageAltText = (db: DB, record: ImageAltTextRecord) => {
+  db.insert(imageAltTexts)
+    .values({
+      imageHash: record.imageHash,
+      altText: record.altText,
+      altTextTokens: record.altTextTokens,
+      createdAt: Date.now(),
+    })
+    .onConflictDoUpdate({
+      target: imageAltTexts.imageHash,
+      set: {
+        altText: record.altText,
+        altTextTokens: record.altTextTokens,
+      },
+    })
+    .run();
 };

@@ -290,6 +290,23 @@ describe('render', () => {
       expect(pieces[1]).toEqual({ type: 'image', url: 'data:image/webp;base64,AAAA' });
     });
 
+    it('renders inline image alt text and omits image content piece', () => {
+      const rc = render(ic([message({
+        attachments: [{
+          type: 'photo',
+          width: 800,
+          height: 600,
+          thumbnailWebp: 'AAAA',
+          altText: 'a cat sleeping on a windowsill',
+        }],
+      })]));
+      expect(rc[0]!.content).toHaveLength(1);
+      expect(rc[0]!.content[0]).toEqual({
+        type: 'text',
+        text: '<message id="42" sender="Alice (@alice)" t="2025-03-12T14:30:00+08:00">\nhello\n<image type="photo" size="800x600">a cat sleeping on a windowsill</image>\n</message>',
+      });
+    });
+
     it('shows [thumbnail] placeholder in rcToXml', () => {
       const rc = render(ic([message({
         attachments: [{ type: 'photo', width: 800, height: 600, thumbnailWebp: 'AAAA' }],

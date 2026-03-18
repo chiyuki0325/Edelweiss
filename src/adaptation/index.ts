@@ -183,13 +183,15 @@ export const contentToPlainText = (nodes: ContentNode[]): string =>
 export const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
 
 export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
+  const receivedAtMs = msg.receivedAtMs ?? Date.now();
+  const utcOffsetMin = msg.utcOffsetMin ?? captureUtcOffset();
   const event: CanonicalMessageEvent = {
     type: 'message',
     chatId: msg.chatId,
     messageId: String(msg.messageId),
-    receivedAtMs: Date.now(),
+    receivedAtMs,
     timestampSec: msg.date,
-    utcOffsetMin: captureUtcOffset(),
+    utcOffsetMin,
     content: parseContent(msg.text, msg.entities),
     attachments: adaptAttachments(msg.attachments),
   };
@@ -201,13 +203,15 @@ export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
 };
 
 export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
+  const receivedAtMs = edit.receivedAtMs ?? Date.now();
+  const utcOffsetMin = edit.utcOffsetMin ?? captureUtcOffset();
   const event: CanonicalEditEvent = {
     type: 'edit',
     chatId: edit.chatId,
     messageId: String(edit.messageId),
-    receivedAtMs: Date.now(),
+    receivedAtMs,
     timestampSec: edit.editDate,
-    utcOffsetMin: captureUtcOffset(),
+    utcOffsetMin,
     content: parseContent(edit.text, edit.entities),
     attachments: adaptAttachments(edit.attachments),
   };
@@ -217,14 +221,14 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
 
 export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent => {
   if (!del.chatId) throw new Error('Cannot adapt delete event without chatId');
-  const now = Date.now();
+  const now = del.receivedAtMs ?? Date.now();
   return {
     type: 'delete',
     chatId: del.chatId,
     messageIds: del.messageIds.map(String),
     receivedAtMs: now,
     timestampSec: Math.floor(now / 1000),
-    utcOffsetMin: captureUtcOffset(),
+    utcOffsetMin: del.utcOffsetMin ?? captureUtcOffset(),
   };
 };
 
@@ -258,12 +262,14 @@ export const adaptServiceEvent = (msg: TelegramMessage): CanonicalServiceEvent |
 
   if (!action) return null;
 
+  const receivedAtMs = msg.receivedAtMs ?? Date.now();
+  const utcOffsetMin = msg.utcOffsetMin ?? captureUtcOffset();
   const event: CanonicalServiceEvent = {
     type: 'service',
     chatId: msg.chatId,
-    receivedAtMs: Date.now(),
+    receivedAtMs,
     timestampSec: msg.date,
-    utcOffsetMin: captureUtcOffset(),
+    utcOffsetMin,
     action,
   };
   if (msg.sender) event.actor = adaptUser(msg.sender);

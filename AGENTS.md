@@ -20,11 +20,11 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Telegram integration | Done | Bot + userbot, dedup, thumbnail, fileId merge, credential redaction |
+| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses tables; 20 migrations |
+| DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses, image_alt_texts tables; 21 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
-| Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces |
+| Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` alt text rendering |
 | Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries |
 
 ## Tech Stack
@@ -87,14 +87,17 @@ src/
 │   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
-│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, compactions, probeResponses tables
-│   ├── persistence.ts      # CRUD: persistEvent, persistMessage, persistTurnResponse, persistCompaction, loadEvents, loadTurnResponses, loadCompaction, etc.
+│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, compactions, probeResponses, imageAltTexts tables
+│   ├── persistence.ts      # CRUD: persistEvent, persistMessage, persistTurnResponse, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponses, loadCompaction, etc.
 │   └── index.ts            # Barrel exports
 └── telegram/
-    ├── index.ts             # TelegramManager — unified facade, thumbnail hydration, dedup dispatch
+    ├── index.ts             # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
     ├── bot.ts               # grammY Bot API client
     ├── userbot.ts           # gramjs MTProto client
     ├── event-bus.ts         # Simple typed pub/sub
+    ├── image-to-text.ts     # Blocking image→alt text workflow + cache lookup/persist + model calls
+    ├── image-to-text-prompt.ts # Velin prompt renderer for image description workflow
+    ├── session-ingress-queue.ts # Per-chat ordered commit queue with speculative async transforms
     ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
     ├── gramjs-logger.ts     # Patches gramjs internal logger to @guiiai/logg
     ├── markdown.ts          # Markdown → Telegram HTML converter (MarkdownIt-based)
@@ -115,6 +118,7 @@ Top-level directories:
   - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state)
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)
+  - `image-to-text-system.velin.md` — blocking image description prompt used before events enter the pipeline
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
 - `dcp-updates.md` — implementation deltas from the original RFC
@@ -153,18 +157,35 @@ Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no si
 ### Dual Timestamps
 
 Every `CanonicalIMEvent` carries two timestamps:
-- `receivedAtMs` (milliseconds): local receive time, set by `Date.now()` at adaptation. **Ordering source of truth** — ensures cold-start replay matches live processing.
+- `receivedAtMs` (milliseconds): local receive time, captured at telegram ingress **before** any asynchronous media transforms or queue blocking. **Ordering source of truth** — ensures cold-start replay matches live processing even when ingress is blocked on image-to-text.
 - `timestampSec` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAtMs / 1000)`.
-- `utcOffsetMin`: timezone offset at adaptation time (`-new Date().getTimezoneOffset()`). Rendering converts `timestampSec` to local time using this per-event offset.
+- `utcOffsetMin`: timezone offset captured at the same ingress moment as `receivedAtMs`. Rendering converts `timestampSec` to local time using this per-event offset.
 
 DB queries order by `(received_at, id)`.
+
+### Consistency Above Availability
+
+Highest design principle for ingress transforms: **never admit partially transformed events into the pipeline**. If image-to-text is enabled and an image event has not been fully resolved, that chat session must remain blocked. Timeouts, hangs, and infinite retries are acceptable; inconsistent data is not.
+
+This rule is fail-closed by design:
+- Image-to-text failures do **not** degrade to thumbnail-only or empty-alt-text fallback when the feature is enabled.
+- A blocked session may stop accepting new events into Projection/Rendering/Driver indefinitely.
+- Correctness of the event stream seen by DCP takes priority over latency and availability.
+
+### Session Ingress Queue
+
+Telegram ingress uses a **per-chat ordered commit queue**. Each event captures ingress timestamps immediately, then enters a queue with two phases:
+- **Transform**: asynchronous preprocessing (currently image-to-text and thumbnail generation). Later events in the same chat may start transforming before earlier events finish.
+- **Commit**: only the oldest contiguous ready prefix is allowed to enter Adaptation → Projection → Rendering. This preserves event order while still allowing speculative preprocessing of later blocked messages.
+
+The queue is fail-closed. If the head event's transform does not succeed, that chat's `nextCommitSeq` does not advance. Later events may finish transforming, but they remain buffered until the blocked head event resolves.
 
 ### Dual Telegram Client
 
 - **grammY** (Bot API): receives messages from non-bot users, sends replies, handles `/commands`.
 - **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete events.
 
-Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
+Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
 
 ### Phantom Edit Filtering
 
@@ -340,6 +361,32 @@ In group chats, most messages don't require a bot response. To avoid wasting tok
 **Config** (`probe` section in `config.yaml`):
 - `enabled` (boolean, default `false`): whether to use probe gate
 - `model`: probe model (references a key in the `models` registry)
+
+### Image To Text
+
+Optional blocking ingress transform that resolves image attachments into cached alt text before they enter DCP.
+
+**Processing model**:
+- Only image events with unresolved image attachments trigger the workflow.
+- Cache key is the sha256 of the generated thumbnail (deterministic sharp WebP output). Both live ingress and cold-start replay produce the same thumbnail from the same image, so the cache key is stable.
+- The LLM input image is a resized PNG with long edge capped at 512px (`fit: inside`, no enlargement). This is larger than the chat-context thumbnail budget and is used only for the image-to-text workflow.
+- If alt text is present on an attachment, Rendering emits inline `<image ...>alt text</image>` and does **not** attach a separate image buffer content piece.
+- Alt text is **never** stored in the `events` table — it is always queried transiently from the `image_alt_texts` table at runtime.
+- Only whitelisted chats (`driver.chatIds`) trigger image-to-text resolution.
+
+**Storage** (`image_alt_texts` table): keyed by thumbnail hash.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER PK | autoincrement |
+| image_hash | TEXT NOT NULL UNIQUE | sha256 of thumbnail WebP bytes |
+| alt_text | TEXT NOT NULL | resolved image description |
+| alt_text_tokens | INTEGER NOT NULL | model output token count for the stored alt text |
+| created_at | INTEGER NOT NULL | millisecond timestamp |
+
+**Config** (`imageToText` section in `config.yaml`):
+- `enabled` (boolean, default `false`): whether to block ingress on image-to-text
+- `model`: model for the image-to-text workflow (references a key in the `models` registry)
 
 ## Coding Conventions
 

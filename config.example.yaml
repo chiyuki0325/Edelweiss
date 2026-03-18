@@ -45,6 +45,10 @@ probe:
   enabled: false
   model: "probe"              # references a key in models
 
+imageToText:
+  enabled: false
+  model: "primary"            # references a key in models
+
 # Feature flags should be enabled in local dev config when first introduced.
 features:
   trimStaleNoToolCallTurnResponses: false

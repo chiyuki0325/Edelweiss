@@ -129,3 +129,13 @@ export const probeResponses = sqliteTable('probe_responses', {
 }, table => [
   index('probe_responses_chat_idx').on(table.chatId),
 ]);
+
+export const imageAltTexts = sqliteTable('image_alt_texts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  imageHash: text('image_hash').notNull(),
+  altText: text('alt_text').notNull(),
+  altTextTokens: integer('alt_text_tokens').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  uniqueIndex('image_alt_texts_hash_idx').on(table.imageHash),
+]);

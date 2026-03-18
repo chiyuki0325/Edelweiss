@@ -344,6 +344,15 @@ describe('adaptMessage', () => {
     }]);
   });
 
+  it('preserves ingress timestamps when provided', () => {
+    const event = adaptMessage(baseTelegramMessage({
+      receivedAtMs: 123456789,
+      utcOffsetMin: 480,
+    }));
+    expect(event.receivedAtMs).toBe(123456789);
+    expect(event.utcOffsetMin).toBe(480);
+  });
+
   it('returns empty attachments when none present', () => {
     const event = adaptMessage(baseTelegramMessage());
     expect(event.attachments).toEqual([]);

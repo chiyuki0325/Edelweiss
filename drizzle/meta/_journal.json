@@ -148,6 +148,13 @@
       "when": 1773820800000,
       "tag": "0020_events_service_action",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1773820800001,
+      "tag": "0021_create_image_alt_texts",
+      "breakpoints": true
     }
   ]
 }
