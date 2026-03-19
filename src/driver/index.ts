@@ -13,6 +13,17 @@ import { createSendMessageTool } from './tools';
 import type { CompactionSessionMeta, DriverConfig, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
 
+/** Format current time in local timezone as ISO 8601 with offset (e.g. 2025-03-13T22:30:00+08:00). */
+const localTimeNow = (): string => {
+  const now = new Date();
+  const off = -now.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const pad = (n: number) => String(Math.abs(n)).padStart(2, '0');
+  const tz = `${sign}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  const iso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+  return `${iso}${tz}`;
+};
+
 export { mergeContext } from './merge';
 export { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 export type { DriverConfig, ProviderFormat, TurnResponse } from './types';
@@ -157,7 +168,6 @@ export const createDriver = (config: DriverConfig, deps: {
             const system = await renderSystemPrompt({
               currentChannel: 'telegram',
               modelName: config.primaryModel.model,
-              timeNow: new Date().toISOString(),
             });
 
             // --- Compute mention/reply state from RC ---
@@ -186,7 +196,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   trimImages(probeMessages, config.probe.model.maxImagesAllowed);
 
                 const probeLateBinding = await renderLateBindingPrompt({
-                  timeNow: new Date().toISOString(),
+                  timeNow: localTimeNow(),
                   isProbeEnabled: true, isProbing: true, isMentioned, isReplied,
                 });
                 injectLateBindingPrompt(probeMessages, probeLateBinding);
@@ -242,7 +252,7 @@ export const createDriver = (config: DriverConfig, deps: {
               trimImages(ctx.messages, config.primaryModel.maxImagesAllowed);
 
             const primaryLateBinding = await renderLateBindingPrompt({
-              timeNow: new Date().toISOString(),
+              timeNow: localTimeNow(),
               isProbeEnabled: config.probe.enabled, isProbing: false, isMentioned, isReplied,
             });
             injectLateBindingPrompt(ctx.messages, primaryLateBinding);

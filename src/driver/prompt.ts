@@ -17,7 +17,6 @@ export const renderSystemPrompt = async (params: {
   modelName: string;
   currentChannel?: string;
   maxContextLoadTime?: number;
-  timeNow: string;
   systemFiles?: { filename: string; content: string }[];
 }) => {
   const { rendered } = await renderMarkdownString(systemPromptTemplate, params, basePath);

@@ -9,10 +9,9 @@ const props = defineProps({
   // --- Core files (IDENTITY.md, SOUL.md, etc.) ---
   systemFiles: { type: Array, default: () => [] },
 
-  // --- Dynamic section (appended at end to preserve cache prefix) ---
+  // --- Semi-static section (changes rarely) ---
   currentChannel: { type: String, default: 'telegram' },
   maxContextLoadTime: { type: Number, default: 1440 },
-  timeNow: { type: String, required: true },
 })
 
 const maxContextLoadTimeHours = computed(() =>
@@ -128,7 +127,5 @@ Not every message needs a response. Staying silent is valid and often appropriat
 ---
 
 current-channel: {{ currentChannel }}
-max-context-load-time: {{ maxContextLoadTime }}
-time-now: {{ timeNow }}
 
 Context window covers the last {{ maxContextLoadTime }} minutes ({{ maxContextLoadTimeHours }} hours).

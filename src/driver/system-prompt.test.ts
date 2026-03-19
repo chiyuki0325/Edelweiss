@@ -14,7 +14,7 @@ const renderPrompt = (data: Record<string, unknown> = {}) =>
 
 describe('system prompt (velin)', () => {
   it('renders with minimal props', async () => {
-    const rendered = await renderPrompt({ modelName: 'gpt-4o', timeNow: '2025-03-13T12:00:00Z' });
+    const rendered = await renderPrompt({ modelName: 'gpt-4o' });
 
     // Static content present
     expect(rendered).toContain('You just woke up.');
@@ -33,8 +33,8 @@ describe('system prompt (velin)', () => {
     expect(rendered).toContain('telegram');
     expect(rendered).toContain('1440');
 
-    // Dynamic time rendered
-    expect(rendered).toContain('2025-03-13T12:00:00Z');
+    // timeNow should NOT be in system prompt (moved to late-binding)
+    expect(rendered).not.toContain('time-now');
 
     // No raw Vue syntax leaked
     expect(rendered).not.toContain('v-if=');
@@ -56,13 +56,12 @@ describe('system prompt (velin)', () => {
   });
 
   it('renders language header', async () => {
-    const rendered = await renderPrompt({ language: 'zh', modelName: 'gpt-4o', timeNow: '2025-01-01T00:00:00Z' });
+    const rendered = await renderPrompt({ language: 'zh', modelName: 'gpt-4o' });
     expect(rendered).toContain('language: zh');
   });
 
   it('renders system files', async () => {
     const rendered = await renderPrompt({
-      timeNow: '2025-01-01T00:00:00Z',
       modelName: 'gpt-4o',
       systemFiles: [
         { filename: 'IDENTITY.md', content: 'I am a test bot.' },
@@ -74,22 +73,20 @@ describe('system prompt (velin)', () => {
     expect(rendered).toContain('Be helpful.');
   });
 
-  it('renders dynamic context footer', async () => {
+  it('renders context footer with custom values', async () => {
     const rendered = await renderPrompt({
       currentChannel: 'discord',
       maxContextLoadTime: 720,
       modelName: 'gpt-4o',
-      timeNow: '2025-06-15T08:30:00Z',
     });
 
     expect(rendered).toContain('discord');
     expect(rendered).toContain('720');
     expect(rendered).toContain('12.00');
-    expect(rendered).toContain('2025-06-15T08:30:00Z');
   });
 
   it('contains send_message instructions, not direct-reply', async () => {
-    const rendered = await renderPrompt({ modelName: 'gpt-4o', timeNow: '2025-01-01T00:00:00Z' });
+    const rendered = await renderPrompt({ modelName: 'gpt-4o' });
 
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('internal monologue');
