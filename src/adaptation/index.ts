@@ -53,10 +53,11 @@ const adaptAttachments = (attachments?: Attachment[]): CanonicalAttachment[] => 
 
 const adaptForwardInfo = (info?: ForwardInfo): CanonicalForwardInfo | undefined => {
   if (!info) return undefined;
-  if (!info.fromUserId && !info.fromChatId && !info.senderName && info.date == null) return undefined;
+  if (!info.fromUserId && !info.fromChatId && !info.sender && !info.senderName && info.date == null) return undefined;
   const result: CanonicalForwardInfo = {};
   if (info.fromUserId) result.fromUserId = info.fromUserId;
   if (info.fromChatId) result.fromChatId = info.fromChatId;
+  if (info.sender) result.sender = adaptUser(info.sender);
   if (info.senderName) result.senderName = info.senderName;
   if (info.date != null) result.date = info.date;
   return result;

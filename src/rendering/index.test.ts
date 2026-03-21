@@ -233,7 +233,21 @@ describe('render', () => {
   });
 
   describe('forward', () => {
-    it('renders forwarded_from with senderName', () => {
+    it('renders forwarded_from with sender using formatSender', () => {
+      const result = xml(render(ic([message({
+        forwardInfo: { sender: { id: '555', displayName: 'Alice', username: 'alice', isBot: false } },
+      })])));
+      expect(result).toContain('forwarded_from="Alice (@alice)"');
+    });
+
+    it('renders forwarded_from with sender without username', () => {
+      const result = xml(render(ic([message({
+        forwardInfo: { sender: { id: '555', displayName: 'Alice', isBot: false } },
+      })])));
+      expect(result).toContain('forwarded_from="Alice"');
+    });
+
+    it('falls back to senderName for hidden forwards', () => {
       const result = xml(render(ic([message({
         forwardInfo: { senderName: 'Someone' },
       })])));

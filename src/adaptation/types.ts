@@ -36,6 +36,7 @@ export type ContentNode =
 export interface CanonicalForwardInfo {
   fromUserId?: string;
   fromChatId?: string;
+  sender?: CanonicalUser;
   senderName?: string;
   date?: number;
 }

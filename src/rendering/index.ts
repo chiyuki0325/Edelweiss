@@ -97,7 +97,8 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
     attrs.push(`edited="${formatTimestamp(msg.editedAtSec, msg.editUtcOffsetMin ?? msg.utcOffsetMin)}"`);
 
   if (msg.forwardInfo) {
-    const from = msg.forwardInfo.senderName
+    const from = (msg.forwardInfo.sender ? formatSender(msg.forwardInfo.sender) : undefined)
+      ?? msg.forwardInfo.senderName
       ?? (msg.forwardInfo.fromUserId ? `user:${msg.forwardInfo.fromUserId}` : undefined)
       ?? (msg.forwardInfo.fromChatId ? `chat:${msg.forwardInfo.fromChatId}` : undefined)
       ?? 'unknown';

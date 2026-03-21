@@ -31,15 +31,37 @@ const convertGrammyForwardInfo = (
   switch (origin.type) {
   case 'user':
     info.fromUserId = String(origin.sender_user.id);
+    info.sender = {
+      id: String(origin.sender_user.id),
+      firstName: origin.sender_user.first_name,
+      lastName: origin.sender_user.last_name,
+      username: origin.sender_user.username,
+      isBot: origin.sender_user.is_bot,
+      isPremium: origin.sender_user.is_premium ?? false,
+    };
     break;
   case 'hidden_user':
     info.senderName = origin.sender_user_name;
     break;
   case 'chat':
     info.fromChatId = String(origin.sender_chat.id);
+    info.sender = {
+      id: String(origin.sender_chat.id),
+      firstName: origin.sender_chat.title,
+      username: 'username' in origin.sender_chat ? origin.sender_chat.username : undefined,
+      isBot: false,
+      isPremium: false,
+    };
     break;
   case 'channel':
     info.fromChatId = String(origin.chat.id);
+    info.sender = {
+      id: String(origin.chat.id),
+      firstName: origin.chat.title,
+      username: 'username' in origin.chat ? origin.chat.username : undefined,
+      isBot: false,
+      isPremium: false,
+    };
     if (origin.message_id) info.fromMessageId = origin.message_id;
     break;
   }

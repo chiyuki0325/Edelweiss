@@ -62,7 +62,7 @@ const convertGramjsEntities = (entities?: Api.TypeMessageEntity[]): MessageEntit
 
 // --- forward info ---
 
-const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader): ForwardInfo | undefined => {
+const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader, forwardSender?: TelegramUser): ForwardInfo | undefined => {
   if (!fwd || !(fwd instanceof Api.MessageFwdHeader)) return undefined;
 
   const info: ForwardInfo = { date: fwd.date };
@@ -78,6 +78,7 @@ const convertGramjsForwardInfo = (fwd?: Api.TypeMessageFwdHeader): ForwardInfo |
     }
   }
 
+  if (forwardSender) info.sender = forwardSender;
   if (fwd.fromName) info.senderName = fwd.fromName;
 
   return info;
@@ -247,6 +248,12 @@ export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefi
   return resolveTelegramUser(message.fromId, message.sender);
 };
 
+const resolveGramjsForwardSender = (message: Api.Message): TelegramUser | undefined => {
+  const fwd = message.forward;
+  if (!fwd) return undefined;
+  return entityToTelegramUser(fwd.sender);
+};
+
 const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUser) => {
   const replyTo = message.replyTo instanceof Api.MessageReplyHeader ? message.replyTo : undefined;
   return {
@@ -268,7 +275,7 @@ export const fromGramjsMessage = (
 ): TelegramMessage => ({
   ...convertGramjsMessageBase(message, senderInfo),
   editDate: message.editDate,
-  forwardInfo: convertGramjsForwardInfo(message.fwdFrom),
+  forwardInfo: convertGramjsForwardInfo(message.fwdFrom, resolveGramjsForwardSender(message)),
   mediaGroupId: message.groupedId ? String(message.groupedId) : undefined,
   viaBotId: message.viaBotId ? String(message.viaBotId.toJSNumber()) : undefined,
   source: 'userbot',

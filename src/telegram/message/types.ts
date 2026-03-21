@@ -14,7 +14,8 @@ export interface ForwardInfo {
   fromUserId?: string;
   fromChatId?: string;
   fromMessageId?: number;
-  senderName?: string; // for hidden forwards
+  sender?: TelegramUser;
+  senderName?: string; // for hidden forwards (privacy-protected sender)
   date?: number;
 }
 
