@@ -94,6 +94,39 @@ describe('system prompt (velin)', () => {
     expect(rendered).toContain('Stay silent when');
     expect(rendered).not.toContain('Your text output IS your reply');
   });
+
+  it('shows bash tool when hasBashTool is true', async () => {
+    const rendered = await renderPrompt({ modelName: 'gpt-4o', hasBashTool: true });
+
+    expect(rendered).toContain('bash');
+    expect(rendered).toContain('shell command');
+    expect(rendered).not.toContain('only available tool');
+  });
+
+  it('shows web_search tool when hasWebSearchTool is true', async () => {
+    const rendered = await renderPrompt({ modelName: 'gpt-4o', hasWebSearchTool: true });
+
+    expect(rendered).toContain('web\\_search');
+    expect(rendered).toContain('Search the web');
+    expect(rendered).not.toContain('only available tool');
+  });
+
+  it('shows both tools when both flags are true', async () => {
+    const rendered = await renderPrompt({ modelName: 'gpt-4o', hasBashTool: true, hasWebSearchTool: true });
+
+    expect(rendered).toContain('bash');
+    expect(rendered).toContain('web\\_search');
+    expect(rendered).toContain('shell command');
+    expect(rendered).toContain('Search the web');
+    expect(rendered).not.toContain('only available tool');
+  });
+
+  it('shows only available tool text when no extra tools', async () => {
+    const rendered = await renderPrompt({ modelName: 'gpt-4o' });
+
+    expect(rendered).toContain('only available tool');
+    expect(rendered).not.toContain('web_search');
+  });
 });
 
 const renderLateBinding = (data: Record<string, unknown> = {}) =>

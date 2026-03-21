@@ -9,7 +9,8 @@ import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
-import { createSendMessageTool } from './tools';
+import { createBashTool, createSendMessageTool, createWebSearchTool } from './tools';
+import type { CahciuaTool } from './tools';
 import type { CompactionSessionMeta, DriverConfig, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
 
@@ -177,9 +178,18 @@ export const createDriver = (config: DriverConfig, deps: {
               return { messageId: String(sent.messageId) };
             });
 
+            const hasBashTool = chatConfig.tools.bash.enabled;
+            const hasWebSearchTool = chatConfig.tools.webSearch.enabled && !!chatConfig.tools.webSearch.tavilyKey;
+
+            const tools: CahciuaTool[] = [sendMessageTool];
+            if (hasBashTool) tools.push(createBashTool(chatConfig.tools.bash.shell));
+            if (hasWebSearchTool) tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
+
             const system = await renderSystemPrompt({
               currentChannel: 'telegram',
               modelName: chatConfig.primaryModel.model,
+              hasBashTool,
+              hasWebSearchTool,
             });
 
             // --- Compute mention/reply state from RC ---
@@ -221,7 +231,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   ? await streamingResponses({
                     baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
                     model: chatConfig.probe.model.model, input: messagesToResponsesInput(probeMessages),
-                    instructions: system, tools: [sendMessageTool].map(xsaiToolToResponsesTool),
+                    instructions: system, tools: tools.map(xsaiToolToResponsesTool),
                     log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                   }).then(r => ({
                     hasToolCalls: r.output.some(item => item.type === 'function_call'),
@@ -231,7 +241,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   : await streamingChat({
                     baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
                     model: chatConfig.probe.model.model, messages: probeMessages, system,
-                    tools: [sendMessageTool], log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
+                    tools, log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                   }).then(r => {
                     const msg = r.choices[0]?.message;
                     return {
@@ -274,7 +284,7 @@ export const createDriver = (config: DriverConfig, deps: {
               chatId,
               messages: ctx.messages,
               system,
-              tools: [sendMessageTool],
+              tools,
               maxSteps: MAX_STEPS,
               onStepComplete: (stepData, usage, requestedAtMs) => {
                 if (chatConfig.primaryApiFormat === 'responses') {

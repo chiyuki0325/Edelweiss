@@ -50,6 +50,14 @@ chats:
       trimStaleNoToolCallTurnResponses: false
       trimSelfMessagesCoveredBySendToolCalls: false
       trimToolResults: false
+    # Tools: enable extra tools for this chat (bash, web search).
+    # tools:
+    #   bash:
+    #     enabled: false
+    #     shell: ["/bin/bash", "-c"]       # command prefix for shell execution
+    #   webSearch:
+    #     enabled: false
+    #     tavilyKey: ""                    # Tavily API key for web search
 
   # Per-chat overrides — uncomment and customize:
   # "751414718":                   # per-chat partial override (deep-merged with default)

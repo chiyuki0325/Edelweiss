@@ -40,6 +40,16 @@ const ChatConfigSchema = v.object({
     trimSelfMessagesCoveredBySendToolCalls: v.optional(v.boolean(), false),
     trimToolResults: v.optional(v.boolean(), false),
   }), {}),
+  tools: v.optional(v.object({
+    bash: v.optional(v.object({
+      enabled: v.optional(v.boolean(), false),
+      shell: v.optional(v.array(v.string()), ['/bin/bash', '-c']),
+    }), {}),
+    webSearch: v.optional(v.object({
+      enabled: v.optional(v.boolean(), false),
+      tavilyKey: v.optional(v.string(), ''),
+    }), {}),
+  }), {}),
 });
 
 // Per-chat overrides: all fields optional, no defaults
@@ -64,6 +74,16 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     trimStaleNoToolCallTurnResponses: v.boolean(),
     trimSelfMessagesCoveredBySendToolCalls: v.boolean(),
     trimToolResults: v.boolean(),
+  })),
+  tools: v.partial(v.object({
+    bash: v.partial(v.object({
+      enabled: v.boolean(),
+      shell: v.array(v.string()),
+    })),
+    webSearch: v.partial(v.object({
+      enabled: v.boolean(),
+      tavilyKey: v.string(),
+    })),
   })),
 })), {});
 
@@ -92,6 +112,10 @@ export interface ResolvedChatConfig {
   probe: { enabled: boolean; model: LlmEndpoint };
   imageToText: { enabled: boolean; model?: string };
   featureFlags: FeatureFlags;
+  tools: {
+    bash: { enabled: boolean; shell: string[] };
+    webSearch: { enabled: boolean; tavilyKey: string };
+  };
 }
 
 const CONFIG_PATH = process.env.CONFIG_PATH ?? 'config.yaml';
@@ -136,5 +160,9 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: merged.imageToText.model || undefined,
     },
     featureFlags: merged.features,
+    tools: {
+      bash: { enabled: merged.tools.bash.enabled, shell: merged.tools.bash.shell },
+      webSearch: { enabled: merged.tools.webSearch.enabled, tavilyKey: merged.tools.webSearch.tavilyKey },
+    },
   };
 };

@@ -12,11 +12,26 @@ const props = defineProps({
   // --- Semi-static section (changes rarely) ---
   currentChannel: { type: String, default: 'telegram' },
   maxContextLoadTime: { type: Number, default: 1440 },
+
+  // --- Tool flags ---
+  hasBashTool: { type: Boolean, default: false },
+  hasWebSearchTool: { type: Boolean, default: false },
 })
 
 const maxContextLoadTimeHours = computed(() =>
   (props.maxContextLoadTime / 60).toFixed(2)
 )
+
+const hasExtraTools = computed(() =>
+  props.hasBashTool || props.hasWebSearchTool
+)
+
+const toolList = computed(() => {
+  const lines = ['`send_message` — Send a message in the current conversation.']
+  if (props.hasBashTool) lines.push('`bash` — Execute a shell command. Output (stdout+stderr) is truncated to 4 KB. For large outputs, redirect to a file and read specific ranges.')
+  if (props.hasWebSearchTool) lines.push('`web_search` — Search the web. Returns an answer and up to 5 results.')
+  return 'Your available tools are:\n\n' + lines.map(l => '- ' + l).join('\n')
+})
 </script>
 
 ---
@@ -28,7 +43,16 @@ You just woke up.
 
 You are observing a group chat. Your direct text output is **internal monologue** — no one can see it. The `send_message` tool is the **only** way to deliver a message to the chat. If you do not call `send_message`, you stay silent — this is often the right choice.
 
+<div v-if="!hasExtraTools">
+
 Your only available tool is `send_message`. You cannot read/write files, execute commands, or perform any actions beyond sending messages in the current conversation.
+
+</div>
+<div v-else>
+
+{{ toolList }}
+
+</div>
 
 ## Message Formatting
 
