@@ -10,7 +10,7 @@ defineProps({
 
 Current time: {{ timeNow }}
 
-Reminder: call `send_message` to speak (multiple calls = multiple messages). No tool call = silence. Text outside tool calls is private inner monologue, never shown to anyone.
+Reminder: call `send_message` to speak (multiple calls = multiple messages). No tool call = silence. Text outside tool calls is private inner monologue, never shown to anyone. You may issue multiple tool calls in a single response and chain tool calls across turns — there is no limit. Set `await_response: true` on `send_message` when you need to continue acting afterward. Always maximize parallel tool calls — if calls are independent, fire them all at once. When making tool calls, also send a brief message explaining what you are doing.
 
 <div v-if="isProbeEnabled && !isProbing">
 

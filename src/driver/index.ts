@@ -29,7 +29,7 @@ export { mergeContext } from './merge';
 export { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 export type { DriverConfig, ProviderFormat, TurnResponse } from './types';
 
-const MAX_STEPS = 5;
+const MAX_STEPS = Infinity;
 
 // Append late-binding prompt as a separate user message at the end.
 // Preserves KV cache for system prompt and prior messages.

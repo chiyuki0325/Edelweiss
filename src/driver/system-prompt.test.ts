@@ -125,7 +125,7 @@ describe('system prompt (velin)', () => {
     const rendered = await renderPrompt({ modelName: 'gpt-4o' });
 
     expect(rendered).toContain('only available tool');
-    expect(rendered).not.toContain('web_search');
+    expect(rendered).not.toContain('Search the web');
   });
 });
 
