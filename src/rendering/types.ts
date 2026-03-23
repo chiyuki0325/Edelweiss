@@ -1,6 +1,7 @@
 export interface RenderParams {
   compactCursorMs?: number;
   botUserId?: string;
+  contactNames?: Map<string, string>;
 }
 
 // Provider-agnostic content piece — maps to LLM API content parts.

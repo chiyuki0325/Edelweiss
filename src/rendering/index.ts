@@ -13,8 +13,9 @@ const escapeXml = (text: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const formatSender = (user: CanonicalUser): string => {
-  const displayName = user.displayName !== '' ? user.displayName : (user.username ?? user.id);
+const formatSender = (user: CanonicalUser, contactNames?: Map<string, string>): string => {
+  const contactName = contactNames?.get(user.id);
+  const displayName = contactName ?? (user.displayName !== '' ? user.displayName : (user.username ?? user.id));
   if (user.username && user.username !== displayName) return `${displayName} (@${user.username})`;
   return displayName;
 };
@@ -89,7 +90,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
   const attrs: string[] = [
     `id="${escapeXml(msg.messageId)}"`,
   ];
-  if (msg.sender) attrs.push(`sender="${escapeXml(formatSender(msg.sender))}"`);
+  if (msg.sender) attrs.push(`sender="${escapeXml(formatSender(msg.sender, params.contactNames))}"`);
   if (isMyself) attrs.push('myself="true"');
   attrs.push(`t="${formatTimestamp(msg.timestampSec, msg.utcOffsetMin)}"`);
 
@@ -97,7 +98,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
     attrs.push(`edited="${formatTimestamp(msg.editedAtSec, msg.editUtcOffsetMin ?? msg.utcOffsetMin)}"`);
 
   if (msg.forwardInfo) {
-    const from = (msg.forwardInfo.sender ? formatSender(msg.forwardInfo.sender) : undefined)
+    const from = (msg.forwardInfo.sender ? formatSender(msg.forwardInfo.sender, params.contactNames) : undefined)
       ?? msg.forwardInfo.senderName
       ?? (msg.forwardInfo.fromUserId ? `user:${msg.forwardInfo.fromUserId}` : undefined)
       ?? (msg.forwardInfo.fromChatId ? `chat:${msg.forwardInfo.fromChatId}` : undefined)
@@ -114,7 +115,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
 
   if (msg.replyToMessageId) {
     const replyAttrs = [`id="${escapeXml(msg.replyToMessageId)}"`];
-    if (msg.replyToSender) replyAttrs.push(`sender="${escapeXml(formatSender(msg.replyToSender))}"`);
+    if (msg.replyToSender) replyAttrs.push(`sender="${escapeXml(formatSender(msg.replyToSender, params.contactNames))}"`);
     const preview = msg.replyToPreview ? escapeXml(msg.replyToPreview) : '';
     parts.push(`<in-reply-to ${replyAttrs.join(' ')}>${preview}</in-reply-to>`);
   }
@@ -138,21 +139,21 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
   return { content: pieces, isMyself, isSelfSent, mentionsMe, repliesToMe };
 };
 
-const renderSystemEvent = (event: ICSystemEvent): string => {
+const renderSystemEvent = (event: ICSystemEvent, contactNames?: Map<string, string>): string => {
   const t = formatTimestamp(event.timestampSec, event.utcOffsetMin);
-  const actorAttr = 'actor' in event && event.actor ? ` actor="${escapeXml(formatSender(event.actor))}"` : '';
+  const actorAttr = 'actor' in event && event.actor ? ` actor="${escapeXml(formatSender(event.actor, contactNames))}"` : '';
 
   switch (event.kind) {
   case 'user_renamed':
-    return `<event type="name_change" t="${t}" from_name="${escapeXml(formatSender(event.oldUser))}" to_name="${escapeXml(formatSender(event.newUser))}"/>`;
+    return `<event type="name_change" t="${t}" from_name="${escapeXml(formatSender(event.oldUser, contactNames))}" to_name="${escapeXml(formatSender(event.newUser, contactNames))}"/>`;
 
   case 'members_joined': {
-    const members = event.members.map(m => formatSender(m)).join(', ');
+    const members = event.members.map(m => formatSender(m, contactNames)).join(', ');
     return `<event type="members_joined" t="${t}"${actorAttr} members="${escapeXml(members)}"/>`;
   }
 
   case 'member_left':
-    return `<event type="member_left" t="${t}"${actorAttr} member="${escapeXml(formatSender(event.member))}"/>`;
+    return `<event type="member_left" t="${t}"${actorAttr} member="${escapeXml(formatSender(event.member, contactNames))}"/>`;
 
   case 'chat_renamed': {
     const fromAttr = event.oldTitle != null ? ` from="${escapeXml(event.oldTitle)}"` : '';
@@ -191,7 +192,7 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
       const { content, isMyself, isSelfSent, mentionsMe, repliesToMe } = renderMessage(node, params);
       segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }) });
     } else {
-      const content = [{ type: 'text' as const, text: renderSystemEvent(node) }];
+      const content = [{ type: 'text' as const, text: renderSystemEvent(node, params.contactNames) }];
       segments.push({ receivedAtMs: node.receivedAtMs, content });
     }
   }

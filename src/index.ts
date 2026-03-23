@@ -2,6 +2,7 @@ import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlain
 import type { CanonicalIMEvent } from './adaptation/types';
 import { getChatIds, loadConfig, resolveChatConfig, resolveModel } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
+import { loadContacts } from './contacts';
 import { createDatabase, loadCompaction, loadEvents, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations } from './db';
 import { createDriver } from './driver';
 import { createPipeline } from './pipeline';
@@ -56,7 +57,8 @@ const main = async () => {
 
   // Bot user ID from token — available immediately, used for myself detection
   const botUserId = config.telegram.botToken.split(':')[0]!;
-  const renderParams: RenderParams = { botUserId };
+  const contactNames = loadContacts(logger);
+  const renderParams: RenderParams = { botUserId, contactNames };
 
   const pipeline = createPipeline(renderParams);
 
