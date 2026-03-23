@@ -17,6 +17,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "login": "tsx src/telegram/login.ts",
+    "import-contacts": "tsx scripts/import-contacts.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
