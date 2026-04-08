@@ -15,6 +15,7 @@ export interface AnimationToTextResolver {
     emoji?: string;
     stickerSetName?: string;
     duration?: number;
+    frameTimestamps?: number[];
   }): Promise<ImageAltTextRecord>;
 }
 
@@ -38,6 +39,7 @@ export const createAnimationToTextResolver = (params: {
     emoji?: string,
     stickerSetName?: string,
     duration?: number,
+    frameTimestamps?: number[],
   ): Promise<ImageAltTextRecord> => {
     const existing = inflightByHash.get(cacheKey);
     if (existing) return existing;
@@ -56,6 +58,10 @@ export const createAnimationToTextResolver = (params: {
 
         const uniqueFrames = isSticker ? deduplicateFrames(frames) : frames;
 
+        const timestamps = frameTimestamps
+          ? frameTimestamps.map(t => `${t.toFixed(1)}s`).join(', ')
+          : undefined;
+
         const images = uniqueFrames.map(buf => ({
           url: `data:image/png;base64,${buf.toString('base64')}`,
         }));
@@ -67,6 +73,7 @@ export const createAnimationToTextResolver = (params: {
           stickerSetName,
           duration,
           frameCount: uniqueFrames.length,
+          frameTimestamps: timestamps,
         });
 
         const result = await callDescriptionLlm({
@@ -99,8 +106,8 @@ export const createAnimationToTextResolver = (params: {
   };
 
   return {
-    resolve({ cacheKey, frames, caption, isSticker, emoji, stickerSetName, duration }) {
-      return resolveByHash(cacheKey, frames, caption, isSticker, emoji, stickerSetName, duration);
+    resolve({ cacheKey, frames, caption, isSticker, emoji, stickerSetName, duration, frameTimestamps }) {
+      return resolveByHash(cacheKey, frames, caption, isSticker, emoji, stickerSetName, duration, frameTimestamps);
     },
   };
 };

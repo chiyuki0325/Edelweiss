@@ -393,7 +393,7 @@ const main = async () => {
               };
               if (!canExtractFrames(syntheticAtt)) return;
 
-              const { frames, cacheKey } = await extractFrames(buffer, syntheticAtt, defaultChatConfig.animationToText.maxFrames);
+              const { frames, cacheKey, frameTimestamps } = await extractFrames(buffer, syntheticAtt, defaultChatConfig.animationToText.maxFrames);
               att.animationHash = cacheKey;
               updateEventAttachments(db, eventId, event.attachments);
 
@@ -403,6 +403,7 @@ const main = async () => {
                 caption,
                 isSticker: att.type === 'sticker',
                 duration: att.duration,
+                frameTimestamps,
               });
             } catch (err) {
               backfillLog.withError(err).warn('Failed to backfill animation');

@@ -83,6 +83,7 @@ export const createCustomEmojiToTextResolver = (params: {
 
         let images: Array<{ url: string }>;
         let frameCount: number | undefined;
+        let timestamps: string | undefined;
 
         if (isAnimated) {
           const syntheticAtt: Attachment = {
@@ -90,11 +91,14 @@ export const createCustomEmojiToTextResolver = (params: {
             isAnimatedSticker: sticker.is_animated,
             isVideoSticker: sticker.is_video,
           };
-          const { frames: rawFrames } = await extractFrames(buffer, syntheticAtt, params.maxFrames);
-          const uniqueFrames = deduplicateFrames(rawFrames);
+          const extractionResult = await extractFrames(buffer, syntheticAtt, params.maxFrames);
+          const uniqueFrames = deduplicateFrames(extractionResult.frames);
           if (uniqueFrames.length === 1) isAnimated = false;
           images = uniqueFrames.map(buf => ({ url: `data:image/png;base64,${buf.toString('base64')}` }));
           frameCount = uniqueFrames.length;
+          timestamps = extractionResult.frameTimestamps
+            ? extractionResult.frameTimestamps.map(t => `${t.toFixed(1)}s`).join(', ')
+            : undefined;
         } else {
           const url = await prepareStaticImageUrl(buffer);
           images = [{ url }];
@@ -105,6 +109,7 @@ export const createCustomEmojiToTextResolver = (params: {
           stickerSetName: packTitle,
           isAnimated,
           frameCount,
+          frameTimestamps: timestamps,
         });
 
         const result = await callDescriptionLlm({

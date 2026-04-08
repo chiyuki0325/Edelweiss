@@ -3,10 +3,11 @@ defineProps({
   caption: { type: String, default: '' },
   duration: { type: Number, default: 0 },
   frameCount: { type: Number, default: 1 },
+  frameTimestamps: { type: String, default: '' },
 })
 </script>
 
-You are a helpful assistant that describes animated GIFs for visually impaired users. You are shown {{ frameCount }} equidistant frames extracted from a GIF animation<span v-if="duration"> ({{ duration }} seconds long)</span>. Describe what is happening in the animation in under 100 words.
+You are a helpful assistant that describes animated GIFs for visually impaired users. You are shown {{ frameCount }} equidistant frames extracted from a GIF animation<span v-if="duration"> ({{ duration }} seconds long)</span>.<span v-if="frameTimestamps"> Frame timestamps: {{ frameTimestamps }}.</span> Describe what is happening in the animation in under 100 words.
 
 Focus on:
 - What is moving or changing between frames.

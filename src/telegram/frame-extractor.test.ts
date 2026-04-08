@@ -49,7 +49,16 @@ describe('extractFrames', () => {
     expect(result.frames).toHaveLength(5);
   });
 
-  it('MP4: extracts 5 equidistant frames', async () => {
+  it('TGS: frameTimestamps present when fr > 0', async () => {
+    const lottie = { v: '5.5.2', fr: 30, ip: 0, op: 60, w: 64, h: 64, layers: [] };
+    const tgs = gzipSync(Buffer.from(JSON.stringify(lottie)));
+    const result = await extractFrames(tgs, { type: 'sticker', isAnimatedSticker: true } as Attachment);
+    expect(result.frameTimestamps).toBeDefined();
+    expect(result.frameTimestamps).toHaveLength(result.frames.length);
+    for (const t of result.frameTimestamps!) expect(t).toBeGreaterThanOrEqual(0);
+  });
+
+  it('MP4: extracts 5 equidistant frames with timestamps', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vitest-frames-'));
     try {
       const videoPath = join(dir, 'test.mp4');
@@ -62,6 +71,9 @@ describe('extractFrames', () => {
       expect(result.frames.length).toBe(5);
       expect(result.cacheKey).toHaveLength(64);
       for (const f of result.frames) expect(f.length).toBeGreaterThan(0);
+      // Video should have frameTimestamps
+      expect(result.frameTimestamps).toBeDefined();
+      expect(result.frameTimestamps).toHaveLength(result.frames.length);
     } finally {
       await rm(dir, { recursive: true });
     }

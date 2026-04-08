@@ -13,12 +13,14 @@ export const renderCustomEmojiToTextSystemPrompt = async (params: {
   stickerSetName?: string;
   isAnimated: boolean;
   frameCount?: number;
+  frameTimestamps?: string;
 }) => {
   const { rendered } = await renderMarkdownString(promptTemplate, {
     fallbackEmoji: params.fallbackEmoji,
     stickerSetName: params.stickerSetName,
     isAnimated: params.isAnimated,
     frameCount: params.frameCount,
+    frameTimestamps: params.frameTimestamps,
   }, basePath);
   return rendered;
 };

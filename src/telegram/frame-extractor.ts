@@ -45,6 +45,7 @@ export const deduplicateFrames = (frames: Buffer[]): Buffer[] => {
 export interface FrameExtractionResult {
   frames: Buffer[];
   cacheKey: string;
+  frameTimestamps?: number[];
 }
 
 /** Whether this attachment can have frames extracted. */
@@ -72,14 +73,16 @@ const resizeFrame = (buffer: Buffer): Promise<Buffer> =>
 
 // --- GIF extraction via sharp ---
 
-const extractGifFrames = async (buffer: Buffer, maxFrames: number): Promise<Buffer[]> => {
+const extractGifFrames = async (buffer: Buffer, maxFrames: number): Promise<{ frames: Buffer[]; frameTimestamps?: number[] }> => {
   const meta = await sharp(buffer).metadata();
   const totalFrames = meta.pages ?? 1;
   const indices = pickFrameIndices(totalFrames, maxFrames);
-  return await Promise.all(indices.map(async idx => {
+  const frames = await Promise.all(indices.map(async idx => {
     const raw = await sharp(buffer, { page: idx }).png().toBuffer();
     return await resizeFrame(raw);
   }));
+  // GIF: no reliable FPS source → omit timestamps
+  return { frames };
 };
 
 // --- MP4/WEBM extraction via ffmpeg ---
@@ -109,7 +112,26 @@ const getVideoFrameCount = async (filePath: string): Promise<number> => {
   return isNaN(count) || count <= 0 ? 1 : count;
 };
 
-const extractVideoFrames = async (buffer: Buffer, maxFrames: number): Promise<Buffer[]> => {
+const getVideoFps = async (filePath: string): Promise<number | undefined> => {
+  const ffprobe = await getFfprobePath();
+  try {
+    const { stdout } = await execFileAsync(ffprobe, [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=r_frame_rate',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ]);
+    const parts = stdout.trim().split('/');
+    if (parts.length === 2) {
+      const num = parseInt(parts[0]!, 10);
+      const den = parseInt(parts[1]!, 10);
+      if (!isNaN(num) && !isNaN(den) && den > 0) return num / den;
+    }
+  } catch { /* ignore */ }
+  return undefined;
+};
+
+const extractVideoFrames = async (buffer: Buffer, maxFrames: number): Promise<{ frames: Buffer[]; frameTimestamps?: number[] }> => {
   const ffmpeg = await getFfmpegPath();
   const dir = await mkdtemp(join(tmpdir(), 'cahciua-frames-'));
   const inputPath = join(dir, 'input');
@@ -137,7 +159,10 @@ const extractVideoFrames = async (buffer: Buffer, maxFrames: number): Promise<Bu
         frames.push(await resizeFrame(raw));
       } catch { /* skip missing frames */ }
     }
-    return frames;
+
+    const fps = await getVideoFps(inputPath);
+    const frameTimestamps = fps ? indices.map(i => i / fps) : undefined;
+    return { frames, frameTimestamps };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -145,7 +170,7 @@ const extractVideoFrames = async (buffer: Buffer, maxFrames: number): Promise<Bu
 
 // --- TGS (Lottie) extraction via lottie-frame ---
 
-const extractTgsFrames = async (buffer: Buffer, maxFrames: number): Promise<Buffer[]> => {
+const extractTgsFrames = async (buffer: Buffer, maxFrames: number): Promise<{ frames: Buffer[]; frameTimestamps?: number[] }> => {
   const lottieJson = gunzipSync(buffer);
   const parsed = JSON.parse(lottieJson.toString('utf-8'));
   const inPoint = typeof parsed.ip === 'number' ? parsed.ip : 0;
@@ -153,13 +178,14 @@ const extractTgsFrames = async (buffer: Buffer, maxFrames: number): Promise<Buff
   const totalFrames = Math.max(1, Math.round(outPoint - inPoint));
   const width = typeof parsed.w === 'number' ? parsed.w : 512;
   const height = typeof parsed.h === 'number' ? parsed.h : 512;
+  const fps = typeof parsed.fr === 'number' && parsed.fr > 0 ? parsed.fr : undefined;
 
   const indices = pickFrameIndices(totalFrames, maxFrames);
 
   // lottie-frame is a CJS native addon
   const { exportFrame } = await import('lottie-frame');
 
-  return await Promise.all(indices.map(async frameIdx => {
+  const frames = await Promise.all(indices.map(async frameIdx => {
     // lottie-frame uses 0-based absolute frame indices (not Lottie's ip..op range)
     const png: Buffer = await exportFrame(lottieJson, {
       frame: frameIdx,
@@ -169,6 +195,9 @@ const extractTgsFrames = async (buffer: Buffer, maxFrames: number): Promise<Buff
     });
     return await resizeFrame(png);
   }));
+
+  const frameTimestamps = fps ? indices.map(i => i / fps) : undefined;
+  return { frames, frameTimestamps };
 };
 
 /** Extract equidistant frames from an animation buffer. */
@@ -186,20 +215,20 @@ export const extractFrames = async (
   // which are lost when reconstructing from CanonicalAttachment during backfill.
   const isGzip = buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
 
-  let frames: Buffer[];
+  let result: { frames: Buffer[]; frameTimestamps?: number[] };
   if (isGzip) {
     // TGS (gzipped Lottie JSON)
-    frames = await extractTgsFrames(buffer, maxFrames);
+    result = await extractTgsFrames(buffer, maxFrames);
   } else if (att.mimeType === 'image/gif') {
     // Native GIF (rare — Telegram usually converts to MP4)
-    frames = await extractGifFrames(buffer, maxFrames);
+    result = await extractGifFrames(buffer, maxFrames);
   } else {
     // MP4 (animation/GIF) or WEBM (video sticker)
-    frames = await extractVideoFrames(buffer, maxFrames);
+    result = await extractVideoFrames(buffer, maxFrames);
   }
 
-  if (frames.length === 0)
+  if (result.frames.length === 0)
     throw new Error('No frames extracted from animation');
 
-  return { frames, cacheKey };
+  return { frames: result.frames, cacheKey, frameTimestamps: result.frameTimestamps };
 };

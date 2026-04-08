@@ -153,7 +153,7 @@ export const createTelegramManager = (
           try {
             const buffer = await downloadAttachmentMedia(chatId, messageId, att);
             if (!buffer) return;
-            const { frames, cacheKey } = await extractFrames(buffer, att, animationMaxFrames);
+            const { frames, cacheKey, frameTimestamps } = await extractFrames(buffer, att, animationMaxFrames);
             att.animationHash = cacheKey;
             const packTitle = att.stickerSetName ? await resolvePackTitle(att.stickerSetName) : undefined;
             await animationToText.resolve({
@@ -164,6 +164,7 @@ export const createTelegramManager = (
               emoji: att.emoji,
               stickerSetName: packTitle,
               duration: att.duration,
+              frameTimestamps,
             });
           } catch (err) {
             log.withError(err).warn('Failed to process animation-to-text');

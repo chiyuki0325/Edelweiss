@@ -416,6 +416,8 @@ Optional blocking ingress transform that resolves GIF animations and animated st
 - Frame count sources: GIF → `sharp.metadata().pages`; MP4/WEBM → `ffprobe -show_entries stream=nb_frames`; TGS → Lottie JSON `op - ip`.
 - TGS format auto-detected by gzip magic bytes (`0x1f 0x8b`) — does not rely on attachment metadata flags, which may be absent during backfill from `CanonicalAttachment`.
 - Each frame is resized to max 512px per edge (same as image-to-text) and encoded as PNG.
+- `FrameExtractionResult` includes optional `frameTimestamps` (seconds per selected frame). FPS sources: TGS → `parsed.fr`; Video → ffprobe `r_frame_rate`; GIF → omitted (no reliable source).
+- Content-aware (MSE-based) frame selection was explored and deferred — see `docs/content-aware-frame-selection.md` for findings and rationale.
 - Files >20MB are skipped.
 
 **Processing model**:
@@ -437,7 +439,7 @@ Optional blocking ingress transform that resolves GIF animations and animated st
 **Config** (`animationToText` section in `config.yaml`):
 - `enabled` (boolean, default `false`): whether to block ingress on animation-to-text
 - `model`: model for the animation-to-text workflow (references a key in the `models` registry)
-- `maxFrames` (number, default `5`): maximum equidistant frames to extract from each animation
+- `maxFrames` (number, default `5`): maximum key frames to extract from each animation
 
 ### Custom Emoji To Text
 
