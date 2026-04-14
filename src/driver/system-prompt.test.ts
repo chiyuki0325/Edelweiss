@@ -70,12 +70,29 @@ describe('primary-system.velin.md', () => {
       hasBashTool: true,
       hasWebSearchTool: true,
       hasDownloadFileTool: true,
+      hasReadImageTool: true,
+      hasReadImageFilePathSupport: true,
       hasAttachmentSupport: true,
     });
     expect(rendered).toContain('bash');
     expect(rendered).toContain('web\\_search');
     expect(rendered).toContain('download\\_file');
+    expect(rendered).toContain('read\\_image');
+    expect(rendered).toContain('filesystem (by path)');
+    expect(rendered).toContain('download\\_file');
+    expect(rendered).toContain('read\\_image');
     expect(rendered).not.toContain('only available tool');
+  });
+
+  it('renders file-id-only read_image description when filesystem access is unavailable', async () => {
+    const rendered = await renderSystem({
+      modelName: 'gpt-4o',
+      hasReadImageTool: true,
+      hasReadImageFilePathSupport: false,
+    });
+    expect(rendered).toContain('current conversation (by file-id)');
+    expect(rendered).not.toContain('filesystem (by path)');
+    expect(rendered).toContain('use with the \\`read\\_image\\` tool');
   });
 
   it('shows background task tools and runtime-event format', async () => {
@@ -251,6 +268,12 @@ describe('image-to-text-system.velin.md', () => {
   it('renders with caption', async () => {
     const { rendered } = await renderMarkdownString(imageToTextTemplate, { caption: 'A sunset' }, basePath);
     expect(rendered).toContain('A sunset');
+  });
+
+  it('renders high-detail instructions', async () => {
+    const { rendered } = await renderMarkdownString(imageToTextTemplate, { detail: 'high' }, basePath);
+    expect(rendered).toContain('Transcribe ALL visible text verbatim');
+    expect(rendered).not.toContain('under 100 words');
   });
 });
 

@@ -1,12 +1,14 @@
 import { execFile } from 'node:child_process';
 
+import sharp from 'sharp';
 import type { ToolExecuteResult } from 'xsai';
 
 import type { RuntimeConfig } from '../config/config';
 import type { Attachment } from '../telegram/message/types';
+import type { ResponseInputContent } from './responses-types';
 
 export interface ToolResult {
-  content: unknown;
+  content: string | ResponseInputContent[];
   requiresFollowUp: boolean;
 }
 
@@ -90,7 +92,7 @@ export const createSendMessageTool = (
       };
       const result = await send(text, reply_to, attachments);
       return {
-        content: { ok: true, message_id: result.messageId },
+        content: JSON.stringify({ ok: true, message_id: result.messageId }),
         requiresFollowUp: await_response ?? false,
       };
     },
@@ -143,7 +145,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask?: {
         timeoutSec * 1000,
       );
       return {
-        content: { background_task_id: taskId, message: `Background task started (id: ${taskId}). You will be notified when it completes. Use kill_task to cancel or read_task_output to view results.` },
+        content: JSON.stringify({ background_task_id: taskId, message: `Background task started (id: ${taskId}). You will be notified when it completes. Use kill_task to cancel or read_task_output to view results.` }),
         requiresFollowUp: true,
       };
     }
@@ -166,7 +168,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask?: {
             : (child.exitCode ?? 1)
             : 0;
           resolve({
-            content: { exit_code: exitCode, output, truncated },
+            content: JSON.stringify({ exit_code: exitCode, output, truncated }),
             requiresFollowUp: true,
           });
         },
@@ -207,16 +209,16 @@ export const createWebSearchTool = (tavilyKey: string): CahciuaTool => ({
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       return {
-        content: { error: `Tavily API error: ${resp.status}`, detail: text },
+        content: JSON.stringify({ error: `Tavily API error: ${resp.status}`, detail: text }),
         requiresFollowUp: true,
       };
     }
     const data = await resp.json() as { answer?: string; results?: { title: string; url: string; content: string }[] };
     return {
-      content: {
+      content: JSON.stringify({
         answer: data.answer ?? null,
         results: (data.results ?? []).map(r => ({ title: r.title, url: r.url, snippet: r.content })),
-      },
+      }),
       requiresFollowUp: true,
     };
   },
@@ -224,12 +226,45 @@ export const createWebSearchTool = (tavilyKey: string): CahciuaTool => ({
 
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
-export const createDownloadFileTool = (deps: {
+/** Shared file_id → Buffer logic used by download_file and read_image tools. */
+export const createAttachmentDownloader = (deps: {
   chatId: string;
-  runtime: RuntimeConfig;
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+}): (fileId: string) => Promise<Buffer> =>
+  async (fileId: string): Promise<Buffer> => {
+    const colonIdx = fileId.lastIndexOf(':');
+    if (colonIdx < 0) throw new Error('Invalid file_id format. Expected "messageId:index".');
+
+    const messageId = parseInt(fileId.slice(0, colonIdx), 10);
+    const attachmentIndex = parseInt(fileId.slice(colonIdx + 1), 10);
+    if (isNaN(messageId) || isNaN(attachmentIndex) || attachmentIndex < 0)
+      throw new Error('Invalid file_id: messageId or index is not a valid number.');
+
+    const attachments = deps.loadMessageAttachments(deps.chatId, messageId);
+    if (!attachments || attachments.length === 0)
+      throw new Error(`No attachments found for message ${messageId}.`);
+    if (attachmentIndex >= attachments.length)
+      throw new Error(`Attachment index ${attachmentIndex} out of range (message has ${attachments.length} attachments).`);
+
+    const att = attachments[attachmentIndex]!;
+
+    let buffer: Buffer | undefined;
+    if (att.fileId) {
+      try { buffer = await deps.downloadFile(att.fileId); } catch { /* fall through to userbot */ }
+    }
+    if (!buffer && deps.downloadMessageMedia)
+      buffer = await deps.downloadMessageMedia(deps.chatId, messageId);
+    if (!buffer)
+      throw new Error('Failed to download file from Telegram.');
+
+    return buffer;
+  };
+
+export const createDownloadFileTool = (deps: {
+  downloadAttachment: (fileId: string) => Promise<Buffer>;
+  runtime: RuntimeConfig;
 }): CahciuaTool => ({
   type: 'function',
   function: {
@@ -244,56 +279,23 @@ export const createDownloadFileTool = (deps: {
       required: ['file_id', 'path'],
     },
   },
-  // TODO: introduce async background tasks for large file transfers
   execute: async input => {
     const { file_id, path } = input as { file_id: string; path: string };
 
-    // Parse file_id → messageId:attachmentIndex
-    const colonIdx = file_id.lastIndexOf(':');
-    if (colonIdx < 0) {
-      return { content: { error: 'Invalid file_id format. Expected "messageId:index".' }, requiresFollowUp: true };
-    }
-    const messageId = parseInt(file_id.slice(0, colonIdx), 10);
-    const attachmentIndex = parseInt(file_id.slice(colonIdx + 1), 10);
-    if (isNaN(messageId) || isNaN(attachmentIndex) || attachmentIndex < 0) {
-      return { content: { error: 'Invalid file_id: messageId or index is not a valid number.' }, requiresFollowUp: true };
+    let buffer: Buffer;
+    try {
+      buffer = await deps.downloadAttachment(file_id);
+    } catch (err) {
+      return { content: JSON.stringify({ error: String(err instanceof Error ? err.message : err) }), requiresFollowUp: true };
     }
 
-    // Load attachments from messages table
-    const attachments = deps.loadMessageAttachments(deps.chatId, messageId);
-    if (!attachments || attachments.length === 0) {
-      return { content: { error: `No attachments found for message ${messageId}.` }, requiresFollowUp: true };
-    }
-    if (attachmentIndex >= attachments.length) {
-      return { content: { error: `Attachment index ${attachmentIndex} out of range (message has ${attachments.length} attachments).` }, requiresFollowUp: true };
-    }
-    const att = attachments[attachmentIndex]!;
-
-    // Download media: Bot API (fileId) first, userbot fallback
-    let buffer: Buffer | undefined;
-    if (att.fileId) {
-      try {
-        buffer = await deps.downloadFile(att.fileId);
-      } catch {
-        // Fall through to userbot
-      }
-    }
-    if (!buffer && deps.downloadMessageMedia) {
-      buffer = await deps.downloadMessageMedia(deps.chatId, messageId);
-    }
-    if (!buffer) {
-      return { content: { error: 'Failed to download file from Telegram.' }, requiresFollowUp: true };
-    }
-
-    // Size check
     if (buffer.length > deps.runtime.writeFileSizeLimit) {
       return {
-        content: { error: `File too large: ${buffer.length} bytes exceeds limit of ${deps.runtime.writeFileSizeLimit} bytes.` },
+        content: JSON.stringify({ error: `File too large: ${buffer.length} bytes exceeds limit of ${deps.runtime.writeFileSizeLimit} bytes.` }),
         requiresFollowUp: true,
       };
     }
 
-    // Write file via configured command
     const writeCmd = deps.runtime.writeFile!;
     return await new Promise<ToolExecuteResult>(resolve => {
       const child = execFile(
@@ -303,12 +305,12 @@ export const createDownloadFileTool = (deps: {
         (error, _stdout, stderr) => {
           if (error) {
             resolve({
-              content: { error: `Failed to write file: ${stderr || error.message}` },
+              content: JSON.stringify({ error: `Failed to write file: ${stderr || error.message}` }),
               requiresFollowUp: true,
             });
           } else {
             resolve({
-              content: { ok: true, path, size: buffer!.length },
+              content: JSON.stringify({ ok: true, path, size: buffer!.length }),
               requiresFollowUp: true,
             });
           }
@@ -337,7 +339,7 @@ export const createKillTaskTool = (
   execute: input => {
     const { task_id } = input as { task_id: number };
     const result = kill(task_id);
-    return { content: result, requiresFollowUp: true };
+    return { content: JSON.stringify(result), requiresFollowUp: true };
   },
 });
 
@@ -363,6 +365,96 @@ export const createReadTaskOutputTool = (
   execute: async input => {
     const { task_id, offset, limit } = input as { task_id: number; offset?: number; limit?: number };
     const result = await read(task_id, offset, limit);
-    return { content: result, requiresFollowUp: true };
+    return { content: JSON.stringify(result), requiresFollowUp: true };
+  },
+});
+
+// ── read_image tool ──
+
+const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<{ url: string; resizedBuffer: Buffer }> => {
+  const maxEdge = detail === 'high' ? 1024 : 512;
+  const resized = await sharp(buffer)
+    .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+    .png()
+    .toBuffer();
+  return {
+    url: `data:image/png;base64,${resized.toString('base64')}`,
+    resizedBuffer: resized,
+  };
+};
+
+export const createReadImageTool = (deps: {
+  downloadAttachment: (fileId: string) => Promise<Buffer>;
+  readFile?: (path: string) => Promise<Buffer>;
+  resolveImageToText?: (buffer: Buffer, detail: 'low' | 'high') => Promise<string>;
+}): CahciuaTool => ({
+  type: 'function',
+  function: {
+    name: 'read_image',
+    description: deps.readFile
+      ? 'Read and analyze an image from a chat attachment or the filesystem.'
+      : 'Read and analyze an image from a chat attachment in the current conversation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_id: {
+          type: 'string',
+          description: 'The file-id from an attachment element (format: messageId:index).',
+        },
+        ...(deps.readFile ? {
+          path: {
+            type: 'string',
+            description: 'Filesystem path to an image file.',
+          },
+        } : {}),
+        detail: {
+          type: 'string',
+          enum: ['low', 'high'],
+          description: 'Resolution level. Use "high" to read fine details or text in the image. Default: low.',
+        },
+      },
+    },
+  },
+  execute: async input => {
+    const { file_id, path, detail: rawDetail } = input as { file_id?: string; path?: string; detail?: string };
+    const detail: 'low' | 'high' = rawDetail === 'high' ? 'high' : 'low';
+
+    if (!deps.readFile) {
+      if (!file_id || path)
+        return { content: JSON.stringify({ error: 'This chat only supports read_image by file_id from the current conversation.' }), requiresFollowUp: true };
+    } else if ((!file_id && !path) || (file_id && path)) {
+      return { content: JSON.stringify({ error: 'Provide exactly one of file_id or path.' }), requiresFollowUp: true };
+    }
+
+    // 1. Acquire buffer
+    let buffer: Buffer;
+    try {
+      buffer = file_id
+        ? await deps.downloadAttachment(file_id)
+        : await deps.readFile!(path!);
+    } catch (err) {
+      return { content: JSON.stringify({ error: String(err instanceof Error ? err.message : err) }), requiresFollowUp: true };
+    }
+
+    // 2. Validate image via sharp
+    try {
+      await sharp(buffer).metadata();
+    } catch {
+      return { content: JSON.stringify({ error: 'File is not a valid image.' }), requiresFollowUp: true };
+    }
+
+    // 3. Prepare image
+    const { url, resizedBuffer } = await prepareImage(buffer, detail);
+
+    // 4. Return
+    if (deps.resolveImageToText) {
+      const description = await deps.resolveImageToText(resizedBuffer, detail);
+      return { content: JSON.stringify({ ok: true, description }), requiresFollowUp: true };
+    }
+
+    return {
+      content: [{ type: 'input_image', image_url: url, detail }] as ResponseInputContent[],
+      requiresFollowUp: true,
+    };
   },
 });

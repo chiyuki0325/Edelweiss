@@ -1,7 +1,8 @@
 import type { Message, UserMessage } from 'xsai';
 
-import { responsesOutputToMessages } from './convert';
+import { messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
 import { mergeContext } from './merge';
+import type { ResponseInputContent, ResponseInputItem } from './responses-types';
 import type {
   ChatTurnResponse,
   ContextChunk,
@@ -28,8 +29,16 @@ const CHARS_PER_TOKEN = 2;
 // time, so use a fixed constant matching our thumbnail budget.
 const IMAGE_TOKENS = 100;
 
+const isImagePart = (part: ExtendedMessagePart): boolean =>
+  part.type === 'input_image' || part.type === 'image_url' || (part.type === 'image' && part.source != null);
+
+const placeholderTextPartFor = (parts: ExtendedMessagePart[]): ExtendedMessagePart =>
+  parts.some(part => part.type === 'input_text' || part.type === 'input_image')
+    ? { type: 'input_text', text: '[images omitted]' }
+    : { type: 'text', text: '[images omitted]' };
+
 const estimatePartTokens = (part: ExtendedMessagePart): number => {
-  if (part.type === 'image_url' || (part.type === 'image' && part.source))
+  if (isImagePart(part))
     return IMAGE_TOKENS;
   return Math.ceil((part.text?.length ?? 0) / CHARS_PER_TOKEN);
 };
@@ -260,28 +269,102 @@ const trimStaleNoToolCallTRs = (trs: TurnResponse[]): TurnResponse[] => {
 // Keeps assistant entries (call structure + reasoning) intact.
 // Unlike OpenClaw's context pruning, no head protection needed — Cahciua injects
 // identity via system prompt, not via bootstrap tool calls before first user message.
-const TOOL_RESULT_TRIM_THRESHOLD = 512; // chars — results shorter than this are kept
-const TOOL_RESULT_KEEP_RECENT = 2;      // keep last N TRs' tool results untrimmed
+const TOOL_RESULT_TRIM_THRESHOLD = 512;         // chars — results within this limit are kept
+const TOOL_RESULT_KEEP_RECENT_OVERSIZED = 5;   // keep last N oversized tool results untrimmed
 
 const trimLongResult = (text: string): string =>
   text.length <= TOOL_RESULT_TRIM_THRESHOLD ? text
     : `${text.slice(0, 200)}\n... [trimmed ${text.length} chars] ...\n${text.slice(-200)}`;
 
-const trimToolResults = (trs: TurnResponse[]): TurnResponse[] =>
-  trs.length <= TOOL_RESULT_KEEP_RECENT ? trs
-    : trs.map((tr, i) =>
-        i >= trs.length - TOOL_RESULT_KEEP_RECENT ? tr
-          : tr.provider === 'responses'
-            ? {
-                ...tr,
-                data: tr.data.map(item =>
-                  item.type === 'function_call_output' ? { ...item, output: trimLongResult(item.output) } : item),
-              }
-            : {
-                ...tr,
-                data: tr.data.map(item =>
-                  item.role === 'tool' ? { ...item, content: trimLongResult(item.content) } : item),
-              });
+const joinToolResultText = (content: ResponseInputContent[]): string =>
+  content.flatMap((part): string[] => part.type === 'input_image' ? [] : [part.text]).join('\n');
+
+const toolResultExceedsLimit = (content: string | ResponseInputContent[]): boolean =>
+  typeof content === 'string'
+    ? content.length > TOOL_RESULT_TRIM_THRESHOLD
+    : joinToolResultText(content).length > TOOL_RESULT_TRIM_THRESHOLD
+      || content.some(part => part.type === 'input_image' && part.detail !== 'low');
+
+// Tool result content uses Responses format (input_text/input_image) as canonical.
+// Older oversized results are mechanically trimmed: long text gets head/tail trimming,
+// and non-low-detail images are downgraded to detail=low instead of being dropped.
+// Known limitation: this currently only rewrites the logical `detail` flag.
+// The embedded image buffer / data URL is not downsampled yet, so non-OpenAI
+// models that ignore `detail` still receive the original full-size image.
+const trimToolResultContent = (content: string | ResponseInputContent[]): string | ResponseInputContent[] => {
+  if (typeof content === 'string') return trimLongResult(content);
+
+  const joinedText = joinToolResultText(content);
+  const shouldTrimText = joinedText.length > TOOL_RESULT_TRIM_THRESHOLD;
+  const trimmedText = shouldTrimText ? trimLongResult(joinedText) : null;
+  let emittedTrimmedText = false;
+
+  return content.flatMap((part): ResponseInputContent[] => {
+    if (part.type === 'input_image')
+      return [{ ...part, detail: 'low' }];
+
+    if (!shouldTrimText)
+      return [part];
+
+    if (emittedTrimmedText)
+      return [];
+
+    emittedTrimmedText = true;
+    return [{ ...part, text: trimmedText! }];
+  });
+};
+
+const trimToolResults = (trs: TurnResponse[]): TurnResponse[] => {
+  const trimIndicesByTR = new Map<number, Set<number>>();
+  const oversizedPositions: Array<{ trIndex: number; dataIndex: number }> = [];
+
+  for (let trIndex = 0; trIndex < trs.length; trIndex++) {
+    const tr = trs[trIndex]!;
+    if (tr.provider === 'responses') {
+      for (let dataIndex = 0; dataIndex < tr.data.length; dataIndex++) {
+        const item = tr.data[dataIndex]!;
+        if (item.type === 'function_call_output' && toolResultExceedsLimit(item.output))
+          oversizedPositions.push({ trIndex, dataIndex });
+      }
+      continue;
+    }
+
+    for (let dataIndex = 0; dataIndex < tr.data.length; dataIndex++) {
+      const item = tr.data[dataIndex]!;
+      if (item.role === 'tool' && toolResultExceedsLimit(item.content))
+        oversizedPositions.push({ trIndex, dataIndex });
+    }
+  }
+
+  if (oversizedPositions.length <= TOOL_RESULT_KEEP_RECENT_OVERSIZED) return trs;
+
+  for (const { trIndex, dataIndex } of oversizedPositions.slice(0, oversizedPositions.length - TOOL_RESULT_KEEP_RECENT_OVERSIZED)) {
+    const indices = trimIndicesByTR.get(trIndex) ?? new Set<number>();
+    indices.add(dataIndex);
+    trimIndicesByTR.set(trIndex, indices);
+  }
+
+  return trs.map((tr, trIndex) => {
+    const trimIndices = trimIndicesByTR.get(trIndex);
+    if (!trimIndices) return tr;
+
+    return tr.provider === 'responses'
+      ? {
+          ...tr,
+          data: tr.data.map((item, dataIndex) =>
+            item.type === 'function_call_output' && trimIndices.has(dataIndex)
+              ? { ...item, output: trimToolResultContent(item.output) }
+              : item),
+        }
+      : {
+          ...tr,
+          data: tr.data.map((item, dataIndex) =>
+            item.role === 'tool' && trimIndices.has(dataIndex)
+              ? { ...item, content: trimToolResultContent(item.content) }
+              : item),
+        };
+  });
+};
 
 const TOOL_CALL_ID_ALLOWED_CHARS_RE = /[^A-Za-z0-9_-]/g;
 
@@ -342,15 +425,16 @@ export const sanitizeToolCallIdsForMessagesApi = (messages: Message[]): Message[
 const filterSelfSentSegments = (rc: RenderedContext): RenderedContext =>
   rc.filter(seg => !seg.isSelfSent);
 
-// Drop excess image_url parts from messages (oldest first) to stay within
-// a model's image limit. Mutates the messages array in place.
+// Drop excess image parts from messages (oldest first) to stay within
+// a model's image limit. Supports both internal (input_image) and
+// chat-completions (image_url) message-part formats. Mutates in place.
 export const trimImages = (messages: Message[], maxImages: number): void => {
   // Count total images
   let total = 0;
   for (const msg of messages) {
     const m = asMsg(msg);
     if (Array.isArray(m.content))
-      total += (m.content as ExtendedMessagePart[]).filter(p => p.type === 'image_url').length;
+      total += (m.content as ExtendedMessagePart[]).filter(isImagePart).length;
   }
   if (total <= maxImages) return;
 
@@ -360,23 +444,48 @@ export const trimImages = (messages: Message[], maxImages: number): void => {
     if (toDrop <= 0) break;
     const m = asMsg(msg);
     if (!Array.isArray(m.content)) continue;
-    const before = m.content.length;
+    const beforeParts = m.content as ExtendedMessagePart[];
+    const before = beforeParts.length;
+    const placeholder = placeholderTextPartFor(beforeParts);
     m.content = (m.content as ExtendedMessagePart[]).filter(p => {
-      if (toDrop > 0 && p.type === 'image_url') { toDrop--; return false; }
+      if (toDrop > 0 && isImagePart(p)) { toDrop--; return false; }
       return true;
     });
     // If user message has no content left, push a placeholder
     if (m.content.length === 0 && before > 0)
-      m.content = [{ type: 'text', text: '[images omitted]' }];
+      m.content = [placeholder];
   }
 };
 
-// Convert ContextChunk[] to openai-chat Message[].
-// RC chunks → user messages. TR chunks → converted to openai-chat messages.
+export const cloneMessagesForSend = (messages: Message[]): Message[] =>
+  messages.map(msg => {
+    const m = asMsg(msg);
+    return Array.isArray(m.content)
+      ? { ...msg, content: [...m.content] } as Message
+      : msg;
+  });
+
+export const prepareChatMessagesForSend = (messages: Message[], maxImages?: number): Message[] => {
+  const prepared = sanitizeToolCallIdsForMessagesApi(prepareMessagesForChat(cloneMessagesForSend(messages)));
+  if (maxImages != null)
+    trimImages(prepared, maxImages);
+  return prepared;
+};
+
+export const prepareResponsesInputForSend = (messages: Message[], maxImages?: number): ResponseInputItem[] => {
+  const prepared = cloneMessagesForSend(messages);
+  if (maxImages != null)
+    trimImages(prepared, maxImages);
+  return messagesToResponsesInput(prepared);
+};
+
+// Convert ContextChunk[] to intermediate Message[].
+// RC chunks → user messages (content parts in Responses format).
+// TR chunks → converted to openai-chat-shaped messages (tool result content stays Responses format).
 const contentPieceToMessagePart = (piece: RenderedContentPiece) =>
   piece.type === 'text'
-    ? { type: 'text' as const, text: piece.text }
-    : { type: 'image_url' as const, image_url: { url: piece.url, detail: 'low' as const } };
+    ? { type: 'input_text' as const, text: piece.text }
+    : { type: 'input_image' as const, image_url: piece.url, detail: 'low' as const };
 
 const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
   const messages: Message[] = [];
@@ -389,7 +498,7 @@ const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
       responsesBuffer = [];
     }
     if (pendingParts.length > 0) {
-      messages.push({ role: 'user', content: pendingParts } as UserMessage);
+      messages.push({ role: 'user', content: pendingParts } as unknown as UserMessage);
       pendingParts = [];
     }
   };
@@ -403,7 +512,7 @@ const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
       pendingParts.push(...chunk.content.map(contentPieceToMessagePart));
     } else if (chunk.provider === 'responses') {
       if (pendingParts.length > 0) {
-        messages.push({ role: 'user', content: pendingParts } as UserMessage);
+        messages.push({ role: 'user', content: pendingParts } as unknown as UserMessage);
         pendingParts = [];
       }
       responsesBuffer.push(chunk.data);

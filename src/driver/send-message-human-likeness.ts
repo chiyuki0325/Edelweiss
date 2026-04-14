@@ -97,7 +97,7 @@ const extractChatSendMessageAssessments = (entries: TRDataEntry[]): SendMessageH
   const successfulCallIds = new Set(
     entries
       .filter((entry): entry is Extract<TRDataEntry, { role: 'tool' }> => entry.role === 'tool')
-      .filter(entry => isSuccessfulSendMessageResult(entry.content))
+      .filter(entry => typeof entry.content === 'string' && isSuccessfulSendMessageResult(entry.content))
       .map(entry => entry.tool_call_id),
   );
 
@@ -119,7 +119,7 @@ const extractResponsesSendMessageAssessments = (items: ResponsesTRDataItem[]): S
   const successfulCallIds = new Set(
     items
       .filter((item): item is Extract<ResponsesTRDataItem, { type: 'function_call_output' }> => item.type === 'function_call_output')
-      .filter(item => isSuccessfulSendMessageResult(item.output))
+      .filter(item => typeof item.output === 'string' && isSuccessfulSendMessageResult(item.output))
       .map(item => item.call_id),
   );
 

@@ -77,6 +77,9 @@ const ChatConfigSchema = v.object({
       enabled: v.optional(v.boolean(), false),
       tavilyKey: v.optional(v.string(), ''),
     }), {}),
+    readImage: v.optional(v.object({
+      enabled: v.optional(v.boolean(), false),
+    }), {}),
   }), {}),
 });
 
@@ -127,6 +130,9 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     webSearch: v.partial(v.object({
       enabled: v.boolean(),
       tavilyKey: v.string(),
+    })),
+    readImage: v.partial(v.object({
+      enabled: v.boolean(),
     })),
   })),
 })), {});
@@ -183,6 +189,7 @@ export interface ResolvedChatConfig {
     downloadFile: { enabled: boolean };
     sendMessage: { enableAttachments: boolean };
     webSearch: { enabled: boolean; tavilyKey: string };
+    readImage: { enabled: boolean };
   };
 }
 
@@ -256,6 +263,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       downloadFile: { enabled: merged.tools.downloadFile.enabled },
       sendMessage: { enableAttachments: merged.tools.sendMessage.enableAttachments },
       webSearch: { enabled: merged.tools.webSearch.enabled, tavilyKey: merged.tools.webSearch.tavilyKey },
+      readImage: { enabled: merged.tools.readImage.enabled },
     },
   };
 };

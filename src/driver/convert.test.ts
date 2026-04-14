@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from 'xsai';
 
-import { chatTRToResponsesInput, messagesToResponsesInput, responsesOutputToMessages } from './convert';
+import { chatTRToResponsesInput, messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
 import type { ResponsesTRDataItem, TRDataEntry } from './types';
 
 type AnyMsg = Record<string, any>;
@@ -170,14 +170,14 @@ describe('messagesToResponsesInput', () => {
     ]);
   });
 
-  it('converts user messages with content parts', () => {
+  it('passes through user messages with Responses-format content parts', () => {
     const messages = [{
       role: 'user',
       content: [
-        { type: 'text', text: 'look at this:' },
-        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc', detail: 'low' } },
+        { type: 'input_text', text: 'look at this:' },
+        { type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' },
       ],
-    }] as Message[];
+    }] as unknown as Message[];
     const result = messagesToResponsesInput(messages);
     expect(result).toEqual([{
       type: 'message', role: 'user', content: [
@@ -211,6 +211,56 @@ describe('messagesToResponsesInput', () => {
     const result = messagesToResponsesInput(messages);
     expect(result).toEqual([
       { type: 'function_call_output', call_id: 'tc1', output: 'result' },
+    ]);
+  });
+});
+
+describe('prepareMessagesForChat', () => {
+  it('keeps tool results contiguous when extracting read_image images', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [
+          { id: 'tc1', type: 'function', function: { name: 'read_image', arguments: '{}' } },
+          { id: 'tc2', type: 'function', function: { name: 'send_message', arguments: '{}' } },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tc1',
+        content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'high' }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tc2',
+        content: '{"ok":true}',
+      },
+    ] as unknown as Message[];
+
+    const result = prepareMessagesForChat(messages);
+
+    expect(result).toEqual([
+      {
+        role: 'assistant',
+        tool_calls: [
+          { id: 'tc1', type: 'function', function: { name: 'read_image', arguments: '{}' } },
+          { id: 'tc2', type: 'function', function: { name: 'send_message', arguments: '{}' } },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tc1',
+        content: '[image]',
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tc2',
+        content: '{"ok":true}',
+      },
+      {
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc', detail: 'high' } }],
+      },
     ]);
   });
 });

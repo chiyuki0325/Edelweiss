@@ -1,4 +1,4 @@
-import type { ResponseFunctionCallOutputItem, ResponseOutputItem } from './responses-types';
+import type { ResponseFunctionCallOutputItem, ResponseInputContent, ResponseOutputItem } from './responses-types';
 import type { ResolvedChatConfig } from '../config/config';
 import type { RenderedContentPiece } from '../rendering/types';
 
@@ -45,7 +45,7 @@ export interface TRAssistantEntry {
 export interface TRToolResultEntry {
   role: 'tool';
   tool_call_id: string;
-  content: string;
+  content: string | ResponseInputContent[];
   requiresFollowUp?: boolean;
 }
 

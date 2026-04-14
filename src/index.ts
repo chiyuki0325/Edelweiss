@@ -362,6 +362,7 @@ const main = async () => {
     downloadMessageMedia: telegram.userbot
       ? (chatId, messageId) => telegram.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
+    resolveModel: name => resolveModel(config, name),
     backgroundTask: {
       startTask: (typeName, sessionId, params, intention, timeoutMs) =>
         backgroundTaskManager.startTask(typeName, sessionId, params, intention, timeoutMs),

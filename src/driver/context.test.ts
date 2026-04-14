@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from 'xsai';
 
-import { composeContext, sanitizeToolCallIdsForMessagesApi } from './context';
+import { composeContext, prepareChatMessagesForSend, prepareResponsesInputForSend, sanitizeToolCallIdsForMessagesApi } from './context';
+import type { ResponseInputContent } from './responses-types';
 import type { ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { FeatureFlags } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
@@ -36,11 +37,18 @@ const toolCallMsg = (id: string, name: string, args: string): TRDataEntry => ({
   content: null,
   tool_calls: [{ id, type: 'function', function: { name, arguments: args } }],
 });
-const toolResultMsg = (id: string, content: string): TRDataEntry => ({
+const toolResultMsg = (id: string, content: string | ResponseInputContent[]): TRDataEntry => ({
   role: 'tool',
   tool_call_id: id,
   content,
 });
+
+const longToolResult = (label: string): string => `${label}:${'x'.repeat(1000)}`;
+const imageToolResult = (detail: 'auto' | 'low' | 'high', label: string): ResponseInputContent[] => [{
+  type: 'input_image',
+  image_url: `data:image/png;base64,${label}`,
+  detail,
+}];
 
 const flags = (overrides: Partial<FeatureFlags> = {}): FeatureFlags => ({
   trimStaleNoToolCallTurnResponses: false,
@@ -90,9 +98,8 @@ describe('sanitizeToolCallIdsForMessagesApi', () => {
 });
 
 describe('trimToolResults via composeContext', () => {
-  const longContent = 'x'.repeat(1000);
-
   it('does not trim when feature flag is off', () => {
+    const longContent = longToolResult('full');
     const rc: RenderedContext = [textSeg(100, 'hi')];
     const trs = [
       tr(200, [toolCallMsg('tc1', 'read', '{}'), toolResultMsg('tc1', longContent)]),
@@ -109,83 +116,106 @@ describe('trimToolResults via composeContext', () => {
       expect((tr as any).content).toBe(longContent);
   });
 
-  it('keeps recent TRs untrimmed, trims older ones with long content', () => {
+  it('keeps only the last 5 oversized tool results untrimmed', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
-    const trs = [
-      tr(200, [toolCallMsg('tc1', 'read', '{}'), toolResultMsg('tc1', longContent)]),
-      tr(300, [toolCallMsg('tc2', 'read', '{}'), toolResultMsg('tc2', longContent)]),
-      tr(400, [toolCallMsg('tc3', 'read', '{}'), toolResultMsg('tc3', longContent)]),
-    ];
+    const contents = Array.from({ length: 7 }, (_, i) => longToolResult(`oversized${i + 1}`));
+    const trs = contents.map((content, i) =>
+      tr(200 + i * 100, [toolCallMsg(`tc${i + 1}`, 'read', '{}'), toolResultMsg(`tc${i + 1}`, content)]));
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
     expect(result).not.toBeNull();
 
     const toolResults = result!.messages.filter(m => (m as any).role === 'tool');
-    expect(toolResults).toHaveLength(3);
+    expect(toolResults).toHaveLength(7);
 
-    // First TR's tool result (oldest) should be trimmed
     expect((toolResults[0] as any).content).toContain('[trimmed');
-    expect((toolResults[0] as any).content.length).toBeLessThan(longContent.length);
+    expect((toolResults[0] as any).content.length).toBeLessThan(contents[0]!.length);
+    expect((toolResults[1] as any).content).toContain('[trimmed');
 
-    // Last two TRs' tool results (recent) should be untrimmed
-    expect((toolResults[1] as any).content).toBe(longContent);
-    expect((toolResults[2] as any).content).toBe(longContent);
+    for (let i = 2; i < toolResults.length; i++)
+      expect((toolResults[i] as any).content).toBe(contents[i]);
   });
 
-  it('does not trim short tool results even in old TRs', () => {
+  it('does not count within-limit tool results toward the keep budget', () => {
     const shortContent = 'short result';
     const rc: RenderedContext = [textSeg(100, 'hi')];
+    const oversizedContents = Array.from({ length: 6 }, (_, i) => longToolResult(`oversized${i + 1}`));
     const trs = [
       tr(200, [toolCallMsg('tc1', 'read', '{}'), toolResultMsg('tc1', shortContent)]),
-      tr(300, [toolCallMsg('tc2', 'read', '{}'), toolResultMsg('tc2', longContent)]),
-      tr(400, [toolCallMsg('tc3', 'read', '{}'), toolResultMsg('tc3', longContent)]),
+      ...oversizedContents.map((content, i) =>
+        tr(300 + i * 100, [toolCallMsg(`tc${i + 2}`, 'read', '{}'), toolResultMsg(`tc${i + 2}`, content)])),
     ];
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
     expect(result).not.toBeNull();
 
     const toolResults = result!.messages.filter(m => (m as any).role === 'tool');
-    // First TR's short tool result should be preserved
     expect((toolResults[0] as any).content).toBe(shortContent);
+    expect((toolResults[1] as any).content).toContain('[trimmed');
+    for (let i = 2; i < toolResults.length; i++)
+      expect((toolResults[i] as any).content).toBe(oversizedContents[i - 1]);
   });
 
-  it('preserves assistant entries in trimmed TRs', () => {
+  it('does not count low-detail images and downgrades older oversized images', () => {
+    const rc: RenderedContext = [textSeg(100, 'hi')];
+    const lowDetailImage = imageToolResult('low', 'low0');
+    const oversizedImages = [
+      imageToolResult('auto', 'auto1'),
+      ...Array.from({ length: 5 }, (_, i) => imageToolResult('high', `high${i + 1}`)),
+    ];
+    const trs = [
+      tr(200, [toolCallMsg('tc1', 'read_image', '{}'), toolResultMsg('tc1', lowDetailImage)]),
+      ...oversizedImages.map((content, i) =>
+        tr(300 + i * 100, [toolCallMsg(`tc${i + 2}`, 'read_image', '{}'), toolResultMsg(`tc${i + 2}`, content)])),
+    ];
+
+    const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
+    expect(result).not.toBeNull();
+
+    const toolResults = result!.messages.filter(m => (m as any).role === 'tool');
+    expect((toolResults[0] as any).content).toEqual(lowDetailImage);
+    expect((toolResults[1] as any).content).toEqual([{ ...oversizedImages[0]![0]!, detail: 'low' }]);
+
+    for (let i = 2; i < toolResults.length; i++)
+      expect((toolResults[i] as any).content).toEqual(oversizedImages[i - 1]);
+  });
+
+  it('preserves assistant entries when trimming older oversized tool results', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
     const trs = [
       tr(200, [
         toolCallMsg('tc1', 'read', '{"path":"/etc"}'),
-        toolResultMsg('tc1', longContent),
+        toolResultMsg('tc1', longToolResult('oldest')),
         assistantMsg('I read the file'),
       ]),
-      tr(300, [assistantMsg('reply2')]),
-      tr(400, [assistantMsg('reply3')]),
+      ...Array.from({ length: 5 }, (_, i) =>
+        tr(300 + i * 100, [
+          toolCallMsg(`tc${i + 2}`, 'read', '{}'),
+          toolResultMsg(`tc${i + 2}`, longToolResult(`recent${i + 1}`)),
+        ])),
     ];
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
     expect(result).not.toBeNull();
 
-    // The assistant entries should be preserved (4: tool_call assistant + final assistant from TR1, plus 2 from TR2/TR3)
     const assistants = result!.messages.filter(m => (m as any).role === 'assistant');
-    expect(assistants).toHaveLength(4);
-    expect((assistants[0] as any).tool_calls).toBeDefined();
-    expect((assistants[1] as any).content).toBe('I read the file');
-    expect((assistants[2] as any).content).toBe('reply2');
+    const toolResults = result!.messages.filter(m => (m as any).role === 'tool');
+    expect((toolResults[0] as any).content).toContain('[trimmed');
+    expect(assistants.some(m => (m as any).content === 'I read the file')).toBe(true);
   });
 
-  it('does nothing when only KEEP_RECENT TRs exist', () => {
+  it('does nothing when there are only 5 oversized tool results', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
-    const trs = [
-      tr(200, [toolCallMsg('tc1', 'read', '{}'), toolResultMsg('tc1', longContent)]),
-      tr(300, [toolCallMsg('tc2', 'read', '{}'), toolResultMsg('tc2', longContent)]),
-    ];
+    const contents = Array.from({ length: 5 }, (_, i) => longToolResult(`oversized${i + 1}`));
+    const trs = contents.map((content, i) =>
+      tr(200 + i * 100, [toolCallMsg(`tc${i + 1}`, 'read', '{}'), toolResultMsg(`tc${i + 1}`, content)]));
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
     expect(result).not.toBeNull();
 
     const toolResults = result!.messages.filter(m => (m as any).role === 'tool');
-    // Both should be untrimmed (only 2 TRs = KEEP_RECENT)
-    for (const tr of toolResults)
-      expect((tr as any).content).toBe(longContent);
+    for (let i = 0; i < toolResults.length; i++)
+      expect((toolResults[i] as any).content).toBe(contents[i]);
   });
 
   it('trimmed content preserves head and tail', () => {
@@ -193,8 +223,8 @@ describe('trimToolResults via composeContext', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
     const trs = [
       tr(200, [toolCallMsg('tc1', 'read', '{}'), toolResultMsg('tc1', content)]),
-      tr(300, [assistantMsg('r2')]),
-      tr(400, [assistantMsg('r3')]),
+      ...Array.from({ length: 5 }, (_, i) =>
+        tr(300 + i * 100, [toolCallMsg(`tc${i + 2}`, 'read', '{}'), toolResultMsg(`tc${i + 2}`, longToolResult(`recent${i + 1}`))])),
     ];
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
@@ -300,25 +330,24 @@ describe('composeContext with responses provider TRs', () => {
     expect(assistants.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('trimToolResults trims function_call_output in responses TRs', () => {
-    const longOutput = 'x'.repeat(1000);
+  it('trimToolResults keeps only the last 5 oversized function_call_output items in responses TRs', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
-    const trs = [
-      responsesTR(200, [
-        { type: 'function_call', call_id: 'fc1', name: 'fn', arguments: '{}', status: 'completed' },
-        { type: 'function_call_output', call_id: 'fc1', output: longOutput },
-      ]),
-      responsesTR(300, [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'r2' }] }]),
-      responsesTR(400, [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'r3' }] }]),
-    ];
+    const outputs = Array.from({ length: 6 }, (_, i) => longToolResult(`responses${i + 1}`));
+    const trs = outputs.map((output, i) =>
+      responsesTR(200 + i * 100, [
+        { type: 'function_call', call_id: `fc${i + 1}`, name: 'fn', arguments: '{}', status: 'completed' },
+        { type: 'function_call_output', call_id: `fc${i + 1}`, output },
+      ]));
 
     const result = composeContext(rc, trs, 100000, undefined, flags({ trimToolResults: true }));
     expect(result).not.toBeNull();
 
     const toolMsgs = result!.messages.filter(m => (m as AnyMsg).role === 'tool');
-    expect(toolMsgs).toHaveLength(1);
-    // Oldest TR's tool result should be trimmed
+    expect(toolMsgs).toHaveLength(6);
     expect((toolMsgs[0] as AnyMsg).content).toContain('[trimmed');
+
+    for (let i = 1; i < toolMsgs.length; i++)
+      expect((toolMsgs[i] as AnyMsg).content).toBe(outputs[i]);
   });
 
   it('handles mixed openai-chat and responses TRs', () => {
@@ -337,5 +366,54 @@ describe('composeContext with responses provider TRs', () => {
     expect(assistants).toHaveLength(2);
     expect((assistants[0] as AnyMsg).content).toBe('from chat');
     expect((assistants[1] as AnyMsg).content).toBe('from responses');
+  });
+});
+
+describe('send-boundary preparation helpers', () => {
+  it('prepareChatMessagesForSend converts internal user content parts to chat format', () => {
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'look at this:' },
+        { type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' },
+      ],
+    }] as unknown as Message[];
+
+    const prepared = prepareChatMessagesForSend(messages);
+    expect(prepared).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this:' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc', detail: 'low' } },
+      ],
+    }]);
+  });
+
+  it('prepareChatMessagesForSend trims images after tool-result image extraction', () => {
+    const messages = [{
+      role: 'tool',
+      tool_call_id: 'tc1',
+      content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' }],
+    }] as unknown as Message[];
+
+    const prepared = prepareChatMessagesForSend(messages, 0);
+    expect(prepared.some(msg => Array.isArray((msg as AnyMsg).content)
+      && (msg as AnyMsg).content.some((part: AnyMsg) => part.type === 'image_url'))).toBe(false);
+    expect(prepared).toContainEqual({ role: 'tool', tool_call_id: 'tc1', content: '[image]' });
+    expect(prepared).toContainEqual({ role: 'user', content: [{ type: 'text', text: '[images omitted]' }] });
+  });
+
+  it('prepareResponsesInputForSend trims images at the final send boundary', () => {
+    const messages = [{
+      role: 'user',
+      content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' }],
+    }] as unknown as Message[];
+
+    const prepared = prepareResponsesInputForSend(messages, 0);
+    expect(prepared).toEqual([{
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '[images omitted]' }],
+    }]);
   });
 });

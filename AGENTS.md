@@ -32,7 +32,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Runtime**: Node.js (>=22), TypeScript, tsx (dev), tsdown (build).
 - **Telegram Bot API**: grammY — primary message handling, sending replies, commands.
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
-- **LLM**: Two API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`) and OpenAI Responses API (via direct `fetch` with SSE streaming). Context composition always outputs openai-chat format as lingua franca; conversion to responses format happens at the runner layer. SSE streaming helpers in `src/driver/streaming.ts` (chat) and `src/driver/streaming-responses.ts` (responses) parse chunks and log deltas in real time.
+- **LLM**: Two API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`) and OpenAI Responses API (via direct `fetch` with SSE streaming). `composeContext()` builds an intermediate `Message[]`: user content parts use Responses-style `input_text` / `input_image`, while assistant/tool entries stay TR-shaped. Final conversion to provider wire format happens only at the last send boundary (`prepareChatMessagesForSend` / `prepareResponsesInputForSend`) so probe, compaction, and step loops share the same normalization and image-limit enforcement. SSE streaming helpers in `src/driver/streaming.ts` (chat) and `src/driver/streaming-responses.ts` (responses) parse chunks and log deltas in real time.
 - **Image processing**: sharp — thumbnails, GIF frame extraction, image resizing.
 - **Animation processing**: ffmpeg-static + ffprobe-static (bundled binaries via npm) — MP4/WEBM frame extraction; lottie-frame (native rlottie + libpng addon) — TGS/Lottie frame rendering. System deps: `libpng-dev`, `librlottie-dev`.
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
@@ -74,7 +74,7 @@ src/
 │   ├── context.test.ts     # Context composition tests (openai-chat + responses provider branches)
 │   ├── merge.ts            # mergeContext(RC, TRs) → ContextChunk[] — timestamp-ordered interleave
 │   ├── merge.test.ts       # Merge logic tests
-│   ├── convert.ts          # Format conversion: openai-chat ↔ responses (chatTRToResponsesInput, responsesOutputToMessages, messagesToResponsesInput, xsaiToolToResponsesTool)
+│   ├── convert.ts          # Format conversion + chat-completions send prep helpers (openai-chat ↔ responses, tool-result image extraction)
 │   ├── convert.test.ts     # Conversion + round-trip fidelity tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
 │   ├── responses-types.ts  # OpenAI Responses API type definitions (request/response/stream events)
@@ -86,7 +86,8 @@ src/
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages) used by late-binding
 │   ├── system-prompt.test.ts # System prompt tests
-│   ├── tools.ts            # send_message tool definition (xsai Tool)
+│   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, background-task helpers
+│   ├── tools.test.ts       # Tool capability tests (read_image mode gating, etc.)
 │   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
@@ -285,6 +286,17 @@ User content in the rendered context is fenced with XML structure. Identity info
 - **Planned**: Richer dynamic content (memory recall, cross-session awareness) should continue to be injected by the Driver through a more structured late-binding mechanism.
 - Compaction creates epoch boundaries — see [Context Compaction](#context-compaction) below.
 
+### Final Send Preparation
+
+Before any actual provider request is sent, the Driver applies a final request-local normalization step:
+- OpenAI Chat Completions path: `prepareChatMessagesForSend()` converts internal `input_text` / `input_image` parts into chat-completions `text` / `image_url` parts and extracts tool-result images into follow-up user messages.
+- Responses path: `prepareResponsesInputForSend()` converts the same intermediate `Message[]` into Responses API input items.
+- Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps, probes, or compaction calls.
+
+`read_image` supports two runtime modes:
+- Without `runtime.readFile`: attachment-only mode. The tool can read images already present in chat context via `file-id`.
+- With `runtime.readFile`: attachment + filesystem mode. The tool also accepts a local `path`.
+
 ### isSelfSent Pipeline
 
 Bot's own sent messages are marked `isSelfSent: true` at creation time (in the synthetic event bypass in `src/index.ts`). This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
@@ -297,7 +309,7 @@ Feature flags for experimental optimizations. Controlled via `config.yaml` under
 |------|------------|--------|
 | `trimStaleNoToolCallTurnResponses` | `features.trimStaleNoToolCallTurnResponses` | Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge |
 | `trimSelfMessagesCoveredBySendToolCalls` | `features.trimSelfMessagesCoveredBySendToolCalls` | Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results) |
-| `trimToolResults` | `features.trimToolResults` | Distance-based mechanical trimming of `TRToolResultEntry.content` in older TRs (keep last 2 untrimmed, trim results >512 chars in older ones). Keeps `TRAssistantEntry` (call structure + reasoning) intact |
+| `trimToolResults` | `features.trimToolResults` | Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with `detail !== 'low'`. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded. Known limitation: image downgrade currently rewrites only the `detail` flag, not the embedded image buffer, so non-OpenAI models that ignore `detail` still receive the original full-size image. Keeps `TRAssistantEntry` (call structure + reasoning) intact |
 
 Feature flags must not affect correctness — only context efficiency. Add new flags to the `features` section in `ConfigSchema` in `src/config/config.ts` and this table.
 

@@ -4,8 +4,9 @@ import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
 import { DUMP_DIR, ensureDumpDir } from './constants';
-import { messagesToResponsesInput, xsaiToolToResponsesTool } from './convert';
-import type { ResponseFunctionCallOutputItem, ResponseInputItem, ResponseOutputFunctionCall, ResponseOutputItem } from './responses-types';
+import { prepareChatMessagesForSend, prepareResponsesInputForSend } from './context';
+import { responsesOutputToMessages, xsaiToolToResponsesTool } from './convert';
+import type { ResponseFunctionCallOutputItem, ResponseInputContent, ResponseInputItem, ResponseOutputFunctionCall, ResponseOutputItem } from './responses-types';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
 import type { CahciuaTool } from './tools';
@@ -28,30 +29,31 @@ interface StepLoopParams {
   system: string;
   tools: CahciuaTool[];
   maxSteps: number;
+  maxImagesAllowed?: number;
   onStepComplete: (stepData: TRDataEntry[] | ResponsesTRDataItem[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
   checkInterrupt: () => boolean;
   log: Logger;
 }
 
-// Execute a tool call and return { id, output, requiresFollowUp }.
+// Execute a tool call and return { id, content, requiresFollowUp }.
 // Shared by both openai-chat and responses step loops.
 const executeToolCall = async (
   id: string, name: string, args: string,
   tools: CahciuaTool[], log: Logger,
-): Promise<{ id: string; output: string; requiresFollowUp: boolean }> => {
+): Promise<{ id: string; content: string | ResponseInputContent[]; requiresFollowUp: boolean }> => {
   const tool = tools.find(t => t.function.name === name);
   try {
     const parsed = JSON.parse(args);
     const rawResult = tool
       ? await tool.execute(parsed, { toolCallId: id })
-      : { error: `Unknown tool: ${name}` };
+      : { content: JSON.stringify({ error: `Unknown tool: ${name}` }), requiresFollowUp: true };
     const { content, requiresFollowUp } = isToolResult(rawResult)
       ? rawResult
-      : { content: rawResult, requiresFollowUp: true };
-    return { id, output: typeof content === 'string' ? content : JSON.stringify(content), requiresFollowUp };
+      : { content: JSON.stringify(rawResult), requiresFollowUp: true };
+    return { id, content, requiresFollowUp };
   } catch (err) {
     log.withError(err).error(`Tool ${name} failed`);
-    return { id, output: JSON.stringify({ error: String(err) }), requiresFollowUp: true };
+    return { id, content: JSON.stringify({ error: String(err) }), requiresFollowUp: true };
   }
 };
 
@@ -68,15 +70,17 @@ export const createRunner = (config: RunnerConfig) => {
     let currentMessages = params.messages;
 
     for (let step = 1; step <= params.maxSteps; step++) {
+      const messagesToSend = prepareChatMessagesForSend(currentMessages, params.maxImagesAllowed);
+
       writeFileSync(`${DUMP_DIR}/${params.chatId}.request.json`, JSON.stringify({
-        model: config.model, system: params.system, messages: currentMessages,
+        model: config.model, system: params.system, messages: messagesToSend,
         tools: params.tools.map(t => ({ type: t.type, function: t.function })),
       }, null, 2));
 
       const stepRequestedAt = Date.now();
       const response = await streamingChat({
         baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
-        messages: currentMessages, system: params.system, tools: params.tools,
+        messages: messagesToSend, system: params.system, tools: params.tools,
         log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
       });
 
@@ -95,7 +99,7 @@ export const createRunner = (config: RunnerConfig) => {
       for (const tc of toolCalls) {
         const result = await executeToolCall(tc.id, tc.function.name, tc.function.arguments, params.tools, params.log);
         anyRequiresFollowUp ||= result.requiresFollowUp;
-        stepData.push({ role: 'tool', tool_call_id: tc.id, content: result.output, requiresFollowUp: result.requiresFollowUp } as TRToolResultEntry);
+        stepData.push({ role: 'tool', tool_call_id: tc.id, content: result.content, requiresFollowUp: result.requiresFollowUp } as TRToolResultEntry);
       }
 
       params.log.withFields({
@@ -120,10 +124,12 @@ export const createRunner = (config: RunnerConfig) => {
   };
 
   const runStepLoopResponses = async (params: StepLoopParams): Promise<void> => {
-    let currentInput: (ResponseInputItem | ResponseOutputItem | ResponseFunctionCallOutputItem)[] = messagesToResponsesInput(params.messages);
+    let currentMessages = params.messages;
     const responsesTools = params.tools.map(xsaiToolToResponsesTool);
 
     for (let step = 1; step <= params.maxSteps; step++) {
+      const currentInput: (ResponseInputItem | ResponseOutputItem | ResponseFunctionCallOutputItem)[] = prepareResponsesInputForSend(currentMessages, params.maxImagesAllowed);
+
       writeFileSync(`${DUMP_DIR}/${params.chatId}.request.json`, JSON.stringify({
         model: config.model, instructions: params.system, input: currentInput, tools: responsesTools,
       }, null, 2));
@@ -149,7 +155,12 @@ export const createRunner = (config: RunnerConfig) => {
       for (const fc of functionCalls) {
         const result = await executeToolCall(fc.call_id, fc.name, fc.arguments, params.tools, params.log);
         anyRequiresFollowUp ||= result.requiresFollowUp;
-        callOutputs.push({ type: 'function_call_output', call_id: fc.call_id, output: result.output, requiresFollowUp: result.requiresFollowUp });
+        callOutputs.push({
+          type: 'function_call_output',
+          call_id: fc.call_id,
+          output: result.content,
+          requiresFollowUp: result.requiresFollowUp,
+        });
       }
       stepData.push(...callOutputs);
 
@@ -170,7 +181,7 @@ export const createRunner = (config: RunnerConfig) => {
         break;
       }
 
-      currentInput = [...currentInput, ...response.output, ...callOutputs];
+      currentMessages = [...currentMessages, ...responsesOutputToMessages(stepData)] as Message[];
     }
   };
 

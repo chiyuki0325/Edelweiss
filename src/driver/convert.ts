@@ -23,6 +23,88 @@ import type {
 } from './responses-types';
 import type { ExtendedMessage, ExtendedMessagePart, ResponsesTRDataItem, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
 
+// ── Content parts conversion: Chat ↔ Responses ──
+//
+// Driver intermediate messages carry user/tool image parts in Responses format
+// (`input_text` / `input_image`). Chat Completions uses `text` / `image_url`.
+
+export const chatPartsToResponsesParts = (parts: ExtendedMessagePart[]): ResponseInputContent[] =>
+  parts.flatMap((p): ResponseInputContent[] =>
+    p.type === 'image_url' && p.image_url
+      ? [{ type: 'input_image', image_url: p.image_url.url, detail: (p.image_url.detail ?? 'auto') as 'auto' | 'low' | 'high' }]
+      : p.type === 'text' && typeof p.text === 'string'
+        ? [{ type: 'input_text', text: p.text }]
+        : []);
+
+export const responsesPartsToChatParts = (parts: ResponseInputContent[]): ExtendedMessagePart[] =>
+  parts.map(p =>
+    p.type === 'input_image'
+      ? { type: 'image_url', image_url: { url: p.image_url, detail: p.detail ?? 'auto' } } as ExtendedMessagePart
+      : { type: 'text', text: p.text } as ExtendedMessagePart);
+
+// ── Prepare intermediate messages for Chat Completions API ──
+// Intermediate messages use Responses format (input_image/input_text) for content parts.
+// Chat Completions uses image_url/text format. Additionally, tool results may not
+// support images, so images are extracted into separate user messages.
+
+export const prepareMessagesForChat = (messages: Message[]): Message[] => {
+  const result: Message[] = [];
+  let pendingToolImageMessage: Message | null = null;
+
+  const flushPendingToolImages = () => {
+    if (!pendingToolImageMessage) return;
+    result.push(pendingToolImageMessage);
+    pendingToolImageMessage = null;
+  };
+
+  for (const msg of messages) {
+    const m = msg as ExtendedMessage;
+    if (m.role === 'tool' && Array.isArray(m.content)) {
+      // Tool results: extract images into separate user messages
+      const parts = m.content as ResponseInputContent[];
+      const textParts = parts.filter(p => p.type !== 'input_image');
+      const imageParts = parts.filter((p): p is import('./responses-types').ResponseInputImage => p.type === 'input_image');
+
+      const textContent = textParts.map(p => (p as import('./responses-types').ResponseInputText).text).join('\n');
+      result.push({ ...msg, content: textContent || '[image]' } as Message);
+
+      if (imageParts.length > 0) {
+        const imageContent = imageParts.map(p => ({
+          type: 'image_url' as const,
+          image_url: { url: p.image_url, detail: p.detail ?? 'auto' },
+        }));
+
+        if (pendingToolImageMessage) {
+          const content = pendingToolImageMessage.content as ExtendedMessagePart[];
+          content.push(...imageContent);
+        } else {
+          pendingToolImageMessage = {
+            role: 'user',
+            content: imageContent,
+          } as Message;
+        }
+      }
+    } else if (m.role === 'tool') {
+      result.push(msg);
+    } else if (Array.isArray(m.content)) {
+      flushPendingToolImages();
+
+      // User/other messages: convert input_image → image_url, input_text → text
+      result.push({
+        ...msg,
+        content: responsesPartsToChatParts(m.content as ResponseInputContent[]),
+      } as Message);
+    } else {
+      flushPendingToolImages();
+      result.push(msg);
+    }
+  }
+
+  flushPendingToolImages();
+
+  return result;
+};
+
 // ── Shared assistant → Responses input items ──
 // Extracts reasoning, message content, and tool_calls from an openai-chat-shaped
 // assistant entry into Responses input items. Used by both chatTRToResponsesInput
@@ -61,6 +143,7 @@ const assistantToResponsesItems = (
 
 // ── openai-chat TR data → Responses API input items ──
 // Used when replaying openai-chat TRs to a Responses API model.
+// Tool result content is already in Responses format (canonical), so pass through directly.
 export const chatTRToResponsesInput = (entries: TRDataEntry[]): ResponseInputItem[] => {
   const items: ResponseInputItem[] = [];
   for (const entry of entries)
@@ -124,9 +207,9 @@ export const responsesOutputToMessages = (items: ResponsesTRDataItem[]): Message
   return messages;
 };
 
-// ── openai-chat Message[] → Responses API input items ──
-// Used by runner to convert composed context (always openai-chat format)
-// into Responses API input before sending.
+// ── Intermediate Message[] → Responses API input items ──
+// Intermediate messages use Responses format for content parts (input_image/input_text).
+// User message content arrays are already ResponseInputContent[], so pass through directly.
 export const messagesToResponsesInput = (messages: Message[]): ResponseInputItem[] => {
   const items: ResponseInputItem[] = [];
 
@@ -136,17 +219,17 @@ export const messagesToResponsesInput = (messages: Message[]): ResponseInputItem
     if (m.role === 'user') {
       if (typeof m.content === 'string') {
         items.push({ type: 'message', role: 'user', content: m.content } as ResponseInputMessage);
-      } else if (Array.isArray(m.content)) {
-        const content = (m.content as ExtendedMessagePart[]).flatMap((part): ResponseInputContent[] =>
-          part.type === 'text' && typeof part.text === 'string' ? [{ type: 'input_text', text: part.text }]
-            : part.type === 'image_url' && part.image_url ? [{ type: 'input_image', image_url: part.image_url.url, detail: (part.image_url.detail ?? 'auto') as 'auto' | 'low' | 'high' }]
-              : []);
-        if (content.length > 0) items.push({ type: 'message', role: 'user', content } as ResponseInputMessage);
+      } else if (Array.isArray(m.content) && m.content.length > 0) {
+        items.push({ type: 'message', role: 'user', content: m.content as ResponseInputContent[] } as ResponseInputMessage);
       }
     } else if (m.role === 'assistant') {
       assistantToResponsesItems(m, items);
     } else if (m.role === 'tool') {
-      items.push({ type: 'function_call_output', call_id: m.tool_call_id, output: m.content } as ResponseFunctionCallOutputItem);
+      items.push({
+        type: 'function_call_output',
+        call_id: m.tool_call_id,
+        output: m.content,
+      } as ResponseFunctionCallOutputItem);
     }
   }
 

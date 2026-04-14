@@ -17,6 +17,8 @@ const props = defineProps({
   hasBashTool: { type: Boolean, default: false },
   hasWebSearchTool: { type: Boolean, default: false },
   hasDownloadFileTool: { type: Boolean, default: false },
+  hasReadImageTool: { type: Boolean, default: false },
+  hasReadImageFilePathSupport: { type: Boolean, default: false },
   hasAttachmentSupport: { type: Boolean, default: false },
   hasBackgroundTasks: { type: Boolean, default: false },
 })
@@ -26,7 +28,7 @@ const maxContextLoadTimeHours = computed(() =>
 )
 
 const hasExtraTools = computed(() =>
-  props.hasBashTool || props.hasWebSearchTool || props.hasDownloadFileTool || props.hasBackgroundTasks
+  props.hasBashTool || props.hasWebSearchTool || props.hasDownloadFileTool || props.hasReadImageTool || props.hasBackgroundTasks
 )
 
 const toolList = computed(() => {
@@ -37,11 +39,28 @@ const toolList = computed(() => {
   if (props.hasBashTool) lines.push('`bash` — Execute a shell command. Output (stdout+stderr) is truncated to 4 KB. For large outputs, redirect to a file and read specific ranges.')
   if (props.hasWebSearchTool) lines.push('`web_search` — Search the web. Returns an answer and up to 5 results.')
   if (props.hasDownloadFileTool) lines.push('`download_file` — Download a file attachment from the chat to a local path. Use the `file-id` attribute from attachment elements.')
+  if (props.hasReadImageTool) {
+    lines.push(
+      props.hasReadImageFilePathSupport
+        ? '`read_image` — Read and analyze an image from a chat attachment (by file-id) or the filesystem (by path). Set detail to "high" for fine details or text.'
+        : '`read_image` — Read and analyze an image from a chat attachment in the current conversation (by file-id). Set detail to "high" for fine details or text.'
+    )
+  }
   if (props.hasBackgroundTasks) {
     lines.push('`kill_task` — Kill a running background task by its ID.')
     lines.push('`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).')
   }
   return 'Your available tools are:\n\n' + lines.map(l => '- ' + l).join('\n')
+})
+
+const attachmentToolLine = computed(() => {
+  if (props.hasDownloadFileTool && props.hasReadImageTool)
+    return 'Attachments appear within messages and include a `file-id` attribute for use with the `download_file` and `read_image` tools:'
+  if (props.hasReadImageTool)
+    return 'Attachments appear within messages and include a `file-id` attribute for use with the `read_image` tool:'
+  if (props.hasDownloadFileTool)
+    return 'Attachments appear within messages and include a `file-id` attribute for use with the `download_file` tool:'
+  return 'Attachments appear within messages and include a `file-id` attribute:'
 })
 </script>
 
@@ -126,7 +145,7 @@ Sticker attachments with resolved descriptions appear as:
 <sticker type="sticker" pack="StickerPackName" file-id="123:0">a cartoon cat dancing happily</sticker>
 ```
 
-Attachments appear within messages and include a `file-id` attribute for use with the `download_file` tool:
+{{ attachmentToolLine }}
 
 ```xml
 <attachment type="photo" size="1920x1080" file-id="123:0"/>
@@ -185,7 +204,7 @@ Multiple attachments in a single `send_message` call are sent as a **media group
 
 You can — and should — make **multiple tool calls in a single response** whenever possible. Independent tool calls must be issued **in parallel**, not sequentially. Maximize parallelism: if two or more tool calls do not depend on each other's results, always fire them together in one response.
 
-You can call `send_message` multiple times in parallel to send separate messages — just like how humans naturally split their thoughts across multiple messages. This is natural and encouraged. When calling multiple `send_message` in parallel, you do **not** need to set `await_response: true` on each one. If you are also calling other tools (such as `bash`, `web_search`, `download_file`) in the same response alongside `send_message`, those other tool calls implicitly keep the conversation going — no need for `await_response`. Be careful not to split messages excessively to avoid flooding the chat.
+You can call `send_message` multiple times in parallel to send separate messages — just like how humans naturally split their thoughts across multiple messages. This is natural and encouraged. When calling multiple `send_message` in parallel, you do **not** need to set `await_response: true` on each one. If you are also calling other tools (such as `bash`, `web_search`, `download_file`, `read_image`) in the same response alongside `send_message`, those other tool calls implicitly keep the conversation going — no need for `await_response`. Be careful not to split messages excessively to avoid flooding the chat.
 
 When a task requires multiple steps (e.g., search the web then report findings, or run a command then share the output), **chain your tool calls across consecutive turns**. Set `await_response: true` on `send_message` if you need to continue acting after sending a message. You are free to call tools as many times as needed — there is no round limit.
 

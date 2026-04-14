@@ -3,19 +3,21 @@ import { computed, effect, signal } from 'alien-signals';
 import type { Message } from 'xsai';
 
 import { runCompaction } from './compaction';
-import { composeContext, findWorkingWindowCursor, latestExternalEventMs, trimImages, wasToolLoopInterrupted } from './context';
-import { messagesToResponsesInput, xsaiToolToResponsesTool } from './convert';
+import { cloneMessagesForSend, composeContext, findWorkingWindowCursor, latestExternalEventMs, prepareChatMessagesForSend, prepareResponsesInputForSend, wasToolLoopInterrupted } from './context';
+import { xsaiToolToResponsesTool } from './convert';
 import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
-import { createBashTool, createDownloadFileTool, createKillTaskTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
-import type { CompactionSessionMeta, DriverConfig, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
+import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
+import { renderImageToTextSystemPrompt } from '../telegram/image-to-text-prompt';
+import { callDescriptionLlm } from '../telegram/llm-description';
 import type { Attachment } from '../telegram/message/types';
 
 /** Format current time in local timezone as ISO 8601 with offset (e.g. 2025-03-13T22:30:00+08:00). */
@@ -62,6 +64,7 @@ export const createDriver = (config: DriverConfig, deps: {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  resolveModel: (name: string) => LlmEndpoint;
   backgroundTask?: {
     startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
     killTask: (taskId: number) => { ok: boolean; error?: string };
@@ -196,8 +199,17 @@ export const createDriver = (config: DriverConfig, deps: {
             const hasBashTool = chatConfig.tools.bash.enabled;
             const hasWebSearchTool = chatConfig.tools.webSearch.enabled && !!chatConfig.tools.webSearch.tavilyKey;
             const hasDownloadFileTool = chatConfig.tools.downloadFile.enabled && !!deps.runtimeConfig.writeFile;
+            const hasReadImageTool = chatConfig.tools.readImage.enabled;
+            const hasReadImageFilePathSupport = !!deps.runtimeConfig.readFile;
             const hasAttachmentSupport = chatConfig.tools.sendMessage.enableAttachments;
             const hasBackgroundTasks = hasBashTool && !!deps.backgroundTask;
+
+            const downloadAttachment = createAttachmentDownloader({
+              chatId,
+              loadMessageAttachments: deps.loadMessageAttachments,
+              downloadFile: deps.downloadFile,
+              downloadMessageMedia: deps.downloadMessageMedia,
+            });
 
             const tools: CahciuaTool[] = [sendMessageTool];
             if (hasBashTool) tools.push(createBashTool(deps.runtimeConfig, deps.backgroundTask ? {
@@ -207,12 +219,54 @@ export const createDriver = (config: DriverConfig, deps: {
             } : undefined));
             if (hasWebSearchTool) tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
             if (hasDownloadFileTool) tools.push(createDownloadFileTool({
-              chatId,
+              downloadAttachment,
               runtime: deps.runtimeConfig,
-              loadMessageAttachments: deps.loadMessageAttachments,
-              downloadFile: deps.downloadFile,
-              downloadMessageMedia: deps.downloadMessageMedia,
             }));
+            if (hasReadImageTool) {
+              const readFileCmd = deps.runtimeConfig.readFile;
+              const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
+                ? async (buffer: Buffer, detail: 'low' | 'high') => {
+                    const maxEdge = detail === 'high' ? 1024 : 512;
+                    const { default: sharp } = await import('sharp');
+                    const resized = await sharp(buffer)
+                      .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+                      .png()
+                      .toBuffer();
+                    const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
+                    const system = await renderImageToTextSystemPrompt({ caption: '', detail });
+                    const model = deps.resolveModel(chatConfig.imageToText.model!);
+                    const result = await callDescriptionLlm({
+                      model, system,
+                      userText: 'Describe this image.',
+                      images: [{ url: imageUrl }],
+                      log, label: 'read-image',
+                    });
+                    return result.text.trim();
+                  }
+                : undefined;
+
+              tools.push(createReadImageTool({
+                downloadAttachment,
+                readFile: readFileCmd
+                  ? async (path) => {
+                      const { execFile } = await import('node:child_process');
+                      return new Promise<Buffer>((resolve, reject) => {
+                        const child = execFile(
+                          readFileCmd[0]!,
+                          [...readFileCmd.slice(1), path],
+                          { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
+                          (error, stdout) => {
+                            if (error) reject(new Error(`Failed to read file: ${error.message}`));
+                            else resolve(stdout as unknown as Buffer);
+                          },
+                        );
+                        child.stdin?.end();
+                      });
+                    }
+                  : undefined,
+                resolveImageToText,
+              }));
+            }
             if (hasBackgroundTasks) {
               tools.push(createKillTaskTool(taskId => deps.backgroundTask!.killTask(taskId)));
               tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask!.readTaskOutput(taskId, offset, limit)));
@@ -224,6 +278,8 @@ export const createDriver = (config: DriverConfig, deps: {
               hasBashTool,
               hasWebSearchTool,
               hasDownloadFileTool,
+              hasReadImageTool,
+              hasReadImageFilePathSupport,
               hasAttachmentSupport,
               hasBackgroundTasks,
             });
@@ -248,13 +304,7 @@ export const createDriver = (config: DriverConfig, deps: {
               if (needsProbe) {
                 log.withFields({ chatId, lastMentionedAtMs, lastProcessedMs: lastProcessedMs() }).log('Running probe');
 
-                // Probe may have stricter image limits — trim a shallow copy
-                const probeMessages = ctx.messages.map(m => {
-                  const a = m as Record<string, any>;
-                  return Array.isArray(a.content) ? { ...m, content: [...a.content] } : m;
-                });
-                if (chatConfig.probe.model.maxImagesAllowed != null)
-                  trimImages(probeMessages, chatConfig.probe.model.maxImagesAllowed);
+                const probeMessages = cloneMessagesForSend(ctx.messages);
 
                 const probeLateBinding = await renderLateBindingPrompt({
                   timeNow: localTimeNow(),
@@ -271,7 +321,8 @@ export const createDriver = (config: DriverConfig, deps: {
                 const probe = probeApiFormat === 'responses'
                   ? await streamingResponses({
                     baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
-                    model: chatConfig.probe.model.model, input: messagesToResponsesInput(probeMessages),
+                    model: chatConfig.probe.model.model,
+                    input: prepareResponsesInputForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
                     instructions: system, tools: tools.map(xsaiToolToResponsesTool),
                     log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                   }).then(r => ({
@@ -281,7 +332,9 @@ export const createDriver = (config: DriverConfig, deps: {
                   }))
                   : await streamingChat({
                     baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
-                    model: chatConfig.probe.model.model, messages: probeMessages, system,
+                    model: chatConfig.probe.model.model,
+                    messages: prepareChatMessagesForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
+                    system,
                     tools, log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                   }).then(r => {
                     const msg = r.choices[0]?.message;
@@ -311,9 +364,6 @@ export const createDriver = (config: DriverConfig, deps: {
               }
             }
 
-            if (chatConfig.primaryModel.maxImagesAllowed != null)
-              trimImages(ctx.messages, chatConfig.primaryModel.maxImagesAllowed);
-
             const primaryLateBinding = await renderLateBindingPrompt({
               timeNow: localTimeNow(),
               isProbeEnabled: chatConfig.probe.enabled, isProbing: false, isMentioned, isReplied,
@@ -330,6 +380,7 @@ export const createDriver = (config: DriverConfig, deps: {
               system,
               tools,
               maxSteps: MAX_STEPS,
+              maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
               onStepComplete: (stepData, usage, requestedAtMs) => {
                 if (chatConfig.primaryApiFormat === 'responses') {
                   deps.persistTurnResponse(chatId, {
@@ -431,6 +482,7 @@ export const createDriver = (config: DriverConfig, deps: {
               newCursorMs,
               reasoningSignatureCompat: compactEndpoint.reasoningSignatureCompat,
               featureFlags: chatConfig.featureFlags,
+              maxImagesAllowed: compactEndpoint.maxImagesAllowed,
               log,
             });
 

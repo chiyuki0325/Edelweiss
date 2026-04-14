@@ -21,6 +21,8 @@ export const renderSystemPrompt = async (params: {
   hasBashTool?: boolean;
   hasWebSearchTool?: boolean;
   hasDownloadFileTool?: boolean;
+  hasReadImageTool?: boolean;
+  hasReadImageFilePathSupport?: boolean;
   hasAttachmentSupport?: boolean;
   hasBackgroundTasks?: boolean;
 }) => {

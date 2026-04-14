@@ -10,6 +10,7 @@ const systemPromptTemplate = readFileSync(resolve(__dirname, '../../prompts/imag
 
 export const renderImageToTextSystemPrompt = async (params: {
   caption: string;
+  detail?: string;
 }) => {
   const { rendered } = await renderMarkdownString(systemPromptTemplate, params, basePath);
   return rendered;

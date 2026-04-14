@@ -4,8 +4,7 @@ import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
 import { DUMP_DIR, ensureDumpDir } from './constants';
-import { composeContext } from './context';
-import { messagesToResponsesInput } from './convert';
+import { composeContext, prepareChatMessagesForSend, prepareResponsesInputForSend } from './context';
 import { renderCompactionSystemPrompt, renderCompactionUserInstruction } from './prompt';
 import type { ResponseOutputMessage } from './responses-types';
 import { streamingChat } from './streaming';
@@ -26,6 +25,7 @@ export interface CompactionParams {
   newCursorMs: number;
   reasoningSignatureCompat?: string;
   featureFlags?: FeatureFlags;
+  maxImagesAllowed?: number;
   timeoutSec?: number;
   log: Logger;
 }
@@ -50,9 +50,14 @@ const callForText = async (
   system: string,
 ): Promise<{ summary: string; inputTokens: number; outputTokens: number }> => {
   if ((params.apiFormat ?? 'openai-chat') === 'responses') {
+    const input = prepareResponsesInputForSend(messages, params.maxImagesAllowed);
+    writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-request.json`, JSON.stringify({
+      model: params.model, instructions: system, input, apiFormat: 'responses',
+    }, null, 2));
+
     const result = await streamingResponses({
       baseURL: params.apiBaseUrl, apiKey: params.apiKey, model: params.model,
-      input: messagesToResponsesInput(messages), instructions: system,
+      input, instructions: system,
       log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
     });
     writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-response.json`, JSON.stringify(result, null, 2));
@@ -60,9 +65,14 @@ const callForText = async (
     return { summary: text, inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens };
   }
 
+  const chatMessages = prepareChatMessagesForSend(messages, params.maxImagesAllowed);
+  writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-request.json`, JSON.stringify({
+    model: params.model, system, messages: chatMessages, apiFormat: 'openai-chat',
+  }, null, 2));
+
   const result = await streamingChat({
     baseURL: params.apiBaseUrl, apiKey: params.apiKey, model: params.model,
-    messages, system, log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
+    messages: chatMessages, system, log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
   });
   writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-response.json`, JSON.stringify(result, null, 2));
   const summary = result.choices[0]?.message?.content;
@@ -85,10 +95,6 @@ export const runCompaction = async (params: CompactionParams): Promise<Compactio
   );
 
   const messages: Message[] = [...(ctx?.messages ?? []), { role: 'user', content: compactUserInstruction } as Message];
-
-  writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-request.json`, JSON.stringify({
-    model: params.model, system: compactSystemPrompt, messages, apiFormat: params.apiFormat ?? 'openai-chat',
-  }, null, 2));
 
   let summary = '';
   let inputTokens = 0;
