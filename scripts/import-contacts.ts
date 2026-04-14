@@ -35,7 +35,7 @@ const main = async () => {
   const log = useGlobalLogger('import-contacts');
 
   // Load contacts
-  const contactsPath = process.argv[2] || process.env.CONTACTS_PATH || 'contacts.json';
+  const contactsPath = process.argv[2] ?? process.env.CONTACTS_PATH ?? 'contacts.json';
   const data: { users?: ContactUser[] } = JSON.parse(readFileSync(contactsPath, 'utf-8'));
   const users = (data.users ?? []).filter(u => !u.deleted && u.accessHash);
   log.withFields({ path: contactsPath, total: data.users?.length, eligible: users.length }).log('Contacts loaded');

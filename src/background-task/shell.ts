@@ -1,7 +1,7 @@
+import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 
 import { signal } from 'alien-signals';
 
@@ -20,8 +20,8 @@ export interface ShellCheckpoint {
 
 const countNewlines = (buf: Buffer): number => {
   let count = 0;
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] === 0x0A) count++;
+  for (const byte of buf) {
+    if (byte === 0x0A) count++;
   }
   return count;
 };
@@ -85,7 +85,7 @@ export const shellTaskFactory: BackgroundTaskFactory<ShellParams, ShellCheckpoin
     child.stdout.on('data', handleData);
     child.stderr.on('data', handleData);
 
-    child.on('close', (exitCode) => {
+    child.on('close', exitCode => {
       const reason = killReason === 'timeout'
         ? 'Timed out'
         : killReason === 'tool_call'
@@ -100,7 +100,7 @@ export const shellTaskFactory: BackgroundTaskFactory<ShellParams, ShellCheckpoin
       });
     });
 
-    child.on('error', (err) => {
+    child.on('error', err => {
       const meta = `Process error: ${err.message}. ${lines} lines, ${bytes} bytes output.`;
       const output = buildOutputSummary(head, tail, bytes);
       const summary = output ? `${meta}\n\n${output}` : meta;

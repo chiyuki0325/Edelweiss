@@ -1,5 +1,6 @@
-import type { Logger } from '@guiiai/logg';
 import type { Readable } from 'node:stream';
+
+import type { Logger } from '@guiiai/logg';
 
 export interface BackgroundTaskFactory<TParams = unknown, TCheckpoint = unknown> {
   readonly typeName: string;

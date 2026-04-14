@@ -396,12 +396,12 @@ export const sanitizeToolCallIdsForMessagesApi = (messages: Message[]): Message[
     return candidate;
   };
 
-  return messages.map((message) => {
+  return messages.map(message => {
     const msg = asMsg(message);
 
     if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
       let changed = false;
-      const toolCalls = msg.tool_calls.map((toolCall) => {
+      const toolCalls = msg.tool_calls.map(toolCall => {
         const id = sanitizeId(toolCall.id);
         if (id === toolCall.id) return toolCall;
         changed = true;

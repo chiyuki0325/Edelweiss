@@ -158,6 +158,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm start` — run once (tsx).
 - `pnpm build` — bundle with tsdown.
 - `pnpm typecheck` — `tsc --noEmit` (current `tsconfig.json` only includes `src/**/*.ts`).
+- `pnpm lint` uses `tsconfig.eslint.json` so `scripts/**/*.ts` can be linted without expanding the build/typecheck project.
 - `pnpm lint` / `pnpm lint:fix` — ESLint.
 - `pnpm test` / `pnpm test:run` — Vitest.
 - `pnpm login` — interactive MTProto session login.

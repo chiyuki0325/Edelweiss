@@ -79,7 +79,7 @@ const truncateXml = (xml: string, maxLen: number): string => {
   // If we're inside a tag, truncate before the opening '<'
   if (lastOpen > lastClose) cutAt = lastOpen;
   if (cutAt <= 0) return '';
-  return xml.slice(0, cutAt) + '…';
+  return `${xml.slice(0, cutAt)}…`;
 };
 
 // --- Attachment → XML ---

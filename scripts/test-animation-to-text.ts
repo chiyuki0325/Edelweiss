@@ -33,7 +33,7 @@ logger.withFields({ model: model.model, apiFormat: model.apiFormat ?? 'openai-ch
 const bot = new Bot(botToken);
 const downloadFile = async (fileId: string): Promise<Buffer> => {
   const file = await bot.api.getFile(fileId);
-  return httpGetBuffer(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
+  return await httpGetBuffer(`https://api.telegram.org/file/bot${botToken}/${file.file_path}`);
 };
 
 // Create resolver (no persistence, just test the LLM call)

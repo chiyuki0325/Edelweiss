@@ -8,7 +8,7 @@
  */
 import Database from 'better-sqlite3';
 
-const dbPath = process.argv[2] || './data/cahciua.db';
+const dbPath = process.argv[2] ?? './data/cahciua.db';
 const db = new Database(dbPath);
 
 console.log(`Opening database: ${dbPath}`);

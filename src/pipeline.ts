@@ -2,8 +2,7 @@ import { createPatch } from 'diff';
 
 import { useLogger } from './config/logger';
 import { createEmptyIC, reduce } from './projection';
-import type { PipelineEvent } from './projection';
-import type { IntermediateContext } from './projection';
+import type { PipelineEvent, IntermediateContext } from './projection';
 import { rcToXml, render } from './rendering';
 import type { RenderedContext, RenderParams } from './rendering';
 

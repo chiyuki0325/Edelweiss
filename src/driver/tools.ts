@@ -3,9 +3,9 @@ import { execFile } from 'node:child_process';
 import sharp from 'sharp';
 import type { ToolExecuteResult } from 'xsai';
 
+import type { ResponseInputContent } from './responses-types';
 import type { RuntimeConfig } from '../config/config';
 import type { Attachment } from '../telegram/message/types';
-import type { ResponseInputContent } from './responses-types';
 
 export interface ToolResult {
   content: string | ResponseInputContent[];
@@ -112,10 +112,10 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask?: {
     name: 'bash',
     description:
       'Execute a shell command. Output (stdout+stderr combined) is truncated to 4 KB. ' +
-      'For large outputs, redirect to a file and read specific ranges. ' +
-      (backgroundTask
-        ? `Set timeout_seconds > ${backgroundTask.backgroundThresholdSec} for long-running commands — they run as background tasks and return immediately with a task ID.`
-        : ''),
+      `For large outputs, redirect to a file and read specific ranges. ${
+        backgroundTask
+          ? `Set timeout_seconds > ${backgroundTask.backgroundThresholdSec} for long-running commands — they run as background tasks and return immediately with a task ID.`
+          : ''}`,
     parameters: {
       type: 'object',
       properties: {

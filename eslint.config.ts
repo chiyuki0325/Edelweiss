@@ -100,7 +100,7 @@ const commonConfig: Linter.Config = {
     'import/internal-regex': '^\\.\\.?/',
     'import/resolver': {
       typescript: {
-        project: './tsconfig.json',
+        project: './tsconfig.eslint.json',
       },
     },
     lintAllEsApis: true,
@@ -111,7 +111,7 @@ const parserOptions: Linter.ParserOptions = {
   parser: tsParser,
   ecmaVersion: 'latest',
   sourceType: 'module',
-  project: './tsconfig.json',
+  project: './tsconfig.eslint.json',
 };
 
 const config: Linter.Config[] = [

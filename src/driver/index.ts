@@ -226,43 +226,43 @@ export const createDriver = (config: DriverConfig, deps: {
               const readFileCmd = deps.runtimeConfig.readFile;
               const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
                 ? async (buffer: Buffer, detail: 'low' | 'high') => {
-                    const maxEdge = detail === 'high' ? 1024 : 512;
-                    const { default: sharp } = await import('sharp');
-                    const resized = await sharp(buffer)
-                      .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
-                      .png()
-                      .toBuffer();
-                    const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
-                    const system = await renderImageToTextSystemPrompt({ caption: '', detail });
-                    const model = deps.resolveModel(chatConfig.imageToText.model!);
-                    const result = await callDescriptionLlm({
-                      model, system,
-                      userText: 'Describe this image.',
-                      images: [{ url: imageUrl }],
-                      log, label: 'read-image',
-                    });
-                    return result.text.trim();
-                  }
+                  const maxEdge = detail === 'high' ? 1024 : 512;
+                  const { default: sharp } = await import('sharp');
+                  const resized = await sharp(buffer)
+                    .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+                    .png()
+                    .toBuffer();
+                  const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
+                  const system = await renderImageToTextSystemPrompt({ caption: '', detail });
+                  const model = deps.resolveModel(chatConfig.imageToText.model!);
+                  const result = await callDescriptionLlm({
+                    model, system,
+                    userText: 'Describe this image.',
+                    images: [{ url: imageUrl }],
+                    log, label: 'read-image',
+                  });
+                  return result.text.trim();
+                }
                 : undefined;
 
               tools.push(createReadImageTool({
                 downloadAttachment,
                 readFile: readFileCmd
-                  ? async (path) => {
-                      const { execFile } = await import('node:child_process');
-                      return new Promise<Buffer>((resolve, reject) => {
-                        const child = execFile(
-                          readFileCmd[0]!,
-                          [...readFileCmd.slice(1), path],
-                          { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
-                          (error, stdout) => {
-                            if (error) reject(new Error(`Failed to read file: ${error.message}`));
-                            else resolve(stdout as unknown as Buffer);
-                          },
-                        );
-                        child.stdin?.end();
-                      });
-                    }
+                  ? async path => {
+                    const { execFile } = await import('node:child_process');
+                    return await new Promise<Buffer>((resolve, reject) => {
+                      const child = execFile(
+                        readFileCmd[0]!,
+                        [...readFileCmd.slice(1), path],
+                        { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
+                        (error, stdout) => {
+                          if (error) reject(new Error(`Failed to read file: ${error.message}`));
+                          else resolve(stdout as unknown as Buffer);
+                        },
+                      );
+                      child.stdin?.end();
+                    });
+                  }
                   : undefined,
                 resolveImageToText,
               }));
