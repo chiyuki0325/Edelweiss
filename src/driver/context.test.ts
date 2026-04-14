@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { Message } from 'xsai';
 
-import { composeContext } from './context';
+import { composeContext, sanitizeToolCallIdsForMessagesApi } from './context';
 import type { ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { FeatureFlags } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
@@ -46,6 +47,46 @@ const flags = (overrides: Partial<FeatureFlags> = {}): FeatureFlags => ({
   trimSelfMessagesCoveredBySendToolCalls: false,
   trimToolResults: false,
   ...overrides,
+});
+
+describe('sanitizeToolCallIdsForMessagesApi', () => {
+  it('sanitizes assistant/tool ids without mutating input', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'send_message:103', type: 'function', function: { name: 'send_message', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: 'send_message:103', content: '{"ok":true}' },
+    ] as unknown as Message[];
+
+    const result = sanitizeToolCallIdsForMessagesApi(messages);
+
+    expect(((messages[0] as AnyMsg).tool_calls[0] as AnyMsg).id).toBe('send_message:103');
+    expect((messages[1] as AnyMsg).tool_call_id).toBe('send_message:103');
+    expect(((result[0] as AnyMsg).tool_calls[0] as AnyMsg).id).toBe('send_message_103');
+    expect((result[1] as AnyMsg).tool_call_id).toBe('send_message_103');
+  });
+
+  it('deduplicates collisions after sanitization', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [
+          { id: 'a:b', type: 'function', function: { name: 'send_message', arguments: '{}' } },
+          { id: 'a?b', type: 'function', function: { name: 'send_message', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'a:b', content: 'one' },
+      { role: 'tool', tool_call_id: 'a?b', content: 'two' },
+    ] as unknown as Message[];
+
+    const result = sanitizeToolCallIdsForMessagesApi(messages);
+    const toolCalls = (result[0] as AnyMsg).tool_calls as AnyMsg[];
+
+    expect(toolCalls.map(tc => tc.id)).toEqual(['a_b', 'a_b_2']);
+    expect((result[1] as AnyMsg).tool_call_id).toBe('a_b');
+    expect((result[2] as AnyMsg).tool_call_id).toBe('a_b_2');
+  });
 });
 
 describe('trimToolResults via composeContext', () => {
@@ -162,6 +203,21 @@ describe('trimToolResults via composeContext', () => {
     expect(trimmed).toContain('HEAD');
     expect(trimmed).toContain('TAIL');
     expect(trimmed).toContain('[trimmed');
+  });
+
+  it('sanitizes invalid tool call ids in composed context', () => {
+    const rc: RenderedContext = [textSeg(100, 'hi')];
+    const trs = [
+      tr(200, [toolCallMsg('send_message:103', 'send_message', '{}'), toolResultMsg('send_message:103', '{"ok":true}')]),
+    ];
+
+    const result = composeContext(rc, trs, 100000, undefined);
+    expect(result).not.toBeNull();
+
+    const assistant = result!.messages.find(m => (m as AnyMsg).role === 'assistant') as AnyMsg;
+    const tool = result!.messages.find(m => (m as AnyMsg).role === 'tool') as AnyMsg;
+    expect((assistant.tool_calls[0] as AnyMsg).id).toBe('send_message_103');
+    expect(tool.tool_call_id).toBe('send_message_103');
   });
 });
 

@@ -283,6 +283,59 @@ const trimToolResults = (trs: TurnResponse[]): TurnResponse[] =>
                   item.role === 'tool' ? { ...item, content: trimLongResult(item.content) } : item),
               });
 
+const TOOL_CALL_ID_ALLOWED_CHARS_RE = /[^A-Za-z0-9_-]/g;
+
+const sanitizeToolCallIdBase = (id: string): string => {
+  const sanitized = id.replace(TOOL_CALL_ID_ALLOWED_CHARS_RE, '_');
+  return sanitized.length > 0 ? sanitized : 'tool_call';
+};
+
+// Anthropic Messages rejects tool_use ids outside ^[A-Za-z0-9_-]+$.
+// Keep stored TRs raw and sanitize only the request-local message view.
+export const sanitizeToolCallIdsForMessagesApi = (messages: Message[]): Message[] => {
+  const remappedIds = new Map<string, string>();
+  const usedIds = new Set<string>();
+
+  const sanitizeId = (id: string): string => {
+    const existing = remappedIds.get(id);
+    if (existing) return existing;
+
+    const base = sanitizeToolCallIdBase(id);
+    let candidate = base;
+    let suffix = 2;
+    while (usedIds.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix++;
+    }
+
+    remappedIds.set(id, candidate);
+    usedIds.add(candidate);
+    return candidate;
+  };
+
+  return messages.map((message) => {
+    const msg = asMsg(message);
+
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      let changed = false;
+      const toolCalls = msg.tool_calls.map((toolCall) => {
+        const id = sanitizeId(toolCall.id);
+        if (id === toolCall.id) return toolCall;
+        changed = true;
+        return { ...toolCall, id };
+      });
+      return changed ? { ...msg, tool_calls: toolCalls } as Message : message;
+    }
+
+    if (msg.role === 'tool' && typeof msg.tool_call_id === 'string') {
+      const toolCallId = sanitizeId(msg.tool_call_id);
+      return toolCallId === msg.tool_call_id ? message : { ...msg, tool_call_id: toolCallId } as Message;
+    }
+
+    return message;
+  });
+};
+
 // --- Feature flag: trimSelfMessagesCoveredBySendToolCalls ---
 // Bot's own messages enter RC via userbot AND exist in TRs as tool call results.
 // Filter RC segments marked isSelfSent=true to remove the duplicate representation.
@@ -411,7 +464,9 @@ export const composeContext = (
     return !(m.role === 'assistant' && !('content' in m) && !m.tool_calls);
   });
 
-  const rawEstimatedTokens = cleaned.reduce((acc, msg) => acc + estimateMessageTokens(asMsg(msg)), 0);
-  const trimmed = trimContext(cleaned, maxTokens);
+  const prepared = sanitizeToolCallIdsForMessagesApi(cleaned);
+
+  const rawEstimatedTokens = prepared.reduce((acc, msg) => acc + estimateMessageTokens(asMsg(msg)), 0);
+  const trimmed = trimContext(prepared, maxTokens);
   return { ...trimmed, rawEstimatedTokens };
 };
