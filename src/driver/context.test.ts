@@ -390,17 +390,23 @@ describe('send-boundary preparation helpers', () => {
   });
 
   it('prepareChatMessagesForSend trims images after tool-result image extraction', () => {
-    const messages = [{
-      role: 'tool',
-      tool_call_id: 'tc1',
-      content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' }],
-    }] as unknown as Message[];
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'read_image', arguments: '{}' } }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'tc1',
+        content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'low' }],
+      },
+    ] as unknown as Message[];
 
     const prepared = prepareChatMessagesForSend(messages, 0);
     expect(prepared.some(msg => Array.isArray((msg as AnyMsg).content)
       && (msg as AnyMsg).content.some((part: AnyMsg) => part.type === 'image_url'))).toBe(false);
-    expect(prepared).toContainEqual({ role: 'tool', tool_call_id: 'tc1', content: '[image]' });
-    expect(prepared).toContainEqual({ role: 'user', content: [{ type: 'text', text: '[images omitted]' }] });
+    expect(prepared).toContainEqual({ role: 'tool', tool_call_id: 'tc1', content: '' });
+    expect(prepared).toContainEqual({ role: 'user', content: [{ type: 'text', text: 'The result of tool read_image' }] });
   });
 
   it('prepareResponsesInputForSend trims images at the final send boundary', () => {

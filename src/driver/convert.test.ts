@@ -216,7 +216,7 @@ describe('messagesToResponsesInput', () => {
 });
 
 describe('prepareMessagesForChat', () => {
-  it('keeps tool results contiguous when extracting read_image images', () => {
+  it('keeps tool results contiguous while moving whole image-bearing tool results into a follow-up user message', () => {
     const messages = [
       {
         role: 'assistant',
@@ -228,7 +228,11 @@ describe('prepareMessagesForChat', () => {
       {
         role: 'tool',
         tool_call_id: 'tc1',
-        content: [{ type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'high' }],
+        content: [
+          { type: 'input_text', text: 'before' },
+          { type: 'input_image', image_url: 'data:image/png;base64,abc', detail: 'high' },
+          { type: 'input_text', text: 'after' },
+        ],
       },
       {
         role: 'tool',
@@ -250,7 +254,7 @@ describe('prepareMessagesForChat', () => {
       {
         role: 'tool',
         tool_call_id: 'tc1',
-        content: '[image]',
+        content: '',
       },
       {
         role: 'tool',
@@ -259,7 +263,12 @@ describe('prepareMessagesForChat', () => {
       },
       {
         role: 'user',
-        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc', detail: 'high' } }],
+        content: [
+          { type: 'text', text: 'The result of tool read_image' },
+          { type: 'text', text: 'before' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc', detail: 'high' } },
+          { type: 'text', text: 'after' },
+        ],
       },
     ]);
   });

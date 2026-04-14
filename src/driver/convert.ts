@@ -44,50 +44,58 @@ export const responsesPartsToChatParts = (parts: ResponseInputContent[]): Extend
 
 // ── Prepare intermediate messages for Chat Completions API ──
 // Intermediate messages use Responses format (input_image/input_text) for content parts.
-// Chat Completions uses image_url/text format. Additionally, tool results may not
-// support images, so images are extracted into separate user messages.
+// Chat Completions uses image_url/text format. Additionally, image-bearing tool
+// results are moved wholesale into follow-up user messages so their text/image
+// ordering stays intact.
 
 export const prepareMessagesForChat = (messages: Message[]): Message[] => {
   const result: Message[] = [];
-  let pendingToolImageMessage: Message | null = null;
+  let pendingToolResultMessage: Message | null = null;
+  const toolCallNames = new Map<string, string>();
 
-  const flushPendingToolImages = () => {
-    if (!pendingToolImageMessage) return;
-    result.push(pendingToolImageMessage);
-    pendingToolImageMessage = null;
+  const flushPendingToolResults = () => {
+    if (!pendingToolResultMessage) return;
+    result.push(pendingToolResultMessage);
+    pendingToolResultMessage = null;
   };
 
   for (const msg of messages) {
     const m = msg as ExtendedMessage;
+    if (Array.isArray(m.tool_calls)) {
+      for (const toolCall of m.tool_calls)
+        toolCallNames.set(toolCall.id, toolCall.function.name);
+    }
+
     if (m.role === 'tool' && Array.isArray(m.content)) {
-      // Tool results: extract images into separate user messages
-      const parts = m.content as ResponseInputContent[];
-      const textParts = parts.filter(p => p.type !== 'input_image');
-      const imageParts = parts.filter((p): p is import('./responses-types').ResponseInputImage => p.type === 'input_image');
+      const chatParts = responsesPartsToChatParts(m.content as ResponseInputContent[]);
+      const hasImages = chatParts.some(part => part.type === 'image_url');
 
-      const textContent = textParts.map(p => (p as import('./responses-types').ResponseInputText).text).join('\n');
-      result.push({ ...msg, content: textContent || '[image]' } as Message);
+      if (hasImages) {
+        result.push({ ...msg, content: '' } as Message);
 
-      if (imageParts.length > 0) {
-        const imageContent = imageParts.map(p => ({
-          type: 'image_url' as const,
-          image_url: { url: p.image_url, detail: p.detail ?? 'auto' },
-        }));
+        const toolName = typeof m.tool_call_id === 'string' ? toolCallNames.get(m.tool_call_id) : undefined;
+        const movedParts: ExtendedMessagePart[] = [
+          { type: 'text', text: toolName ? `The result of tool ${toolName}` : 'The result of a tool call' },
+          ...chatParts,
+        ];
 
-        if (pendingToolImageMessage) {
-          const content = pendingToolImageMessage.content as ExtendedMessagePart[];
-          content.push(...imageContent);
+        if (pendingToolResultMessage) {
+          const content = pendingToolResultMessage.content as ExtendedMessagePart[];
+          content.push(...movedParts);
         } else {
-          pendingToolImageMessage = {
+          pendingToolResultMessage = {
             role: 'user',
-            content: imageContent,
+            content: movedParts,
           } as Message;
         }
+      } else {
+        const textContent = chatParts.flatMap(part => part.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('\n');
+        result.push({ ...msg, content: textContent } as Message);
       }
     } else if (m.role === 'tool') {
       result.push(msg);
     } else if (Array.isArray(m.content)) {
-      flushPendingToolImages();
+      flushPendingToolResults();
 
       // User/other messages: convert input_image → image_url, input_text → text
       result.push({
@@ -95,12 +103,12 @@ export const prepareMessagesForChat = (messages: Message[]): Message[] => {
         content: responsesPartsToChatParts(m.content as ResponseInputContent[]),
       } as Message);
     } else {
-      flushPendingToolImages();
+      flushPendingToolResults();
       result.push(msg);
     }
   }
 
-  flushPendingToolImages();
+  flushPendingToolResults();
 
   return result;
 };

@@ -289,7 +289,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 ### Final Send Preparation
 
 Before any actual provider request is sent, the Driver applies a final request-local normalization step:
-- OpenAI Chat Completions path: `prepareChatMessagesForSend()` converts internal `input_text` / `input_image` parts into chat-completions `text` / `image_url` parts and extracts tool-result images into follow-up user messages.
+- OpenAI Chat Completions path: `prepareChatMessagesForSend()` converts internal `input_text` / `input_image` parts into chat-completions `text` / `image_url` parts and moves whole image-bearing tool results into follow-up user messages prefixed with `The result of tool <name>`, keeping their text/image ordering intact while preserving contiguous tool-result blocks.
 - Responses path: `prepareResponsesInputForSend()` converts the same intermediate `Message[]` into Responses API input items.
 - Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps, probes, or compaction calls.
 
