@@ -40,6 +40,9 @@ export interface Attachment {
 
   // Sticker-specific
   emoji?: string;
+  // Raw Telegram sticker set slug (`set_name`, e.g. t.me/addstickers/<id>).
+  stickerSetId?: string;
+  // Human-readable pack title, resolved from stickerSetId before entering the pipeline.
   stickerSetName?: string;
   isAnimatedSticker?: boolean;
   isVideoSticker?: boolean;

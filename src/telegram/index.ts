@@ -9,6 +9,7 @@ import { canExtractFrames, extractFrames } from './frame-extractor';
 import type { ImageToTextResolver } from './image-to-text';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attachment, MessageEntity } from './message';
+import { normalizeStickerSetMetadata } from './pack-title';
 import { createSessionIngressQueue } from './session-ingress-queue';
 import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 import type { FetchOptions, UserbotClient } from './userbot';
@@ -106,17 +107,28 @@ export const createTelegramManager = (
 
   // Pack title cache: set_name → display title (in-process, never changes)
   const packTitleCache = new Map<string, string>();
+  const packTitleInflight = new Map<string, Promise<string>>();
   const resolvePackTitle = async (setName: string): Promise<string> => {
     const cached = packTitleCache.get(setName);
     if (cached) return cached;
-    try {
-      const stickerSet = await bot.raw().api.getStickerSet(setName);
-      packTitleCache.set(setName, stickerSet.title);
-      return stickerSet.title;
-    } catch (err) {
-      log.withError(err).withFields({ setName }).warn('Failed to resolve pack title');
-      return setName;
-    }
+    const inflight = packTitleInflight.get(setName);
+    if (inflight) return await inflight;
+
+    const task = (async () => {
+      try {
+        const stickerSet = await bot.raw().api.getStickerSet(setName);
+        packTitleCache.set(setName, stickerSet.title);
+        return stickerSet.title;
+      } catch (err) {
+        log.withError(err).withFields({ setName }).warn('Failed to resolve pack title');
+        return setName;
+      } finally {
+        packTitleInflight.delete(setName);
+      }
+    })();
+
+    packTitleInflight.set(setName, task);
+    return await task;
   };
 
   const hydrateAttachments = async (
@@ -127,6 +139,9 @@ export const createTelegramManager = (
     entities?: MessageEntity[],
   ) => {
     if (attachments) {
+      // Phase 0: Normalize sticker pack metadata once: raw set_name -> display title.
+      await normalizeStickerSetMetadata(attachments, resolvePackTitle);
+
       // Phase 1: Download media + generate thumbnails for eligible attachments.
       // Keep original buffers for high-res LLM input later.
       const originalBuffers = new Map<Attachment, Buffer>();
@@ -163,14 +178,13 @@ export const createTelegramManager = (
             if (!buffer) return;
             const { frames, cacheKey, frameTimestamps } = await extractFrames(buffer, att, animationMaxFrames);
             att.animationHash = cacheKey;
-            const packTitle = att.stickerSetName ? await resolvePackTitle(att.stickerSetName) : undefined;
             await animationToText.resolve({
               cacheKey,
               frames,
               caption: text,
               isSticker: att.type === 'sticker',
               emoji: att.emoji,
-              stickerSetName: packTitle,
+              stickerSetName: att.stickerSetName,
               duration: att.duration,
               frameTimestamps,
             });

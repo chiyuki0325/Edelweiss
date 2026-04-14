@@ -63,6 +63,13 @@ const mergeAttachments = (target?: Attachment[], source?: Attachment[]) => {
       existing.fileId = incoming.fileId;
       existing.fileUniqueId = incoming.fileUniqueId;
     }
+    existing.emoji ??= incoming.emoji;
+    existing.stickerSetId ??= incoming.stickerSetId;
+    existing.stickerSetName ??= incoming.stickerSetName;
+    existing.isAnimatedSticker ??= incoming.isAnimatedSticker;
+    existing.isVideoSticker ??= incoming.isVideoSticker;
+    existing.customEmojiId ??= incoming.customEmojiId;
+    existing.fileSize ??= incoming.fileSize;
   }
 };
 

@@ -6,6 +6,7 @@ import { deduplicateFrames, extractFrames } from './frame-extractor';
 import type { ImageAltTextRecord } from './image-to-text';
 import { callDescriptionLlm, createSemaphore } from './llm-description';
 import type { Attachment } from './message';
+import { resolveStickerSetMetadata } from './pack-title';
 import type { LlmEndpoint } from '../driver/types';
 
 const EMOJI_MAX_EDGE = 512;
@@ -78,8 +79,8 @@ export const createCustomEmojiToTextResolver = (params: {
         const buffer = await params.downloadFile(sticker.file_id);
         let isAnimated = sticker.is_animated || sticker.is_video;
 
-        // Resolve pack display title from set_name
-        const packTitle = sticker.set_name ? await params.resolvePackTitle(sticker.set_name) : undefined;
+        const packMetadata = await resolveStickerSetMetadata({ stickerSetId: sticker.set_name }, params.resolvePackTitle);
+        const packTitle = packMetadata.stickerSetName;
 
         let images: Array<{ url: string }>;
         let frameCount: number | undefined;

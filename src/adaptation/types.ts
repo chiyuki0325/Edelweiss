@@ -14,6 +14,7 @@ export interface CanonicalAttachment {
   duration?: number;
   thumbnailWebp?: string;
   animationHash?: string;
+  stickerSetId?: string;
   stickerSetName?: string;
   altText?: string;
 }

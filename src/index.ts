@@ -17,8 +17,9 @@ import { createAnimationToTextResolver } from './telegram/animation-to-text';
 import { createCustomEmojiToTextResolver, emojiCacheKey } from './telegram/custom-emoji-to-text';
 import { canExtractFrames, extractFrames } from './telegram/frame-extractor';
 import { computeThumbnailHash, createImageToTextResolver } from './telegram/image-to-text';
-import type { Attachment } from './telegram/message/types';
 import { renderMarkdownToTelegramHTML } from './telegram/markdown';
+import type { Attachment } from './telegram/message/types';
+import { normalizeStickerSetMetadata } from './telegram/pack-title';
 import { loadSession } from './telegram/session';
 
 setupLogger();
@@ -120,6 +121,27 @@ const main = async () => {
     }
   };
 
+  const hasUserbot = config.telegram.apiId != null && config.telegram.apiHash != null;
+
+  const telegram = createTelegramManager({
+    botToken: config.telegram.botToken,
+    ...(hasUserbot ? {
+      apiId: config.telegram.apiId,
+      apiHash: config.telegram.apiHash,
+      session: loadSession(config.telegram.session ?? ''),
+    } : {}),
+    initialChatIds: loadKnownChatIds(db),
+    resolveChatId: messageIds => lookupChatId(db, messageIds),
+    imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
+    imageToTextChatIds,
+    animationToText: animationToTextChatIds.size > 0 ? animationToTextResolver : undefined,
+    animationToTextChatIds,
+    animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
+    customEmojiToText: customEmojiToTextChatIds.size > 0 ? customEmojiToTextResolver : undefined,
+    customEmojiToTextChatIds,
+  }, logger);
+  ref.telegram = telegram;
+
   const hydrateAltTextFromCache = (event: PipelineEvent) => {
     if (event.type !== 'message' && event.type !== 'edit') return;
     for (const att of event.attachments) {
@@ -166,7 +188,21 @@ const main = async () => {
     const compaction = loadCompaction(db, chatId);
     if (compaction)
       pipeline.setCompactCursor(chatId, compaction.newCursorMs);
-    const events = loadEvents(db, chatId, compaction?.newCursorMs);
+    const eventsWithId = loadEventsWithId(db, chatId, compaction?.newCursorMs);
+    const events = eventsWithId.map(({ event }) => event);
+
+    // Legacy events stored raw set_name in stickerSetName. Normalize them once and
+    // persist the resolved title so cold-start replay and live ingress share one format.
+    const packTitleTasks: Promise<void>[] = [];
+    for (const { id: eventId, event } of eventsWithId) {
+      if ((event.type !== 'message' && event.type !== 'edit') || event.attachments.length === 0) continue;
+      packTitleTasks.push((async () => {
+        if (await normalizeStickerSetMetadata(event.attachments, telegram.resolvePackTitle))
+          updateEventAttachments(db, eventId, event.attachments);
+      })());
+    }
+    if (packTitleTasks.length > 0) await Promise.all(packTitleTasks);
+
     if (imageToTextChatIds.has(chatId)) {
       const tasks: Promise<void>[] = [];
       for (const event of events) {
@@ -182,27 +218,6 @@ const main = async () => {
     pipeline.replayChat(chatId, events);
   }
   logger.withFields({ sessions: pipeline.getChatIds().length }).log('Cold start complete');
-
-  const hasUserbot = config.telegram.apiId != null && config.telegram.apiHash != null;
-
-  const telegram = createTelegramManager({
-    botToken: config.telegram.botToken,
-    ...(hasUserbot ? {
-      apiId: config.telegram.apiId,
-      apiHash: config.telegram.apiHash,
-      session: loadSession(config.telegram.session ?? ''),
-    } : {}),
-    initialChatIds: loadKnownChatIds(db),
-    resolveChatId: messageIds => lookupChatId(db, messageIds),
-    imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
-    imageToTextChatIds,
-    animationToText: animationToTextChatIds.size > 0 ? animationToTextResolver : undefined,
-    animationToTextChatIds,
-    animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
-    customEmojiToText: customEmojiToTextChatIds.size > 0 ? customEmojiToTextResolver : undefined,
-    customEmojiToTextChatIds,
-  }, logger);
-  ref.telegram = telegram;
 
   // Helper: read a file from the workspace via the configured readFile command.
   const readWorkspaceFile = (path: string): Promise<Buffer> =>
@@ -542,6 +557,7 @@ const main = async () => {
                 frames,
                 caption,
                 isSticker: att.type === 'sticker',
+                stickerSetName: att.stickerSetName,
                 duration: att.duration,
                 frameTimestamps,
               });

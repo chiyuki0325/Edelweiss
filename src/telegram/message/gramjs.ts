@@ -138,7 +138,7 @@ const convertGramjsDocument = (doc: Api.Document, spoiler?: boolean): Attachment
     const attr = stickerAttr ?? isCustomEmoji;
     if (attr) attachment.emoji = attr.alt;
     if (stickerAttr?.stickerset instanceof Api.InputStickerSetShortName) {
-      attachment.stickerSetName = stickerAttr.stickerset.shortName;
+      attachment.stickerSetId = stickerAttr.stickerset.shortName;
     }
     if (videoAttr) attachment.isVideoSticker = true;
     if (doc.mimeType === 'application/x-tgsticker') attachment.isAnimatedSticker = true;

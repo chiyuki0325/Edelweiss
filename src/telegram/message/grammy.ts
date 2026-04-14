@@ -96,7 +96,7 @@ const convertGrammyAttachments = (msg: GrammyMessage): Attachment[] | undefined 
       width: msg.sticker.width,
       height: msg.sticker.height,
       emoji: msg.sticker.emoji,
-      stickerSetName: msg.sticker.set_name,
+      stickerSetId: msg.sticker.set_name,
       isAnimatedSticker: msg.sticker.is_animated,
       isVideoSticker: msg.sticker.is_video,
       customEmojiId: msg.sticker.custom_emoji_id,

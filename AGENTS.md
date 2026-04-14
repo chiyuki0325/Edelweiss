@@ -99,6 +99,7 @@ src/
     ├── bot.ts               # grammY Bot API client
     ├── userbot.ts           # gramjs MTProto client
     ├── event-bus.ts         # Simple typed pub/sub
+    ├── pack-title.ts        # Sticker pack metadata normalization (set_name → display title)
     ├── image-to-text.ts     # Blocking image→alt text workflow + cache lookup/persist + model calls
     ├── image-to-text-prompt.ts # Velin prompt renderer for image description workflow
     ├── animation-to-text.ts   # Blocking animation→alt text workflow (GIF, animated/video stickers)
@@ -204,6 +205,12 @@ Messages from both clients are deduplicated by `(chatId, messageId)` in the Tele
 ### Phantom Edit Filtering
 
 MTProto fires `updateEditMessage` for metadata-only changes (link preview loading, reactions in large supergroups, inline keyboard updates). These have no `editDate`. The userbot handler skips events without `editDate` — if reactions support is added later, use `updateMessageReactions` separately.
+
+### Sticker Pack Title Normalization
+
+Telegram exposes sticker/custom-emoji packs by raw `set_name` slug. Cahciua keeps that raw slug as `stickerSetId` and resolves the human-readable pack title into `stickerSetName` before messages enter Adaptation. Rendering and prompt generation must treat `stickerSetName` as display title only.
+
+Legacy events created before this split may still have raw `set_name` stored in `stickerSetName`. Cold-start replay normalizes those attachments once, persists the upgraded attachment JSON back to `events`, and reuses the same `resolvePackTitle()` path as live ingress and custom-emoji resolution.
 
 ### IC Mutation Semantics
 
