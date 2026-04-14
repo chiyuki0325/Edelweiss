@@ -1,0 +1,153 @@
+import type { ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
+
+export const RECENT_SEND_MESSAGE_WINDOW = 5;
+
+export const potentiallyNotHumanFeatureDefinitions = [
+  {
+    name: 'multiple-markdown-bold',
+    description: 'Used more than one Markdown bold span.',
+  },
+  {
+    name: 'markdown-list',
+    description: 'Used a Markdown list.',
+  },
+  {
+    name: 'markdown-header',
+    description: 'Used a Markdown header.',
+  },
+  {
+    name: 'newline',
+    description: 'Used a newline.',
+  },
+] as const;
+
+export type PotentiallyNotHumanFeature = typeof potentiallyNotHumanFeatureDefinitions[number]['name'];
+
+export interface SendMessageHumanLikenessAssessment {
+  text: string;
+  features: PotentiallyNotHumanFeature[];
+}
+
+const MARKDOWN_BOLD_RE = /(?<!\\)(\*\*|__)(?=\S)([\s\S]*?\S)\1/g;
+const MARKDOWN_LIST_RE = /(?:^|\r?\n)[ \t]{0,3}(?:[-+*][ \t]+\S|\d+[.)][ \t]+\S)/;
+const MARKDOWN_HEADER_RE = /(?:^|\r?\n)#{1,6}[ \t]+\S/;
+const NEWLINE_RE = /\r?\n/;
+
+const parseJsonRecord = (text: string): Record<string, unknown> | null => {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+};
+
+const extractSendMessageText = (args: string): string | null => {
+  const parsed = parseJsonRecord(args);
+  return typeof parsed?.text === 'string' ? parsed.text : null;
+};
+
+const isSuccessfulSendMessageResult = (output: string): boolean =>
+  parseJsonRecord(output)?.ok === true;
+
+export const assessSendMessageHumanLikeness = (text: string): PotentiallyNotHumanFeature[] => {
+  const features: PotentiallyNotHumanFeature[] = [];
+  if ([...text.matchAll(MARKDOWN_BOLD_RE)].length > 1)
+    features.push('multiple-markdown-bold');
+  if (MARKDOWN_LIST_RE.test(text))
+    features.push('markdown-list');
+  if (MARKDOWN_HEADER_RE.test(text))
+    features.push('markdown-header');
+  if (NEWLINE_RE.test(text))
+    features.push('newline');
+  return features;
+};
+
+const extractChatSendMessageAssessments = (entries: TRDataEntry[]): SendMessageHumanLikenessAssessment[] => {
+  const successfulCallIds = new Set(
+    entries
+      .filter((entry): entry is Extract<TRDataEntry, { role: 'tool' }> => entry.role === 'tool')
+      .filter(entry => isSuccessfulSendMessageResult(entry.content))
+      .map(entry => entry.tool_call_id),
+  );
+
+  const assessments: SendMessageHumanLikenessAssessment[] = [];
+  for (const entry of entries) {
+    if (entry.role !== 'assistant') continue;
+    for (const toolCall of entry.tool_calls ?? []) {
+      if (toolCall.function.name !== 'send_message') continue;
+      if (!successfulCallIds.has(toolCall.id)) continue;
+      const text = extractSendMessageText(toolCall.function.arguments);
+      if (text == null) continue;
+      assessments.push({ text, features: assessSendMessageHumanLikeness(text) });
+    }
+  }
+  return assessments;
+};
+
+const extractResponsesSendMessageAssessments = (items: ResponsesTRDataItem[]): SendMessageHumanLikenessAssessment[] => {
+  const successfulCallIds = new Set(
+    items
+      .filter((item): item is Extract<ResponsesTRDataItem, { type: 'function_call_output' }> => item.type === 'function_call_output')
+      .filter(item => isSuccessfulSendMessageResult(item.output))
+      .map(item => item.call_id),
+  );
+
+  const assessments: SendMessageHumanLikenessAssessment[] = [];
+  for (const item of items) {
+    if (item.type !== 'function_call') continue;
+    if (item.name !== 'send_message') continue;
+    if (!successfulCallIds.has(item.call_id)) continue;
+    const text = extractSendMessageText(item.arguments);
+    if (text == null) continue;
+    assessments.push({ text, features: assessSendMessageHumanLikeness(text) });
+  }
+  return assessments;
+};
+
+const extractSendMessageAssessments = (tr: TurnResponse): SendMessageHumanLikenessAssessment[] =>
+  tr.provider === 'responses'
+    ? extractResponsesSendMessageAssessments(tr.data)
+    : extractChatSendMessageAssessments(tr.data);
+
+export const collectRecentSendMessageAssessments = (
+  trs: TurnResponse[],
+  limit = RECENT_SEND_MESSAGE_WINDOW,
+): SendMessageHumanLikenessAssessment[] =>
+  trs.flatMap(extractSendMessageAssessments).slice(-limit);
+
+export const appendRecentSendMessageAssessments = (
+  current: SendMessageHumanLikenessAssessment[],
+  tr: TurnResponse,
+  limit = RECENT_SEND_MESSAGE_WINDOW,
+): SendMessageHumanLikenessAssessment[] =>
+  [...current, ...extractSendMessageAssessments(tr)].slice(-limit);
+
+export const renderRecentSendMessageHumanLikenessXml = (
+  recentMessages: SendMessageHumanLikenessAssessment[],
+): string => {
+  if (recentMessages.length === 0)
+    return '';
+
+  const featureCounts = potentiallyNotHumanFeatureDefinitions
+    .map(feature => ({
+      ...feature,
+      count: recentMessages.filter(message => message.features.includes(feature.name)).length,
+    }))
+    .filter(feature => feature.count > 0);
+
+  if (featureCounts.length === 0)
+    return '';
+
+  const lines = [
+    `<human-likeness checked-count="${recentMessages.length}" window-size="${RECENT_SEND_MESSAGE_WINDOW}">`,
+  ];
+
+  for (const feature of featureCounts)
+    lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
+
+  lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.</guidance>');
+
+  lines.push('</human-likeness>');
+  return lines.join('\n');
+};

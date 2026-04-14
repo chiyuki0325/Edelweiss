@@ -84,6 +84,7 @@ src/
 │   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE into output items with per-chunk logging
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (dual-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
+│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback used by late-binding
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── tools.ts            # send_message tool definition (xsai Tool)
 │   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
@@ -123,7 +124,7 @@ src/
 Top-level directories:
 - `prompts/` — all LLM prompt templates (velin `.velin.md` files), rendered at runtime via `@velin-dev/core`
   - `primary-system.velin.md` — main system prompt for chat LLM calls
-  - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state)
+  - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state, recent send_message human-likeness feedback)
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)
   - `image-to-text-system.velin.md` — blocking image description prompt used before events enter the pipeline
@@ -273,7 +274,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - System prompt is static and positioned first.
 - Chat history is append-only within an epoch.
-- **Current**: Dynamic action hints (probe / mention / reply state) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`.
+- **Current**: Dynamic action hints (probe / mention / reply state, conditional `human-likeness` feedback) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`. The `human-likeness` section is functionally derived from the current successful `send_message` tool-call history at render time and is omitted when the recent messages have no flagged issues.
 - **Planned**: Richer dynamic content (memory recall, cross-session awareness) should continue to be injected by the Driver through a more structured late-binding mechanism.
 - Compaction creates epoch boundaries — see [Context Compaction](#context-compaction) below.
 

@@ -7,6 +7,7 @@ import { composeContext, findWorkingWindowCursor, latestExternalEventMs, trimIma
 import { messagesToResponsesInput, xsaiToolToResponsesTool } from './convert';
 import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
+import { collectRecentSendMessageAssessments, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
 import { createBashTool, createDownloadFileTool, createKillTaskTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool } from './tools';
@@ -234,6 +235,9 @@ export const createDriver = (config: DriverConfig, deps: {
               (seg.mentionsMe || seg.repliesToMe || seg.isRuntimeEvent) ? Math.max(max, seg.receivedAtMs) : max, 0);
             const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
             const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
+            const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
+              collectRecentSendMessageAssessments(deps.loadTurnResponses(chatId)),
+            );
 
             // --- Probe gate ---
             // Skip probe if: mentioned, replied to, runtime event, or tool loop was interrupted.
@@ -255,6 +259,7 @@ export const createDriver = (config: DriverConfig, deps: {
                 const probeLateBinding = await renderLateBindingPrompt({
                   timeNow: localTimeNow(),
                   isProbeEnabled: true, isProbing: true, isMentioned, isReplied,
+                  recentSendMessageHumanLikenessXml,
                   activeBackgroundTasks: deps.backgroundTask?.getActiveTasks(chatId),
                 });
                 injectLateBindingPrompt(probeMessages, probeLateBinding);
@@ -312,6 +317,7 @@ export const createDriver = (config: DriverConfig, deps: {
             const primaryLateBinding = await renderLateBindingPrompt({
               timeNow: localTimeNow(),
               isProbeEnabled: chatConfig.probe.enabled, isProbing: false, isMentioned, isReplied,
+              recentSendMessageHumanLikenessXml,
               isInterrupted,
               activeBackgroundTasks: deps.backgroundTask?.getActiveTasks(chatId),
             });

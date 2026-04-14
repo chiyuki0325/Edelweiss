@@ -7,6 +7,7 @@ const props = defineProps({
   isProbing: { type: Boolean, default: false },
   isMentioned: { type: Boolean, default: false },
   isReplied: { type: Boolean, default: false },
+  recentSendMessageHumanLikenessXml: { type: String, default: '' },
   isInterrupted: { type: Boolean, default: false },
   activeBackgroundTasks: { type: Array, default: () => [] },
 })
@@ -48,6 +49,11 @@ You were mentioned — you will likely want to respond.
 <div v-else-if="isReplied">
 
 Someone replied to your message — you will likely want to respond.
+
+</div>
+<div v-if="recentSendMessageHumanLikenessXml">
+
+{{ recentSendMessageHumanLikenessXml }}
 
 </div>
 <div v-if="backgroundTasksXml">
