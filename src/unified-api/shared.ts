@@ -18,18 +18,17 @@ export const pickExtra = <S extends ExtraSource>(
 };
 
 /**
- * Build a plain object by writing `lower` first, then same-source
- * `extra.fields`, then `higher` on top. Precedence: higher > extra > lower.
- * Core emit keys go in `higher` so they can never be shadowed; safe defaults
- * (that callers want only when nothing else provides them) go in `lower`.
+ * Merge same-source `extra.fields` under `core` so archived provider extensions
+ * round-trip, but modeled core fields always win. Extras from a different
+ * source are dropped.
  */
 export const applyExtra = <T extends Record<string, unknown>>(
   extra: Extra | undefined,
   source: ExtraSource,
-  parts: { lower?: Record<string, unknown>; higher: T },
+  core: T,
 ): T & Record<string, unknown> => {
   const extraFields = extra?.source === source ? extra.fields : {};
-  return { ...parts.lower, ...extraFields, ...parts.higher };
+  return { ...extraFields, ...core };
 };
 
 export const requireImageFormat = (format: string | undefined): string => {

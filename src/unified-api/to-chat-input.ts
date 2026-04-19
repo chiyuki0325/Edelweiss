@@ -71,7 +71,7 @@ const flattenTextParts = (parts: OutputPart[]): TextPart[] =>
   parts.flatMap(p => p.kind === 'text' ? [p] : p.kind === 'textGroup' ? p.content : []);
 
 const textPartToContentPart = (tp: TextPart): ChatCompletionsContentPart =>
-  applyExtra(tp.extra, 'openaiChatCompletion', { higher: { type: 'text' as const, text: tp.text } });
+  applyExtra(tp.extra, 'openaiChatCompletion', { type: 'text' as const, text: tp.text });
 
 /** String shortcut is safe only when nothing source-specific needs to ride on the block. */
 const hasSameSourceExtra = (tp: TextPart): boolean => tp.extra?.source === 'openaiChatCompletion';
@@ -79,7 +79,7 @@ const hasSameSourceExtra = (tp: TextPart): boolean => tp.extra?.source === 'open
 const reasoningToContentPart = (part: ReasoningPart): ChatCompletionsContentPart | undefined => {
   const thinking = reasoningToThinking(part.data);
   if (thinking === undefined) return undefined;
-  return applyExtra(part.extra, 'openaiChatCompletion', { higher: { ...thinking } });
+  return applyExtra(part.extra, 'openaiChatCompletion', { ...thinking });
 };
 
 const reasoningToThinking = (data: ReasoningData): ThinkingData | { type: 'redacted_thinking'; data: string } | undefined => {
@@ -122,20 +122,15 @@ const messageToAssistant = async (msg: OutputMessage): Promise<ChatCompletionsAs
   if (toolCallParts.length > 0) {
     core.tool_calls = toolCallParts.map((part): ChatCompletionsToolCall =>
       applyExtra(part.extra, 'openaiChatCompletion', {
-        higher: {
-          id: part.callId,
-          type: 'function' as const,
-          function: { name: part.name, arguments: part.args },
-        },
+        id: part.callId,
+        type: 'function' as const,
+        function: { name: part.name, arguments: part.args },
       }));
   }
 
-  // Order: extra < msg.reasoning (string alias fields) < core.
   // msg.reasoning fields (reasoning_content etc.) override same-keyed extras;
   // core role/content/tool_calls always win.
-  const merged = applyExtra(msg.extra, 'openaiChatCompletion', {
-    higher: { ...(msg.reasoning ?? {}), ...core },
-  });
+  const merged = applyExtra(msg.extra, 'openaiChatCompletion', { ...(msg.reasoning ?? {}), ...core });
   return merged as ChatCompletionsAssistantMessage;
 };
 

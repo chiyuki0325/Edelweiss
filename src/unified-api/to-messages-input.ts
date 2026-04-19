@@ -105,24 +105,20 @@ const parseToolArgs = (raw: string): Record<string, unknown> => {
 const partToAssistantBlocks = (part: OutputPart, idRemap: Map<string, string>): MessagesAssistantContentBlock[] => {
   if (part.kind === 'text') {
     const block: MessagesTextBlock = applyExtra(part.extra, 'anthropicMessages', {
-      higher: { type: 'text' as const, text: part.text },
+      type: 'text' as const, text: part.text,
     });
     return [block];
   }
   if (part.kind === 'textGroup') {
     return part.content.map((tp): MessagesTextBlock =>
-      applyExtra(tp.extra, 'anthropicMessages', {
-        higher: { type: 'text' as const, text: tp.text },
-      }));
+      applyExtra(tp.extra, 'anthropicMessages', { type: 'text' as const, text: tp.text }));
   }
   if (part.kind === 'toolCall') {
     const block: MessagesToolUseBlock = applyExtra(part.extra, 'anthropicMessages', {
-      higher: {
-        type: 'tool_use' as const,
-        id: remapId(idRemap, part.callId),
-        name: part.name,
-        input: parseToolArgs(part.args),
-      },
+      type: 'tool_use' as const,
+      id: remapId(idRemap, part.callId),
+      name: part.name,
+      input: parseToolArgs(part.args),
     });
     return [block];
   }
@@ -135,8 +131,8 @@ const partToAssistantBlocks = (part: OutputPart, idRemap: Map<string, string>): 
 
 const reasoningToBlock = (part: ReasoningPart): MessagesAssistantContentBlock | undefined => {
   const data = part.data;
-  const build = <T extends MessagesAssistantContentBlock>(higher: T): MessagesAssistantContentBlock =>
-    applyExtra(part.extra, 'anthropicMessages', { higher });
+  const build = <T extends MessagesAssistantContentBlock>(core: T): MessagesAssistantContentBlock =>
+    applyExtra(part.extra, 'anthropicMessages', core);
   if (data.source === 'openaiResponses') {
     const { summary, encrypted_content } = data.data;
     const text = flattenResponsesSummary(summary);

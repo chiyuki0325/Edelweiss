@@ -48,13 +48,13 @@ const inputMessageToItem = async (msg: InputMessage): Promise<ResponsesInputMess
 
 const textPartToBlock = (tp: TextPart): ResponsesOutputContentBlock =>
   tp.refusal === true
-    ? applyExtra(tp.extra, 'openaiResponses', { higher: { type: 'refusal' as const, refusal: tp.text } })
-    : applyExtra(tp.extra, 'openaiResponses', { higher: { type: 'output_text' as const, text: tp.text } });
+    ? applyExtra(tp.extra, 'openaiResponses', { type: 'refusal' as const, refusal: tp.text })
+    : applyExtra(tp.extra, 'openaiResponses', { type: 'output_text' as const, text: tp.text });
 
 const reasoningToItem = (part: ReasoningPart, mkCrossId: () => string): ResponsesOutputReasoning | undefined => {
   const data = part.data;
-  const build = (higher: ResponsesOutputReasoning): ResponsesOutputReasoning =>
-    applyExtra(part.extra, 'openaiResponses', { lower: { status: 'completed' }, higher });
+  const build = (core: ResponsesOutputReasoning): ResponsesOutputReasoning =>
+    applyExtra(part.extra, 'openaiResponses', core);
   if (data.source === 'openaiResponses') {
     const { id, summary, encrypted_content } = data.data;
     return build({ type: 'reasoning', id, summary, encrypted_content });
@@ -85,30 +85,23 @@ const messageReasoningToItem = (r: MessageReasoning, mkCrossId: () => string): R
     id: mkCrossId(),
     summary: text !== undefined ? [{ type: 'summary_text', text }] : [],
     encrypted_content: opaque,
-    status: 'completed',
   };
 };
 
 const partToItems = (part: OutputPart, msgExtra: OutputMessage['extra'], mkCrossId: () => string): ResponsesDataItem[] => {
   if (part.kind === 'textGroup') {
     const item: ResponsesOutputMessage = applyExtra(part.extra, 'openaiResponses', {
-      lower: { status: 'completed' },
-      higher: {
-        type: 'message' as const,
-        role: 'assistant',
-        content: part.content.map(textPartToBlock),
-      },
+      type: 'message' as const,
+      role: 'assistant',
+      content: part.content.map(textPartToBlock),
     });
     return [item];
   }
   if (part.kind === 'text') {
     const item: ResponsesOutputMessage = applyExtra(msgExtra, 'openaiResponses', {
-      lower: { status: 'completed' },
-      higher: {
-        type: 'message' as const,
-        role: 'assistant',
-        content: [textPartToBlock(part)],
-      },
+      type: 'message' as const,
+      role: 'assistant',
+      content: [textPartToBlock(part)],
     });
     return [item];
   }
@@ -118,13 +111,10 @@ const partToItems = (part: OutputPart, msgExtra: OutputMessage['extra'], mkCross
   }
   if (part.kind === 'toolCall') {
     const item: ResponsesOutputFunctionCall = applyExtra(part.extra, 'openaiResponses', {
-      lower: { status: 'completed' },
-      higher: {
-        type: 'function_call' as const,
-        call_id: part.callId,
-        name: part.name,
-        arguments: part.args,
-      },
+      type: 'function_call' as const,
+      call_id: part.callId,
+      name: part.name,
+      arguments: part.args,
     });
     return [item];
   }
