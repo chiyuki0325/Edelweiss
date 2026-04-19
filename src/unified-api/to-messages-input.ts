@@ -83,9 +83,6 @@ const assistantMessageToBlocks = async (msg: OutputMessage, idRemap: Map<string,
     if (thinkingBlock !== undefined) blocks.unshift(thinkingBlock);
   }
 
-  // Anthropic requires at least one content block.
-  if (blocks.length === 0) blocks.push({ type: 'text', text: '' });
-
   return blocks;
 };
 
@@ -104,14 +101,17 @@ const parseToolArgs = (raw: string): Record<string, unknown> => {
 
 const partToAssistantBlocks = (part: OutputPart, idRemap: Map<string, string>): MessagesAssistantContentBlock[] => {
   if (part.kind === 'text') {
+    if (part.text.length === 0) return [];
     const block: MessagesTextBlock = applyExtra(part.extra, 'anthropicMessages', {
       type: 'text' as const, text: part.text,
     });
     return [block];
   }
   if (part.kind === 'textGroup') {
-    return part.content.map((tp): MessagesTextBlock =>
-      applyExtra(tp.extra, 'anthropicMessages', { type: 'text' as const, text: tp.text }));
+    return part.content.flatMap((tp): MessagesTextBlock[] => {
+      if (tp.text.length === 0) return [];
+      return [applyExtra(tp.extra, 'anthropicMessages', { type: 'text' as const, text: tp.text })];
+    });
   }
   if (part.kind === 'toolCall') {
     const block: MessagesToolUseBlock = applyExtra(part.extra, 'anthropicMessages', {
