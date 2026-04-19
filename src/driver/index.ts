@@ -312,7 +312,7 @@ export const createDriver = (config: DriverConfig, deps: {
                 const probeResult = await callLlm(
                   chatConfig.probe.model, probeEntries, system,
                   tools.map(toToolSchema),
-                  { log, label: `probe:${chatId}` },
+                  { log, label: `probe:${chatId}`, maxImagesAllowed: chatConfig.probe.model.maxImagesAllowed },
                 );
 
                 const hasToolCalls = probeResult.entries.some(

@@ -63,6 +63,7 @@ export const runCompaction = async (params: CompactionParams): Promise<Compactio
       log: params.log,
       label: `compact:${params.chatId}`,
       dumpId: `${params.chatId}.compact`,
+      maxImagesAllowed: params.maxImagesAllowed,
     });
     summary = extractAssistantText(result.entries);
     inputTokens = result.usage.inputTokens;
