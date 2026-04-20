@@ -406,6 +406,15 @@ const main = async () => {
   });
 
   telegram.onMessage(msg => {
+    // Bot's own messages picked up by userbot are already injected into the
+    // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
+    // to avoid a spurious driver trigger that would enter the probe flow.
+    // Still persist the raw message for richer metadata (upsert is idempotent).
+    if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
+      try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist self message'); }
+      return;
+    }
+
     // Service messages (join/leave/rename/pin/etc.) — route to service event path
     if (isServiceMessage(msg)) {
       const event = adaptServiceEvent(msg);
