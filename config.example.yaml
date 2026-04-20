@@ -36,6 +36,9 @@ runtime:
 chats:
   default:
     model: "primary"            # references a key in models
+    # systemFiles:              # identity files injected into the system prompt (read at startup)
+    #   - "./prompts/IDENTITY.md"
+    #   - "./prompts/SOUL.md"
     compaction:
       maxContextEstTokens: 512000    # high water mark: trigger compaction when estimated context exceeds this
       workingWindowEstTokens: 8000   # low water mark: how many estimated tokens of raw content to retain after compaction

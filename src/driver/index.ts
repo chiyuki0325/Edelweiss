@@ -254,6 +254,7 @@ export const createDriver = (config: DriverConfig, deps: {
             const system = await renderSystemPrompt({
               currentChannel: 'telegram',
               modelName: chatConfig.primaryModel.model,
+              systemFiles: chatConfig.systemFiles,
             });
 
             // --- Compute mention/reply/interrupt state from RC + TRs ---
