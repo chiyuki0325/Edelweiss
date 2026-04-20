@@ -13,6 +13,8 @@
 
 Cahciua 是一个 Telegram 群聊机器人，通过 LLM 自主决定何时参与对话并生成回复。
 
+Edelweiss 是 Cahciua 的 fork，用于个人使用场景。
+
 ## DCP — Deterministic Context Pipeline
 
 > “如果人生的上下文可以倒带，可否让我用无尽的重载，去编排那个完美的未来？”
