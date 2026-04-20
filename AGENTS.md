@@ -227,11 +227,30 @@ Design rule: metadata changes about entities → append-only; content changes to
 
 `src/http.ts` exposes `registerHttpSecret(secret)`. Registered strings are masked with equal-length `*` in all `HttpError` messages. Bot token is registered at client creation.
 
-### Message Scheduling
+### Message Scheduling & Debounce
 
-Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **immediate trigger + natural batching** — the reply effect fires as soon as new external messages are detected (`setTimeout(0)` only exits the synchronous signal graph). The `running` flag prevents concurrent LLM calls; messages arriving during a call accumulate and are picked up on the next run. No debounce/throttle is currently implemented. Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Bot responds via `send_message` tool call (not 1:1 response).
 
 Scheduling lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing it would create coordination overhead.
+
+**Debounce mechanism**: When new external messages arrive, the Driver does NOT immediately trigger a probe/LLM call. Instead, it starts a debounce window:
+
+1. New external message detected → start timer (`initialDelayMs`, default 300ms)
+2. Additional messages arriving during debounce → reset timer to `initialDelayMs`
+3. Typing event (MTProto `UpdateUserTyping` / `UpdateChatUserTyping` / `UpdateChannelUserTyping`) arrives during debounce → reset timer to `typingExtendMs` (default 5000ms, matches Telegram's ~5s typing update interval)
+4. Timer expires → trigger probe/LLM with all accumulated messages
+5. Hard cap (`maxDelayMs`, default 30000ms) → force trigger regardless of typing
+
+The `running` flag prevents concurrent LLM calls. Messages arriving during a call accumulate in RC and start a new debounce cycle when the call finishes.
+
+**Implementation**: The reactive `effect` detects `needsReply` transitions (idle → debouncing). Imperative handlers (`onNewMessage`, `onTyping`) reset the debounce timer during the window. `startReplyFlow()` is called when the timer or hard cap fires.
+
+**Config** (`debounce` section per chat in `config.yaml`):
+- `initialDelayMs` (number, default `300`): wait time after a message before triggering probe/LLM
+- `typingExtendMs` (number, default `5000`): extend wait time when typing events are received
+- `maxDelayMs` (number, default `30000`): hard cap — never wait longer than this
+
+**Typing events**: Received via gramjs (MTProto User API) raw update handler. Only `SendMessageTypingAction` is forwarded (not upload/record actions). Typing events are filtered to bot-joined chats only.
 
 ### Tool Call Loop Interleaving
 

@@ -401,6 +401,10 @@ const main = async () => {
     if (rc) driver.handleEvent(chatId, rc);
   }
 
+  telegram.onTyping(event => {
+    driver.handleTyping(event.chatId);
+  });
+
   telegram.onMessage(msg => {
     // Service messages (join/leave/rename/pin/etc.) — route to service event path
     if (isServiceMessage(msg)) {

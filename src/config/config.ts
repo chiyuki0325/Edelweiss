@@ -32,6 +32,11 @@ const RuntimeSchema = v.optional(v.object({
 
 const ChatConfigSchema = v.object({
   model: v.optional(v.string(), 'primary'),
+  debounce: v.optional(v.object({
+    initialDelayMs: v.optional(v.number(), 300),
+    typingExtendMs: v.optional(v.number(), 5000),
+    maxDelayMs: v.optional(v.number(), 30000),
+  }), {}),
   compaction: v.optional(v.object({
     enabled: v.optional(v.boolean(), false),
     maxContextEstTokens: v.optional(v.number(), 200000),
@@ -86,6 +91,11 @@ const ChatConfigSchema = v.object({
 // Per-chat overrides: all fields optional, no defaults
 const ChatOverrideSchema = v.optional(v.partial(v.object({
   model: v.string(),
+  debounce: v.partial(v.object({
+    initialDelayMs: v.number(),
+    typingExtendMs: v.number(),
+    maxDelayMs: v.number(),
+  })),
   compaction: v.partial(v.object({
     enabled: v.boolean(),
     maxContextEstTokens: v.number(),
@@ -175,9 +185,16 @@ export interface BackgroundTasksConfig {
   retentionCount: number;
 }
 
+export interface DebounceConfig {
+  initialDelayMs: number;
+  typingExtendMs: number;
+  maxDelayMs: number;
+}
+
 export interface ResolvedChatConfig {
   primaryModel: LlmEndpoint;
   primaryApiFormat: ProviderFormat;
+  debounce: DebounceConfig;
   compaction: CompactionConfig;
   probe: { enabled: boolean; model: LlmEndpoint };
   imageToText: { enabled: boolean; model?: string };
@@ -235,6 +252,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
   return {
     primaryModel,
     primaryApiFormat,
+    debounce: merged.debounce,
     compaction: {
       ...merged.compaction,
       model: merged.compaction.model ? resolveModel(config, merged.compaction.model) : undefined,
