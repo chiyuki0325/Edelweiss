@@ -596,6 +596,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
   const handleTyping = (chatId: string) => {
     if (!chatIds.has(chatId)) return;
+    log.withFields({ chatId }).log('Typing event received');
     const scope = chatScopes.get(chatId);
     if (scope) scope.onTyping();
   };
