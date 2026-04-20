@@ -35,7 +35,7 @@ const ChatConfigSchema = v.object({
   model: v.optional(v.string(), 'primary'),
   systemFiles: v.optional(v.array(v.string()), []),
   debounce: v.optional(v.object({
-    initialDelayMs: v.optional(v.number(), 300),
+    initialDelayMs: v.optional(v.number(), 1000),
     typingExtendMs: v.optional(v.number(), 5000),
     maxDelayMs: v.optional(v.number(), 30000),
   }), {}),

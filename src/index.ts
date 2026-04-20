@@ -439,7 +439,7 @@ const main = async () => {
     try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
 
     const rc = pipeline.pushEvent(event.chatId, event);
-    driver.handleEvent(event.chatId, rc);
+    driver.handleEvent(event.chatId, rc, event.sender?.id);
   });
 
   telegram.onMessageEdit(edit => {

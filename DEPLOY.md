@@ -116,6 +116,10 @@ runtime:
 chats:
   default:
     model: "primary"            # 引用 models 中的键名
+    debounce:
+      initialDelayMs: 1000      # 同一发送者后续消息的等待窗口
+      typingExtendMs: 5000      # 收到正在输入事件时延长等待
+      maxDelayMs: 30000         # 硬上限
     compaction:
       enabled: true             # 是否启用上下文压缩
       maxContextEstTokens: 512000   # 触发压缩的上下文估算 token 上限

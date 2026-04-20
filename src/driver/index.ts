@@ -152,15 +152,19 @@ export const createDriver = (config: DriverConfig, deps: {
     // messages sent in quick succession (and ongoing typing) to batch naturally.
     // The reactive effect detects "needsReply" transitions; imperative handlers
     // (onNewMessage, onTyping) reset the timer during the debounce window.
+    // Only messages from the same sender that triggered the debounce window
+    // reset the timer; typing events from anyone extend it.
     const { initialDelayMs, typingExtendMs, maxDelayMs } = chatConfig.debounce;
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let hardCapTimer: ReturnType<typeof setTimeout> | undefined;
     let debounceActive = false;
+    let triggerSenderId: string | undefined;
 
     const cancelDebounce = () => {
       if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
       if (hardCapTimer) { clearTimeout(hardCapTimer); hardCapTimer = undefined; }
       debounceActive = false;
+      triggerSenderId = undefined;
     };
 
     // --- LLM reply flow (extracted from timer callback) ---
@@ -422,7 +426,7 @@ export const createDriver = (config: DriverConfig, deps: {
       })();
     };
 
-    const scheduleDebounce = (delayMs: number) => {
+    const scheduleDebounce = (delayMs: number, senderId?: string) => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = undefined;
@@ -431,11 +435,12 @@ export const createDriver = (config: DriverConfig, deps: {
 
       if (!debounceActive) {
         debounceActive = true;
+        triggerSenderId = senderId;
         hardCapTimer = setTimeout(() => {
           hardCapTimer = undefined;
           startReplyFlow();
         }, maxDelayMs);
-        log.withFields({ chatId, delayMs, maxDelayMs }).log('Debounce started');
+        log.withFields({ chatId, delayMs, maxDelayMs, triggerSenderId }).log('Debounce started');
       }
     };
 
@@ -462,22 +467,30 @@ export const createDriver = (config: DriverConfig, deps: {
       }
 
       // needsReply transitioned to true — start debounce if not already waiting.
-      // setTimeout exits the synchronous signal graph before scheduling async work.
       if (!debounceActive) {
         scheduleDebounce(initialDelayMs);
       }
     });
 
-    // Called by handleEvent when new RC arrives — resets debounce with initial delay
-    const onNewMessage = () => {
-      if (running() || !debounceActive) return;
-      scheduleDebounce(initialDelayMs);
+    // Called by handleEvent when a new message arrives.
+    // Starts debounce if not active (with sender tracking), or resets timer
+    // if the same sender sends again during the window.
+    const onNewMessage = (senderId?: string) => {
+      if (running()) return;
+      if (!senderId) return;
+      if (!debounceActive) {
+        // First message — start debounce with sender tracking.
+        // The effect would also start it, but without senderId context.
+        // Starting here ensures triggerSenderId is captured immediately.
+        scheduleDebounce(initialDelayMs, senderId);
+      } else if (senderId === triggerSenderId) {
+        scheduleDebounce(initialDelayMs, senderId);
+      }
     };
 
-    // Called by handleTyping — extends debounce with typing delay
+    // Called by handleTyping — extends debounce with typing delay regardless of sender
     const onTyping = () => {
       if (running() || !debounceActive) return;
-      log.withFields({ chatId }).log('Debounce extended by typing event');
       scheduleDebounce(typingExtendMs);
     };
 
@@ -587,11 +600,11 @@ export const createDriver = (config: DriverConfig, deps: {
     return entry;
   };
 
-  const handleEvent = (chatId: string, newRC: RenderedContext) => {
+  const handleEvent = (chatId: string, newRC: RenderedContext, senderId?: string) => {
     if (!chatIds.has(chatId)) return;
     const scope = getOrCreateScope(chatId);
     scope.rc(newRC);
-    scope.onNewMessage();
+    scope.onNewMessage(senderId);
   };
 
   const handleTyping = (chatId: string) => {
