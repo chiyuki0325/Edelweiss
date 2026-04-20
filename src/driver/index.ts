@@ -276,6 +276,7 @@ export const createDriver = (config: DriverConfig, deps: {
           const system = await renderSystemPrompt({
             currentChannel: 'telegram',
             modelName: chatConfig.primaryModel.model,
+            systemFiles: chatConfig.systemFiles,
             hasBashTool,
             hasWebSearchTool,
             hasDownloadFileTool,

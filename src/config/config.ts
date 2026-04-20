@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 
 import { merge } from 'es-toolkit';
 import * as v from 'valibot';
@@ -32,6 +33,7 @@ const RuntimeSchema = v.optional(v.object({
 
 const ChatConfigSchema = v.object({
   model: v.optional(v.string(), 'primary'),
+  systemFiles: v.optional(v.array(v.string()), []),
   debounce: v.optional(v.object({
     initialDelayMs: v.optional(v.number(), 300),
     typingExtendMs: v.optional(v.number(), 5000),
@@ -91,6 +93,7 @@ const ChatConfigSchema = v.object({
 // Per-chat overrides: all fields optional, no defaults
 const ChatOverrideSchema = v.optional(v.partial(v.object({
   model: v.string(),
+  systemFiles: v.array(v.string()),
   debounce: v.partial(v.object({
     initialDelayMs: v.number(),
     typingExtendMs: v.number(),
@@ -194,6 +197,7 @@ export interface DebounceConfig {
 export interface ResolvedChatConfig {
   primaryModel: LlmEndpoint;
   primaryApiFormat: ProviderFormat;
+  systemFiles: { filename: string; content: string }[];
   debounce: DebounceConfig;
   compaction: CompactionConfig;
   probe: { enabled: boolean; model: LlmEndpoint };
@@ -249,9 +253,15 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
   const primaryModel = resolveModel(config, merged.model);
   const primaryApiFormat: ProviderFormat = primaryModel.apiFormat ?? 'openai-chat';
 
+  const systemFiles = merged.systemFiles.map(filePath => ({
+    filename: basename(filePath),
+    content: readFileSync(filePath, 'utf-8').trim(),
+  }));
+
   return {
     primaryModel,
     primaryApiFormat,
+    systemFiles,
     debounce: merged.debounce,
     compaction: {
       ...merged.compaction,

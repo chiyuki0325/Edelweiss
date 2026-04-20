@@ -38,6 +38,9 @@ runtime:
 chats:
   default:
     model: "primary"            # references a key in models
+    # systemFiles:              # identity files injected into the system prompt (read at startup)
+    #   - "./prompts/IDENTITY.md"
+    #   - "./prompts/SOUL.md"
     debounce:
       initialDelayMs: 300       # wait before triggering probe/LLM after a message
       typingExtendMs: 5000      # extend wait when someone is typing (~Telegram typing event interval)
