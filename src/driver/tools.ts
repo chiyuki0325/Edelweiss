@@ -137,17 +137,17 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
     + 'For large outputs, redirect to a file and read specific ranges. '
     + `Set timeout_seconds > ${backgroundTask.backgroundThresholdSec} for long-running commands — they run as background tasks and return immediately with a task ID.`,
   parameters: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'The shell command to execute.' },
-        timeout_seconds: {
-          type: 'number',
-          description: `Timeout in seconds. Commands with timeout > ${backgroundTask.backgroundThresholdSec}s run as background tasks and return immediately with a task ID. Short commands (e.g. ls, cat) typically need 5-10s; builds or tests may need 60-300s.`,
-        },
-        intention: { type: 'string', description: 'Brief description of what this command does (shown in background task status).' },
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'The shell command to execute.' },
+      timeout_seconds: {
+        type: 'number',
+        description: `Timeout in seconds. Commands with timeout > ${backgroundTask.backgroundThresholdSec}s run as background tasks and return immediately with a task ID. Short commands (e.g. ls, cat) typically need 5-10s; builds or tests may need 60-300s.`,
       },
-      required: ['command', 'timeout_seconds'],
+      intention: { type: 'string', description: 'Brief description of what this command does (shown in background task status).' },
     },
+    required: ['command', 'timeout_seconds'],
+  },
   execute: async input => {
     const { command, timeout_seconds, intention } = input as { command: string; timeout_seconds: number; intention?: string };
     const timeoutSec = timeout_seconds;
@@ -383,6 +383,18 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buf
     .png()
     .toBuffer();
 };
+
+export const createDismissMessageTool = (): CahciuaTool => createTool({
+  name: 'dismiss_message',
+  description: 'Explicitly signal that you have decided to stay silent this turn — no message will be sent. Call this when you consciously choose not to respond.',
+  parameters: {
+    type: 'object',
+    properties: {
+      reason: { type: 'string', description: 'Brief internal note on why you are staying silent (not shown to anyone).' },
+    },
+  },
+  execute: _input => ({ content: JSON.stringify({ ok: true }), requiresFollowUp: false }),
+});
 
 export const createReadImageTool = (deps: {
   downloadAttachment: (fileId: string) => Promise<Buffer>;

@@ -7,7 +7,7 @@ import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, lates
 import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool, createDismissMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -194,7 +194,7 @@ export const createDriver = (config: DriverConfig, deps: {
               downloadMessageMedia: deps.downloadMessageMedia,
             });
 
-            const tools: CahciuaTool[] = [sendMessageTool];
+            const tools: CahciuaTool[] = [sendMessageTool, createDismissMessageTool()];
             tools.push(createBashTool(deps.runtimeConfig, {
               startTask: deps.backgroundTask.startTask,
               sessionId: chatId,
