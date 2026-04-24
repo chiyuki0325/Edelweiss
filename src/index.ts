@@ -378,6 +378,7 @@ const main = async () => {
       ? (chatId, messageId) => telegram.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
     resolveModel: name => resolveModel(config, name),
+    sendTypingAction: async chatId => { await telegram.bot.raw().api.sendChatAction(chatId, 'typing'); },
     backgroundTask: {
       startTask: (typeName, sessionId, params, intention, timeoutMs) =>
         backgroundTaskManager.startTask(typeName, sessionId, params, intention, timeoutMs),

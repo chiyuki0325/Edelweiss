@@ -65,6 +65,7 @@ export const createDriver = (config: DriverConfig, deps: {
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
   resolveModel: (name: string) => LlmEndpoint;
+  sendTypingAction?: (chatId: string) => Promise<void>;
   backgroundTask?: {
     startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
     killTask: (taskId: number) => { ok: boolean; error?: string };
@@ -380,41 +381,55 @@ export const createDriver = (config: DriverConfig, deps: {
           injectLateBindingPrompt(ctx.messages, primaryLateBinding);
 
           const runner = getOrCreateRunner(chatConfig.primaryModel);
-          await runner.runStepLoop({
-            chatId,
-            messages: ctx.messages,
-            system,
-            tools,
-            maxSteps: MAX_STEPS,
-            maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
-            onStepComplete: (stepData, usage, requestedAtMs) => {
-              if (chatConfig.primaryApiFormat === 'responses') {
-                deps.persistTurnResponse(chatId, {
-                  requestedAtMs,
-                  provider: 'responses',
-                  data: stepData as ResponsesTRDataItem[],
-                  inputTokens: usage.prompt_tokens,
-                  outputTokens: usage.completion_tokens,
-                  reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
-                });
-              } else {
-                deps.persistTurnResponse(chatId, {
-                  requestedAtMs,
-                  provider: 'openai-chat',
-                  data: stepData as TRDataEntry[],
-                  inputTokens: usage.prompt_tokens,
-                  outputTokens: usage.completion_tokens,
-                  reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
-                });
-              }
-              lastProcessedMs(requestedAtMs);
-            },
-            checkInterrupt: () => {
-              if (rc() === rcAtStart) return false;
-              return latestExternalEventMs(rc(), lastProcessedMs()) != null;
-            },
-            log,
-          });
+
+          // Send typing action for the duration of the primary step loop.
+          let typingInterval: ReturnType<typeof setInterval> | undefined;
+          if (deps.sendTypingAction) {
+            void deps.sendTypingAction(chatId).catch(() => {});
+            typingInterval = setInterval(() => {
+              void deps.sendTypingAction!(chatId).catch(() => {});
+            }, 5000);
+          }
+
+          try {
+            await runner.runStepLoop({
+              chatId,
+              messages: ctx.messages,
+              system,
+              tools,
+              maxSteps: MAX_STEPS,
+              maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
+              onStepComplete: (stepData, usage, requestedAtMs) => {
+                if (chatConfig.primaryApiFormat === 'responses') {
+                  deps.persistTurnResponse(chatId, {
+                    requestedAtMs,
+                    provider: 'responses',
+                    data: stepData as ResponsesTRDataItem[],
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
+                  });
+                } else {
+                  deps.persistTurnResponse(chatId, {
+                    requestedAtMs,
+                    provider: 'openai-chat',
+                    data: stepData as TRDataEntry[],
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
+                  });
+                }
+                lastProcessedMs(requestedAtMs);
+              },
+              checkInterrupt: () => {
+                if (rc() === rcAtStart) return false;
+                return latestExternalEventMs(rc(), lastProcessedMs()) != null;
+              },
+              log,
+            });
+          } finally {
+            if (typingInterval) { clearInterval(typingInterval); typingInterval = undefined; }
+          }
         } catch (err) {
           // No retry or backoff — a failed call is recorded via failedRc and
           // only re-attempted when new external messages produce a fresh RC.
