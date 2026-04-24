@@ -56,6 +56,14 @@ const ChatConfigSchema = v.object({
     model: v.optional(v.string(), ''),
     maxFrames: v.optional(v.number(), 5),
   }), {}),
+  humanLikeness: v.optional(v.object({
+    trailingPeriod: v.optional(v.boolean(), true),
+    denseClausePunctuation: v.optional(v.boolean(), true),
+    multipleMarkdownBold: v.optional(v.boolean(), true),
+    markdownList: v.optional(v.boolean(), true),
+    markdownHeader: v.optional(v.boolean(), true),
+    newline: v.optional(v.boolean(), true),
+  }), {}),
   tools: v.object({
     bash: v.optional(v.object({
       backgroundThresholdSec: v.optional(v.number(), 10),
@@ -92,6 +100,14 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     enabled: v.boolean(),
     model: v.string(),
     maxFrames: v.number(),
+  })),
+  humanLikeness: v.partial(v.object({
+    trailingPeriod: v.boolean(),
+    denseClausePunctuation: v.boolean(),
+    multipleMarkdownBold: v.boolean(),
+    markdownList: v.boolean(),
+    markdownHeader: v.boolean(),
+    newline: v.boolean(),
   })),
   tools: v.partial(v.object({
     bash: v.partial(v.object({
@@ -149,6 +165,14 @@ export interface ResolvedChatConfig {
   imageToText: { enabled: boolean; model?: string };
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
+  humanLikeness: {
+    trailingPeriod: boolean;
+    denseClausePunctuation: boolean;
+    multipleMarkdownBold: boolean;
+    markdownList: boolean;
+    markdownHeader: boolean;
+    newline: boolean;
+  };
   tools: {
     bash: { backgroundThresholdSec: number };
     webSearch: { tavilyKey: string };
@@ -225,6 +249,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: merged.customEmojiToText.model || undefined,
       maxFrames: merged.customEmojiToText.maxFrames,
     },
+    humanLikeness: merged.humanLikeness,
     tools: {
       bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec },
       webSearch: { tavilyKey: merged.tools.webSearch.tavilyKey },

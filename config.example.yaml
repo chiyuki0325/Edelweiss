@@ -61,6 +61,15 @@ chats:
       enabled: false
       model: "primary"            # references a key in models
       # maxFrames: 5              # max equidistant frames for animated custom emoji (default 5)
+    # Human-likeness heuristics: each check can be disabled independently (all enabled by default).
+    # These feed the late-binding feedback XML that nudges the model toward more natural phrasing.
+    # humanLikeness:
+    #   trailingPeriod: true          # flag messages ending with a full stop
+    #   denseClausePunctuation: true  # flag short messages packed with clause punctuation
+    #   multipleMarkdownBold: true    # flag more than one **bold** span
+    #   markdownList: true            # flag Markdown lists
+    #   markdownHeader: true          # flag Markdown headers
+    #   newline: true                 # flag any newline in a send_message
     # Tools: configuration for enabled tools.
     tools:
       # bash:

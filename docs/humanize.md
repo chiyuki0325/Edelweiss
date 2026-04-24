@@ -252,4 +252,32 @@ Sound like a real conversation, not a Q&A system.
 - **篇幅控制在 ~30 行**，避免 system prompt 过长导致指令被稀释
 - **末尾显式提醒不要过度执行**，避免出现新的不自然
 
-2026-04 补充实现：`src/driver/send-message-human-likeness.ts` 新增 `trailing-period` 和 `dense-clause-punctuation` 两个 late-binding heuristics。前者回看 bot 是否反复用句号收尾，后者回看短消息里是否反复用多个逗号/冒号式停顿，从而把“优先写成无标点裸句或用空格承接轻停顿”从隐含观察提升为显式反馈。
+2026-04 补充实现：`src/driver/send-message-human-likeness.ts` 新增 `trailing-period` 和 `dense-clause-punctuation` 两个 late-binding heuristics。前者回看 bot 是否反复用句号收尾，后者回看短消息里是否反复用多个逗号/冒号式停顿，从而把”优先写成无标点裸句或用空格承接轻停顿”从隐含观察提升为显式反馈。
+
+## 5. 各项检测的独立开关
+
+每个 heuristic 检测均可在 chat config 中单独关闭，对应 `humanLikeness` 字段下的 6 个布尔值（默认全部开启）：
+
+| 配置键 | 对应检测 | 默认 |
+|--------|----------|------|
+| `trailingPeriod` | 消息以句号结尾 | `true` |
+| `denseClausePunctuation` | 短消息中包含多个从句标点（逗号/冒号等） | `true` |
+| `multipleMarkdownBold` | 出现超过一处 `**加粗**` | `true` |
+| `markdownList` | 使用了 Markdown 列表 | `true` |
+| `markdownHeader` | 使用了 Markdown 标题 | `true` |
+| `newline` | 消息中包含换行符 | `true` |
+
+**何时关闭某项：**
+- 某个 chat 的用法确实需要 Markdown 格式（如代码频道），可关闭 `markdownList`/`markdownHeader`/`multipleMarkdownBold`。
+- 某个 chat 允许多段回复，可关闭 `newline`。
+- 通过 per-chat override 配置，不影响其他 chat 的默认行为。
+
+配置示例（config.yaml）：
+
+```yaml
+chats:
+  “751414718”:
+    humanLikeness:
+      markdownList: false
+      markdownHeader: false
+```
