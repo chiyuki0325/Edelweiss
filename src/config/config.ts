@@ -68,6 +68,7 @@ const ChatConfigSchema = v.object({
     trimStaleNoToolCallTurnResponses: v.optional(v.boolean(), false),
     trimSelfMessagesCoveredBySendToolCalls: v.optional(v.boolean(), false),
     trimToolResults: v.optional(v.boolean(), false),
+    sendTypingAction: v.optional(v.boolean(), true),
   }), {}),
   humanLikeness: v.optional(v.object({
     trailingPeriod: v.optional(v.boolean(), true),
@@ -136,6 +137,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     trimStaleNoToolCallTurnResponses: v.boolean(),
     trimSelfMessagesCoveredBySendToolCalls: v.boolean(),
     trimToolResults: v.boolean(),
+    sendTypingAction: v.boolean(),
   })),
   humanLikeness: v.partial(v.object({
     trailingPeriod: v.boolean(),

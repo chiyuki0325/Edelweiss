@@ -384,7 +384,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
           // Send typing action for the duration of the primary step loop.
           let typingInterval: ReturnType<typeof setInterval> | undefined;
-          if (deps.sendTypingAction) {
+          if (deps.sendTypingAction && chatConfig.featureFlags.sendTypingAction) {
             void deps.sendTypingAction(chatId).catch(() => {});
             typingInterval = setInterval(() => {
               void deps.sendTypingAction!(chatId).catch(() => {});

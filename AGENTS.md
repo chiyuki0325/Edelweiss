@@ -337,6 +337,7 @@ Feature flags for experimental optimizations. Controlled via `config.yaml` under
 | `trimStaleNoToolCallTurnResponses` | `features.trimStaleNoToolCallTurnResponses` | Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge |
 | `trimSelfMessagesCoveredBySendToolCalls` | `features.trimSelfMessagesCoveredBySendToolCalls` | Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results) |
 | `trimToolResults` | `features.trimToolResults` | Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with `detail !== 'low'`. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded. Known limitation: image downgrade currently rewrites only the `detail` flag, not the embedded image buffer, so non-OpenAI models that ignore `detail` still receive the original full-size image. Keeps `TRAssistantEntry` (call structure + reasoning) intact |
+| `sendTypingAction` | `features.sendTypingAction` | Send Bot API `sendChatAction('typing')` immediately before the primary model step loop and repeat every 5s until the loop completes (default `true`). Disable to suppress typing indicators |
 
 Feature flags must not affect correctness — only context efficiency. Add new flags to the `features` section in `ConfigSchema` in `src/config/config.ts` and this table.
 

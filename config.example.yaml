@@ -74,6 +74,7 @@ chats:
       trimStaleNoToolCallTurnResponses: false
       trimSelfMessagesCoveredBySendToolCalls: false
       trimToolResults: false
+      sendTypingAction: true         # send Bot API typing action while primary model is running
     # Human-likeness heuristics: each check can be disabled independently (all enabled by default).
     # These feed the late-binding feedback XML that nudges the model toward more natural phrasing.
     # humanLikeness:

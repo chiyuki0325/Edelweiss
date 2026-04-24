@@ -54,6 +54,7 @@ const flags = (overrides: Partial<FeatureFlags> = {}): FeatureFlags => ({
   trimStaleNoToolCallTurnResponses: false,
   trimSelfMessagesCoveredBySendToolCalls: false,
   trimToolResults: false,
+  sendTypingAction: true,
   ...overrides,
 });
 
