@@ -151,12 +151,12 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           const cacheTotal = hitTokens + missTokens;
           const apiCacheHitRate = cacheTotal > 0 ? hitTokens / cacheTotal : null;
 
-          if (apiCacheHitRate != null && apiCacheHitRate < CACHE_ALERT_THRESHOLD) {
+          if (prefixRatio != null && prefixRatio < CACHE_ALERT_THRESHOLD) {
             sendTelegramAlert(
-              '⚠️ <b>KV cache miss</b> @FlowingSnow\n'
+              '⚠️ <b>KV cache prefix drop</b> @FlowingSnow\n'
               + `req #${n} · model: ${parsed.model ?? 'unknown'}\n`
-              + `cache hit rate: ${(apiCacheHitRate * 100).toFixed(1)}% (threshold ${CACHE_ALERT_THRESHOLD * 100}%)\n`
-              + `hit: ${hitTokens} tokens · miss: ${missTokens} tokens`,
+              + `body prefix ratio: ${(prefixRatio * 100).toFixed(1)}% (threshold ${CACHE_ALERT_THRESHOLD * 100}%)\n`
+              + `api cache hit rate: ${apiCacheHitRate != null ? `${(apiCacheHitRate * 100).toFixed(1)}%` : 'N/A'}`,
             );
           }
 
