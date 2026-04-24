@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@guiiai/logg": "^1.2.11",
-    "@velin-dev/core": "^0.3.4",
+    "@velin-dev/core": "^0.4.1",
     "alien-signals": "^3.1.2",
     "better-sqlite3": "^11.7.0",
     "diff": "^8.0.3",
