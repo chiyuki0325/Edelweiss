@@ -2,7 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
 import { parseSSEStream } from './sse';
-import type { ExtendedMessage } from './types';
+import type { ExtendedMessage, ThinkingConfig } from './types';
 
 // Chat Completions SSE chunk shape (subset we consume)
 interface ChatStreamChunk {
@@ -43,6 +43,7 @@ export interface StreamingChatParams {
   system?: string;
   tools?: ToolSchema[];
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
   log: Logger;
   label: string; // log prefix, e.g. "step" or "compact"
 }
@@ -69,6 +70,8 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
         ...params.messages,
       ],
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      ...(params.thinking ? { thinking: { type: params.thinking.type ?? 'enabled' } } : {}),
+      ...(params.thinking?.effort ? { reasoning_effort: params.thinking.effort } : {}),
       stream: true,
       stream_options: { include_usage: true },
     });

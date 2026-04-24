@@ -71,6 +71,11 @@ export interface ResponsesTurnResponse extends BaseTurnResponse {
 
 export type TurnResponse = ChatTurnResponse | ResponsesTurnResponse;
 
+export interface ThinkingConfig {
+  type?: 'enabled' | 'disabled';
+  effort?: 'high' | 'max';
+}
+
 export interface LlmEndpoint {
   apiBaseUrl: string;
   apiKey: string;
@@ -79,6 +84,7 @@ export interface LlmEndpoint {
   reasoningSignatureCompat?: string;
   maxImagesAllowed?: number;
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
 }
 
 // ContextChunk — merge output intermediate representation

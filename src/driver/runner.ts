@@ -11,7 +11,7 @@ import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
 import type { CahciuaTool } from './tools';
 import { isToolResult } from './tools';
-import type { ExtendedMessage, ProviderFormat, ResponsesTRDataItem, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
+import type { ExtendedMessage, ProviderFormat, ResponsesTRDataItem, ThinkingConfig, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
 
 ensureDumpDir();
 
@@ -21,6 +21,7 @@ export interface RunnerConfig {
   model: string;
   apiFormat?: ProviderFormat;
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
 }
 
 interface StepLoopParams {
@@ -81,6 +82,7 @@ export const createRunner = (config: RunnerConfig) => {
       const response = await streamingChat({
         baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
         messages: messagesToSend, system: params.system, tools: params.tools,
+        thinking: config.thinking,
         log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
       });
 
@@ -138,6 +140,7 @@ export const createRunner = (config: RunnerConfig) => {
       const response = await streamingResponses({
         baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
         input: currentInput, instructions: params.system, tools: responsesTools,
+        thinking: config.thinking,
         log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
       });
 

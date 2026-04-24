@@ -9,6 +9,7 @@ import type {
   ResponsesResult,
 } from './responses-types';
 import { parseSSEStream } from './sse';
+import type { ThinkingConfig } from './types';
 
 export interface StreamingResponsesParams {
   baseURL: string;
@@ -18,6 +19,7 @@ export interface StreamingResponsesParams {
   instructions?: string;
   tools?: ResponseTool[];
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
   log: Logger;
   label: string;
 }
@@ -43,6 +45,7 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
       input: params.input,
       ...(params.instructions ? { instructions: params.instructions } : {}),
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      ...(params.thinking?.effort ? { output_config: { effort: params.thinking.effort } } : {}),
       stream: true,
     });
 

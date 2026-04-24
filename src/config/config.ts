@@ -15,6 +15,10 @@ const llmEndpointEntries = {
   reasoningSignatureCompat: v.optional(v.string()),
   maxImagesAllowed: v.optional(v.number()),
   timeoutSec: v.optional(v.number()),
+  thinking: v.optional(v.object({
+    type: v.optional(v.picklist(['enabled', 'disabled'])),
+    effort: v.optional(v.picklist(['high', 'max'])),
+  })),
 };
 
 // --- Runtime config schema (top-level, global) ---

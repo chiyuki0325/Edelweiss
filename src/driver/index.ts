@@ -81,7 +81,7 @@ export const createDriver = (config: DriverConfig, deps: {
   // Runner cache: keyed by "apiBaseUrl::model" to reuse runners across chats
   // sharing the same endpoint.
   const runners = new Map<string, ReturnType<typeof createRunner>>();
-  const getOrCreateRunner = (endpoint: { apiBaseUrl: string; apiKey: string; model: string; apiFormat?: ProviderFormat; timeoutSec?: number }) => {
+  const getOrCreateRunner = (endpoint: LlmEndpoint) => {
     const key = `${endpoint.apiBaseUrl}::${endpoint.model}`;
     let runner = runners.get(key);
     if (!runner) {
@@ -91,6 +91,7 @@ export const createDriver = (config: DriverConfig, deps: {
         model: endpoint.model,
         apiFormat: endpoint.apiFormat ?? 'openai-chat',
         timeoutSec: endpoint.timeoutSec,
+        thinking: endpoint.thinking,
       });
       runners.set(key, runner);
     }
@@ -331,6 +332,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   model: chatConfig.probe.model.model,
                   input: prepareResponsesInputForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
                   instructions: system, tools: tools.map(xsaiToolToResponsesTool),
+                  thinking: chatConfig.probe.model.thinking,
                   log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                 }).then(r => ({
                   hasToolCalls: r.output.some(item => item.type === 'function_call'),
@@ -341,7 +343,7 @@ export const createDriver = (config: DriverConfig, deps: {
                   baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
                   model: chatConfig.probe.model.model,
                   messages: prepareChatMessagesForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
-                  system,
+                  system, thinking: chatConfig.probe.model.thinking,
                   tools, log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
                 }).then(r => {
                   const msg = r.choices[0]?.message;
@@ -562,6 +564,7 @@ export const createDriver = (config: DriverConfig, deps: {
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
               timeoutSec: compactEndpoint.timeoutSec,
+              thinking: compactEndpoint.thinking,
               chatId,
               rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
               trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),

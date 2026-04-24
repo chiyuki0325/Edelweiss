@@ -9,7 +9,7 @@ import { renderCompactionSystemPrompt, renderCompactionUserInstruction } from '.
 import type { ResponseOutputMessage } from './responses-types';
 import { streamingChat } from './streaming';
 import { streamingResponses } from './streaming-responses';
-import type { CompactionSessionMeta, FeatureFlags, ProviderFormat, TurnResponse } from './types';
+import type { CompactionSessionMeta, FeatureFlags, ProviderFormat, ThinkingConfig, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
 
 export interface CompactionParams {
@@ -27,6 +27,7 @@ export interface CompactionParams {
   featureFlags?: FeatureFlags;
   maxImagesAllowed?: number;
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
   log: Logger;
 }
 
@@ -58,6 +59,7 @@ const callForText = async (
     const result = await streamingResponses({
       baseURL: params.apiBaseUrl, apiKey: params.apiKey, model: params.model,
       input, instructions: system,
+      thinking: params.thinking,
       log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
     });
     writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-response.json`, JSON.stringify(result, null, 2));
@@ -72,7 +74,8 @@ const callForText = async (
 
   const result = await streamingChat({
     baseURL: params.apiBaseUrl, apiKey: params.apiKey, model: params.model,
-    messages: chatMessages, system, log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
+    messages: chatMessages, system, thinking: params.thinking,
+    log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
   });
   writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-response.json`, JSON.stringify(result, null, 2));
   const summary = result.choices[0]?.message?.content;
