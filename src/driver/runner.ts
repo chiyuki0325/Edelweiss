@@ -60,6 +60,28 @@ const executeToolCall = async (
 
 export const createRunner = (config: RunnerConfig) => {
   const apiFormat = config.apiFormat ?? 'openai-chat';
+  const lastInputByChat = new Map<string, string[]>();
+
+  const logPrefixRatio = (chatId: string, input: unknown[], log: Logger): void => {
+    const curr = input.map(item => JSON.stringify(item));
+    const prev = lastInputByChat.get(chatId) ?? [];
+    lastInputByChat.set(chatId, curr);
+    if (prev.length === 0) return;
+
+    let prefixCount = 0;
+    const minLen = Math.min(prev.length, curr.length);
+    while (prefixCount < minLen && prev[prefixCount] === curr[prefixCount])
+      prefixCount++;
+
+    let prefixChars = 0, totalChars = 0;
+    for (let i = 0; i < curr.length; i++) {
+      const len = curr[i]!.length;
+      totalChars += len;
+      if (i < prefixCount) prefixChars += len;
+    }
+    const ratio = totalChars > 0 ? prefixChars / totalChars : 1;
+    log.withFields({ prefixMessages: prefixCount, totalMessages: curr.length, prefixChars, totalChars, kvCachePrefixRatio: ratio.toFixed(3) }).log('KV cache prefix ratio');
+  };
 
   const runStepLoop = async (params: StepLoopParams): Promise<void> => {
     apiFormat === 'responses'
@@ -77,6 +99,7 @@ export const createRunner = (config: RunnerConfig) => {
         model: config.model, system: params.system, messages: messagesToSend,
         tools: params.tools.map(t => ({ type: t.type, function: t.function })),
       }, null, 2));
+      logPrefixRatio(params.chatId, messagesToSend, params.log);
 
       const stepRequestedAt = Date.now();
       const response = await streamingChat({
@@ -135,6 +158,7 @@ export const createRunner = (config: RunnerConfig) => {
       writeFileSync(`${DUMP_DIR}/${params.chatId}.request.json`, JSON.stringify({
         model: config.model, instructions: params.system, input: currentInput, tools: responsesTools,
       }, null, 2));
+      logPrefixRatio(params.chatId, currentInput, params.log);
 
       const stepRequestedAt = Date.now();
       const response = await streamingResponses({
