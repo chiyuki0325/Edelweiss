@@ -120,7 +120,7 @@ const sanitizeResponsesReasoningForTR = (
   tr: ResponsesTurnResponse,
   currentCompat: string | undefined,
 ): ResponsesTRDataItem[] => {
-  const compatMatch = !!currentCompat && !!tr.reasoningSignatureCompat && tr.reasoningSignatureCompat === currentCompat;
+  const compatMatch = (currentCompat ?? '') === (tr.reasoningSignatureCompat ?? '');
 
   if (compatMatch) return tr.data;
   return tr.data.filter(item => item.type !== 'reasoning');
@@ -130,7 +130,7 @@ const sanitizeChatReasoningForTR = (
   tr: ChatTurnResponse,
   currentCompat: string | undefined,
 ): TRDataEntry[] => {
-  const compatMatch = !!currentCompat && !!tr.reasoningSignatureCompat && tr.reasoningSignatureCompat === currentCompat;
+  const compatMatch = (currentCompat ?? '') === (tr.reasoningSignatureCompat ?? '');
   if (compatMatch) return tr.data;
 
   return tr.data.map(entry => {
