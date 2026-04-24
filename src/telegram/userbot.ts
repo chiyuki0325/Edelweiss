@@ -1,6 +1,6 @@
 import type { Logger } from '@guiiai/logg';
 import { Api, TelegramClient } from 'telegram';
-import { NewMessage, type NewMessageEvent } from 'telegram/events';
+import { NewMessage, Raw, type NewMessageEvent } from 'telegram/events';
 import { DeletedMessage, type DeletedMessageEvent } from 'telegram/events/DeletedMessage';
 import { EditedMessage, type EditedMessageEvent } from 'telegram/events/EditedMessage';
 import { StringSession } from 'telegram/sessions';
@@ -95,6 +95,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
 
     // Raw typing updates — MTProto sends these ~every 5s while a user types.
     // Only forward SendMessageTypingAction (text input), not upload/record actions.
+    // Requires new Raw() so gramjs dispatches raw MTProto updates to this handler.
     client.addEventHandler((update: Api.TypeUpdate) => {
       if (update instanceof Api.UpdateUserTyping) {
         if (!(update.action instanceof Api.SendMessageTypingAction)) return;
@@ -115,7 +116,9 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
           userId: update.fromId instanceof Api.PeerUser ? String(update.fromId.userId.toJSNumber()) : undefined,
         });
       }
-    });
+    }, new Raw({
+      types: [Api.UpdateUserTyping, Api.UpdateChatUserTyping, Api.UpdateChannelUserTyping],
+    }));
 
     log.log('Event handlers registered');
   };
