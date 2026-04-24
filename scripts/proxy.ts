@@ -80,6 +80,7 @@ const extractUsageFromSSE = (text: string): Record<string, number> | null => {
 const HOP_BY_HOP = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailers', 'transfer-encoding', 'upgrade',
+  'accept-encoding',
 ]);
 
 const forwardHeaders = (headers: IncomingMessage['headers'], bodyLength: number): Record<string, string | string[]> => {
@@ -168,8 +169,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             bodyLen: bodyStr.length,
             bodyPrefixRatio: prefixRatio != null ? prefixRatio.toFixed(4) : 'first',
             promptTokens: usage?.prompt_tokens,
-            cacheHitTokens: hitTokens || undefined,
-            cacheMissTokens: missTokens || undefined,
+            cacheHitTokens: hitTokens,
+            cacheMissTokens: missTokens,
             apiCacheHitRate: apiCacheHitRate != null ? apiCacheHitRate.toFixed(4) : 'N/A',
           };
 

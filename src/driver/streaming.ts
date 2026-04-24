@@ -6,7 +6,7 @@ import type { ExtendedMessage, ThinkingConfig } from './types';
 
 // Chat Completions SSE chunk shape (subset we consume)
 interface ChatStreamChunk {
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
   choices?: Array<{
     finish_reason?: string;
     delta?: {
@@ -50,7 +50,7 @@ export interface StreamingChatParams {
 
 export interface StreamingChatResult {
   choices: Array<{ finish_reason: string; message: ExtendedMessage }>;
-  usage: { prompt_tokens: number; completion_tokens: number };
+  usage: { prompt_tokens: number; completion_tokens: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
 }
 
 // Parse an OpenAI-compatible SSE stream into a single ChatCompletion-shaped result.
@@ -98,7 +98,7 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
     // Accumulated state for the single choice we care about
     let finishReason = '';
     const message: ExtendedMessage = { role: 'assistant' };
-    let usage = { prompt_tokens: 0, completion_tokens: 0 };
+    let usage: StreamingChatResult['usage'] = { prompt_tokens: 0, completion_tokens: 0 };
 
     // Accumulators for logging batched deltas
     let textBuf = '';
@@ -124,6 +124,8 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
         usage = {
           prompt_tokens: chunk.usage.prompt_tokens ?? 0,
           completion_tokens: chunk.usage.completion_tokens ?? 0,
+          prompt_cache_hit_tokens: chunk.usage.prompt_cache_hit_tokens ?? undefined,
+          prompt_cache_miss_tokens: chunk.usage.prompt_cache_miss_tokens ?? undefined,
         };
       }
 
