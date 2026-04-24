@@ -383,6 +383,21 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<{ u
   };
 };
 
+export const createDismissMessageTool = (): CahciuaTool => ({
+  type: 'function',
+  function: {
+    name: 'dismiss_message',
+    description: 'Explicitly signal that you have decided to stay silent this turn — no message will be sent. Call this when you consciously choose not to respond.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Brief internal note on why you are staying silent (not shown to anyone).' },
+      },
+    },
+  },
+  execute: _input => ({ content: JSON.stringify({ ok: true }), requiresFollowUp: false }),
+});
+
 export const createReadImageTool = (deps: {
   downloadAttachment: (fileId: string) => Promise<Buffer>;
   readFile?: (path: string) => Promise<Buffer>;
