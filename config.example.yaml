@@ -74,6 +74,15 @@ chats:
       trimStaleNoToolCallTurnResponses: false
       trimSelfMessagesCoveredBySendToolCalls: false
       trimToolResults: false
+    # Human-likeness heuristics: each check can be disabled independently (all enabled by default).
+    # These feed the late-binding feedback XML that nudges the model toward more natural phrasing.
+    # humanLikeness:
+    #   trailingPeriod: true          # flag messages ending with a full stop
+    #   denseClausePunctuation: true  # flag short messages packed with clause punctuation
+    #   multipleMarkdownBold: true    # flag more than one **bold** span
+    #   markdownList: true            # flag Markdown lists
+    #   markdownHeader: true          # flag Markdown headers
+    #   newline: true                 # flag any newline in a send_message
     # Tools: enable extra tools for this chat.
     tools:
       readImage:

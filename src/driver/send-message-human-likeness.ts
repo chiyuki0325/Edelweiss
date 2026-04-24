@@ -4,6 +4,24 @@ export const RECENT_SEND_MESSAGE_WINDOW = 5;
 const SHORT_MESSAGE_CHAR_LIMIT = 32;
 const DENSE_CLAUSE_PUNCTUATION_THRESHOLD = 2;
 
+export interface HumanLikenessToggles {
+  trailingPeriod: boolean;
+  denseClausePunctuation: boolean;
+  multipleMarkdownBold: boolean;
+  markdownList: boolean;
+  markdownHeader: boolean;
+  newline: boolean;
+}
+
+const ALL_ENABLED: HumanLikenessToggles = {
+  trailingPeriod: true,
+  denseClausePunctuation: true,
+  multipleMarkdownBold: true,
+  markdownList: true,
+  markdownHeader: true,
+  newline: true,
+};
+
 export const potentiallyNotHumanFeatureDefinitions = [
   {
     name: 'trailing-period',
@@ -76,24 +94,30 @@ const hasDenseClausePunctuation = (text: string): boolean => {
     && countMatches(trimmed, CLAUSE_PUNCTUATION_RE) >= DENSE_CLAUSE_PUNCTUATION_THRESHOLD;
 };
 
-export const assessSendMessageHumanLikeness = (text: string): PotentiallyNotHumanFeature[] => {
+export const assessSendMessageHumanLikeness = (
+  text: string,
+  toggles: HumanLikenessToggles = ALL_ENABLED,
+): PotentiallyNotHumanFeature[] => {
   const features: PotentiallyNotHumanFeature[] = [];
-  if (hasTrailingPeriod(text))
+  if (toggles.trailingPeriod && hasTrailingPeriod(text))
     features.push('trailing-period');
-  if (hasDenseClausePunctuation(text))
+  if (toggles.denseClausePunctuation && hasDenseClausePunctuation(text))
     features.push('dense-clause-punctuation');
-  if ([...text.matchAll(MARKDOWN_BOLD_RE)].length > 1)
+  if (toggles.multipleMarkdownBold && [...text.matchAll(MARKDOWN_BOLD_RE)].length > 1)
     features.push('multiple-markdown-bold');
-  if (MARKDOWN_LIST_RE.test(text))
+  if (toggles.markdownList && MARKDOWN_LIST_RE.test(text))
     features.push('markdown-list');
-  if (MARKDOWN_HEADER_RE.test(text))
+  if (toggles.markdownHeader && MARKDOWN_HEADER_RE.test(text))
     features.push('markdown-header');
-  if (NEWLINE_RE.test(text))
+  if (toggles.newline && NEWLINE_RE.test(text))
     features.push('newline');
   return features;
 };
 
-const extractChatSendMessageAssessments = (entries: TRDataEntry[]): SendMessageHumanLikenessAssessment[] => {
+const extractChatSendMessageAssessments = (
+  entries: TRDataEntry[],
+  toggles: HumanLikenessToggles = ALL_ENABLED,
+): SendMessageHumanLikenessAssessment[] => {
   const successfulCallIds = new Set(
     entries
       .filter((entry): entry is Extract<TRDataEntry, { role: 'tool' }> => entry.role === 'tool')
@@ -109,13 +133,16 @@ const extractChatSendMessageAssessments = (entries: TRDataEntry[]): SendMessageH
       if (!successfulCallIds.has(toolCall.id)) continue;
       const text = extractSendMessageText(toolCall.function.arguments);
       if (text == null) continue;
-      assessments.push({ text, features: assessSendMessageHumanLikeness(text) });
+      assessments.push({ text, features: assessSendMessageHumanLikeness(text, toggles) });
     }
   }
   return assessments;
 };
 
-const extractResponsesSendMessageAssessments = (items: ResponsesTRDataItem[]): SendMessageHumanLikenessAssessment[] => {
+const extractResponsesSendMessageAssessments = (
+  items: ResponsesTRDataItem[],
+  toggles: HumanLikenessToggles = ALL_ENABLED,
+): SendMessageHumanLikenessAssessment[] => {
   const successfulCallIds = new Set(
     items
       .filter((item): item is Extract<ResponsesTRDataItem, { type: 'function_call_output' }> => item.type === 'function_call_output')
@@ -130,28 +157,33 @@ const extractResponsesSendMessageAssessments = (items: ResponsesTRDataItem[]): S
     if (!successfulCallIds.has(item.call_id)) continue;
     const text = extractSendMessageText(item.arguments);
     if (text == null) continue;
-    assessments.push({ text, features: assessSendMessageHumanLikeness(text) });
+    assessments.push({ text, features: assessSendMessageHumanLikeness(text, toggles) });
   }
   return assessments;
 };
 
-const extractSendMessageAssessments = (tr: TurnResponse): SendMessageHumanLikenessAssessment[] =>
+const extractSendMessageAssessments = (
+  tr: TurnResponse,
+  toggles: HumanLikenessToggles = ALL_ENABLED,
+): SendMessageHumanLikenessAssessment[] =>
   tr.provider === 'responses'
-    ? extractResponsesSendMessageAssessments(tr.data)
-    : extractChatSendMessageAssessments(tr.data);
+    ? extractResponsesSendMessageAssessments(tr.data, toggles)
+    : extractChatSendMessageAssessments(tr.data, toggles);
 
 export const collectRecentSendMessageAssessments = (
   trs: TurnResponse[],
   limit = RECENT_SEND_MESSAGE_WINDOW,
+  toggles: HumanLikenessToggles = ALL_ENABLED,
 ): SendMessageHumanLikenessAssessment[] =>
-  trs.flatMap(extractSendMessageAssessments).slice(-limit);
+  trs.flatMap(tr => extractSendMessageAssessments(tr, toggles)).slice(-limit);
 
 export const appendRecentSendMessageAssessments = (
   current: SendMessageHumanLikenessAssessment[],
   tr: TurnResponse,
   limit = RECENT_SEND_MESSAGE_WINDOW,
+  toggles: HumanLikenessToggles = ALL_ENABLED,
 ): SendMessageHumanLikenessAssessment[] =>
-  [...current, ...extractSendMessageAssessments(tr)].slice(-limit);
+  [...current, ...extractSendMessageAssessments(tr, toggles)].slice(-limit);
 
 export const renderRecentSendMessageHumanLikenessXml = (
   recentMessages: SendMessageHumanLikenessAssessment[],

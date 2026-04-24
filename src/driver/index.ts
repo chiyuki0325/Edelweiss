@@ -298,7 +298,7 @@ export const createDriver = (config: DriverConfig, deps: {
           const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
           const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
           const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
-            collectRecentSendMessageAssessments(deps.loadTurnResponses(chatId)),
+            collectRecentSendMessageAssessments(deps.loadTurnResponses(chatId), undefined, chatConfig.humanLikeness),
           );
 
           // --- Probe gate ---

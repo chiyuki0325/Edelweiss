@@ -84,7 +84,7 @@ src/
 │   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE into output items with per-chunk logging
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (dual-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
-│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages) used by late-binding
+│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages) each check individually toggleable via `humanLikeness` config; used by late-binding
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, background-task helpers
 │   ├── tools.test.ts       # Tool capability tests (read_image mode gating, etc.)
@@ -309,7 +309,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - System prompt is static and positioned first.
 - Chat history is append-only within an epoch.
-- **Current**: Dynamic action hints (probe / mention / reply state, conditional `human-likeness` feedback) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`. The `human-likeness` section is functionally derived from the current successful `send_message` tool-call history at render time; it currently flags markdown-heavy formatting, newlines, trailing periods, and punctuation-heavy short messages, and is omitted when the recent messages have no flagged issues.
+- **Current**: Dynamic action hints (probe / mention / reply state, conditional `human-likeness` feedback) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`. The `human-likeness` section is functionally derived from the current successful `send_message` tool-call history at render time; it flags up to 6 configurable patterns (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages — each independently toggleable via `humanLikeness` config), and is omitted entirely when no enabled checks fire.
 - **Planned**: Richer dynamic content (memory recall, cross-session awareness) should continue to be injected by the Driver through a more structured late-binding mechanism.
 - Compaction creates epoch boundaries — see [Context Compaction](#context-compaction) below.
 
@@ -339,6 +339,21 @@ Feature flags for experimental optimizations. Controlled via `config.yaml` under
 | `trimToolResults` | `features.trimToolResults` | Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with `detail !== 'low'`. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded. Known limitation: image downgrade currently rewrites only the `detail` flag, not the embedded image buffer, so non-OpenAI models that ignore `detail` still receive the original full-size image. Keeps `TRAssistantEntry` (call structure + reasoning) intact |
 
 Feature flags must not affect correctness — only context efficiency. Add new flags to the `features` section in `ConfigSchema` in `src/config/config.ts` and this table.
+
+### Human-Likeness Heuristic Toggles
+
+Each of the 6 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
+
+| Config key | Check | Default |
+|------------|-------|---------|
+| `humanLikeness.trailingPeriod` | Message ends with a full stop | `true` |
+| `humanLikeness.denseClausePunctuation` | Short message packed with clause punctuation | `true` |
+| `humanLikeness.multipleMarkdownBold` | More than one `**bold**` span | `true` |
+| `humanLikeness.markdownList` | Markdown list | `true` |
+| `humanLikeness.markdownHeader` | Markdown header | `true` |
+| `humanLikeness.newline` | Any newline in a send_message | `true` |
+
+Toggles are per-chat (deep-merged with `default` like all other config). Defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; passed to `collectRecentSendMessageAssessments()` via `chatConfig.humanLikeness` in the Driver.
 
 ### Context Compaction
 

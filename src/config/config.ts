@@ -69,6 +69,14 @@ const ChatConfigSchema = v.object({
     trimSelfMessagesCoveredBySendToolCalls: v.optional(v.boolean(), false),
     trimToolResults: v.optional(v.boolean(), false),
   }), {}),
+  humanLikeness: v.optional(v.object({
+    trailingPeriod: v.optional(v.boolean(), true),
+    denseClausePunctuation: v.optional(v.boolean(), true),
+    multipleMarkdownBold: v.optional(v.boolean(), true),
+    markdownList: v.optional(v.boolean(), true),
+    markdownHeader: v.optional(v.boolean(), true),
+    newline: v.optional(v.boolean(), true),
+  }), {}),
   tools: v.optional(v.object({
     bash: v.optional(v.object({
       enabled: v.optional(v.boolean(), false),
@@ -128,6 +136,14 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     trimStaleNoToolCallTurnResponses: v.boolean(),
     trimSelfMessagesCoveredBySendToolCalls: v.boolean(),
     trimToolResults: v.boolean(),
+  })),
+  humanLikeness: v.partial(v.object({
+    trailingPeriod: v.boolean(),
+    denseClausePunctuation: v.boolean(),
+    multipleMarkdownBold: v.boolean(),
+    markdownList: v.boolean(),
+    markdownHeader: v.boolean(),
+    newline: v.boolean(),
   })),
   tools: v.partial(v.object({
     bash: v.partial(v.object({
@@ -205,6 +221,14 @@ export interface ResolvedChatConfig {
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
   featureFlags: FeatureFlags;
+  humanLikeness: {
+    trailingPeriod: boolean;
+    denseClausePunctuation: boolean;
+    multipleMarkdownBold: boolean;
+    markdownList: boolean;
+    markdownHeader: boolean;
+    newline: boolean;
+  };
   tools: {
     bash: { enabled: boolean; backgroundThresholdSec: number };
     downloadFile: { enabled: boolean };
@@ -286,6 +310,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       maxFrames: merged.customEmojiToText.maxFrames,
     },
     featureFlags: merged.features,
+    humanLikeness: merged.humanLikeness,
     tools: {
       bash: { enabled: merged.tools.bash.enabled, backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec },
       downloadFile: { enabled: merged.tools.downloadFile.enabled },
