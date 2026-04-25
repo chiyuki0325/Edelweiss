@@ -46,6 +46,25 @@ const buildThinkingParam = (thinking?: ThinkingConfig) => {
 
 const CACHE_MARK: AnthropicCacheControl = { type: 'ephemeral' };
 
+// DeepSeek thinking mode requires replaying assistant reasoning in follow-up
+// requests after tool calls. To avoid provider-side 400s from historical
+// messages that lack reasoning blocks, inject an empty thinking block on
+// assistant messages that don't carry one.
+export const ensureDeepSeekThinkingBlocks = (
+  model: string,
+  messages: AnthropicMessage[],
+): AnthropicMessage[] => {
+  if (!model.toLowerCase().includes('deepseek')) return messages;
+
+  return messages.map(msg => {
+    if (msg.role !== 'assistant') return msg;
+    const content = msg.content;
+    if (!Array.isArray(content)) return msg;
+    if (content.some(block => block.type === 'thinking')) return msg;
+    return { ...msg, content: [{ type: 'thinking', thinking: '' }, ...content] };
+  });
+};
+
 // Inject prompt-caching breakpoints for KV cache efficiency.
 //
 // Placement strategy (3 breakpoints, all within the 4-breakpoint API limit):
@@ -124,11 +143,13 @@ export const streamingAnthropic = async (params: StreamingAnthropicParams): Prom
     const maxTokens = params.maxTokens
       ?? (thinkingParam ? thinkingParam.budget_tokens + 4096 : DEFAULT_MAX_TOKENS);
 
+    const messagesWithRequiredThinking = ensureDeepSeekThinkingBlocks(params.model, params.messages);
+
     const {
       systemBlocks,
       tools: cachedTools,
       messages: cachedMessages,
-    } = injectCacheControl(params.system, params.tools ?? [], params.messages);
+    } = injectCacheControl(params.system, params.tools ?? [], messagesWithRequiredThinking);
 
     const body = JSON.stringify({
       model: params.model,
@@ -202,7 +223,7 @@ export const streamingAnthropic = async (params: StreamingAnthropicParams): Prom
 
       case 'content_block_start': {
         const index = event.index as number;
-        const block = event.content_block as { type: string; text?: string; id?: string; name?: string; thinking?: string; data?: string };
+        const block = event.content_block as { type: string; text?: string; id?: string; name?: string; thinking?: string; data?: string; signature?: string };
 
         if (block.type === 'text') {
           blocks[index] = { type: 'text', text: block.text ?? '' };
@@ -213,7 +234,11 @@ export const streamingAnthropic = async (params: StreamingAnthropicParams): Prom
           blocks[index] = { type: 'tool_use', id: block.id ?? '', name: block.name ?? '', input: {} };
           toolInputAccumulator.set(index, '');
         } else if (block.type === 'thinking') {
-          blocks[index] = { type: 'thinking', thinking: block.thinking ?? '' };
+          blocks[index] = {
+            type: 'thinking',
+            thinking: block.thinking ?? '',
+            ...(block.signature != null ? { signature: block.signature } : {}),
+          };
         } else if (block.type === 'redacted_thinking') {
           blocks[index] = { type: 'redacted_thinking', data: block.data ?? '' };
         }
@@ -231,12 +256,13 @@ export const streamingAnthropic = async (params: StreamingAnthropicParams): Prom
           block.text += delta.text;
         } else if (delta.type === 'input_json_delta' && delta.partial_json && block.type === 'tool_use') {
           toolInputAccumulator.set(index, (toolInputAccumulator.get(index) ?? '') + delta.partial_json);
-        } else if (delta.type === 'thinking_delta' && delta.thinking && block.type === 'thinking') {
+        } else if (delta.type === 'thinking_delta' && delta.thinking != null && block.type === 'thinking') {
           reasoningBuf += delta.thinking;
           block.thinking += delta.thinking;
-        } else if (delta.type === 'signature_delta' && delta.signature && block.type === 'redacted_thinking') {
-          // signature_delta replaces (not appends) the data field
-          block.data = delta.signature;
+        } else if (delta.type === 'signature_delta' && delta.signature != null && block.type === 'thinking') {
+          block.signature = (block.signature ?? '') + delta.signature;
+        } else if (delta.type === 'signature_delta' && delta.signature != null && block.type === 'redacted_thinking') {
+          block.data = (block.data ?? '') + delta.signature;
         }
         break;
       }

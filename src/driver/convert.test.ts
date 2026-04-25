@@ -363,4 +363,32 @@ describe('anthropic reasoning replay', () => {
       { type: 'tool_use', id: 'tc1', name: 'get_date', input: {} },
     ]);
   });
+
+  it('preserves thinking signature when round-tripping anthropic messages', () => {
+    const entries: Parameters<typeof anthropicTRToMessages>[0] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'step by step', signature: 'sig_123' },
+          { type: 'tool_use', id: 'tc1', name: 'get_weather', input: { location: 'Hangzhou' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'Cloudy' }],
+      },
+    ];
+
+    const intermediate = anthropicTRToMessages(entries);
+    expect((intermediate[0] as AnyMsg).reasoning_text).toBe('step by step');
+    expect((intermediate[0] as AnyMsg).reasoning_opaque).toBe('sig_123');
+
+    const replay = messagesToAnthropicMessages(intermediate);
+    const assistant = replay[0] as AnyMsg;
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.content).toEqual([
+      { type: 'thinking', thinking: 'step by step', signature: 'sig_123' },
+      { type: 'tool_use', id: 'tc1', name: 'get_weather', input: { location: 'Hangzhou' } },
+    ]);
+  });
 });

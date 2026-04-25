@@ -297,7 +297,7 @@ const anthropicEntryToMessages = (entry: AnthropicTRDataEntry): Message[] => {
 
     const textParts = entry.content.filter((b): b is AnthropicTextBlock => b.type === 'text');
     const toolUses = entry.content.filter((b): b is AnthropicToolUseBlock => b.type === 'tool_use');
-    const thinking = entry.content.find((b): b is { type: 'thinking'; thinking: string } => b.type === 'thinking');
+    const thinking = entry.content.find((b): b is { type: 'thinking'; thinking: string; signature?: string } => b.type === 'thinking');
     const redacted = entry.content.find((b): b is { type: 'redacted_thinking'; data: string } => b.type === 'redacted_thinking');
 
     if (textParts.length === 1) {
@@ -315,7 +315,8 @@ const anthropicEntryToMessages = (entry: AnthropicTRDataEntry): Message[] => {
     }
 
     if (thinking) msg.reasoning_text = thinking.thinking;
-    if (redacted) msg.reasoning_opaque = redacted.data;
+    if (thinking?.signature != null) msg.reasoning_opaque = thinking.signature;
+    else if (redacted) msg.reasoning_opaque = redacted.data;
 
     return [msg as Message];
   }
@@ -423,10 +424,15 @@ export const messagesToAnthropicMessages = (messages: Message[]): AnthropicMessa
       // Thinking blocks first per Anthropic spec.
       // Keep empty strings too: some providers require replaying even empty
       // thinking/signature fields across tool-call turns.
-      if (m.reasoning_text != null)
-        content.push({ type: 'thinking', thinking: m.reasoning_text });
-      if (m.reasoning_opaque != null)
+      if (m.reasoning_text != null) {
+        content.push({
+          type: 'thinking',
+          thinking: m.reasoning_text,
+          ...(m.reasoning_opaque != null ? { signature: m.reasoning_opaque } : {}),
+        });
+      } else if (m.reasoning_opaque != null) {
         content.push({ type: 'redacted_thinking', data: m.reasoning_opaque });
+      }
 
       // Text content
       if (typeof m.content === 'string' && m.content)

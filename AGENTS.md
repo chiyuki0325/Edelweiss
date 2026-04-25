@@ -261,7 +261,7 @@ Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the c
 ### Reasoning Signature Sanitization
 
 Anthropic models return reasoning as thinking text + cryptographic signature. The signature is only valid within the same provider family. Each TR records its `reasoningSignatureCompat` group. On replay: same compat → keep reasoning (model can resume); different/empty → strip all reasoning fields. In openai-chat format, reasoning appears as `reasoning_text` + `reasoning_opaque` fields on assistant entries. In responses format, reasoning appears as output items with `type: 'reasoning'`, carrying `encrypted_content` and `summary`. In anthropic format, reasoning appears as `thinking` and `redacted_thinking` content blocks in the assistant's content array. All pairs are always kept or stripped together. Format conversion preserves reasoning through round-trips (`redacted_thinking.data` ↔ `reasoning_opaque`, `thinking.thinking` ↔ `reasoning_text`, `encrypted_content` ↔ `reasoning_opaque`).
-For Anthropic replay compatibility (including DeepSeek thinking mode), preserve empty reasoning values too. Do not gate `reasoning_text` / `reasoning_opaque` on truthy checks when converting to `thinking` / `redacted_thinking`; use presence checks so empty strings are still emitted.
+For Anthropic replay compatibility (including DeepSeek thinking mode), preserve empty reasoning values too. Do not gate `reasoning_text` / `reasoning_opaque` on truthy checks when converting to `thinking` / `redacted_thinking`; use presence checks so empty strings are still emitted. When `reasoning_opaque` is present together with `reasoning_text`, serialize it as `thinking.signature` (not as a separate `redacted_thinking` block) so tool-call turns can be replayed verbatim.
 
 ### Tool Call ID Sanitization
 
@@ -321,6 +321,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 Before any actual provider request is sent, the Driver applies a final request-local normalization step:
 - OpenAI Chat Completions path: `prepareChatMessagesForSend()` converts internal `input_text` / `input_image` parts into chat-completions `text` / `image_url` parts and moves whole image-bearing tool results into follow-up user messages prefixed with `The result of tool <name>`, keeping their text/image ordering intact while preserving contiguous tool-result blocks.
 - Responses path: `prepareResponsesInputForSend()` converts the same intermediate `Message[]` into Responses API input items.
+- Anthropic path (DeepSeek models): before sending, `ensureDeepSeekThinkingBlocks()` ensures every assistant message contains a `thinking` block (injects empty `thinking: ""` when missing) to satisfy DeepSeek thinking-mode replay requirements after tool calls.
 - Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps, probes, or compaction calls.
 
 `read_image` supports two runtime modes:

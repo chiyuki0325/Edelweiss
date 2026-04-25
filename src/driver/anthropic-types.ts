@@ -35,6 +35,7 @@ export interface AnthropicToolResultBlock {
 export interface AnthropicThinkingBlock {
   type: 'thinking';
   thinking: string;
+  signature?: string;
 }
 
 export interface AnthropicRedactedThinkingBlock {
