@@ -10,7 +10,7 @@ import type {
   CanonicalMessageEvent,
   CanonicalServiceEvent,
 } from '../adaptation/types';
-import type { CompactionSessionMeta, ResponsesTRDataItem, TRDataEntry, TurnResponse } from '../driver/types';
+import type { AnthropicTRDataEntry, CompactionSessionMeta, ResponsesTRDataItem, TRDataEntry, TurnResponse } from '../driver/types';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
 import type { ImageAltTextRecord } from '../telegram/image-to-text';
@@ -334,6 +334,15 @@ const reconstructTurnResponse = (row: TurnResponseRow): TurnResponse => {
       requestedAtMs: row.requestedAt,
       provider: 'responses',
       data: row.data as ResponsesTRDataItem[],
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      reasoningSignatureCompat: row.reasoningSignatureCompat ?? '',
+    };
+  case 'anthropic':
+    return {
+      requestedAtMs: row.requestedAt,
+      provider: 'anthropic',
+      data: row.data as AnthropicTRDataEntry[],
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       reasoningSignatureCompat: row.reasoningSignatureCompat ?? '',
