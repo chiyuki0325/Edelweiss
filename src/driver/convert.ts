@@ -420,10 +420,12 @@ export const messagesToAnthropicMessages = (messages: Message[]): AnthropicMessa
       flush();
       const content: AnthropicAssistantContentBlock[] = [];
 
-      // Thinking blocks first per Anthropic spec
-      if (m.reasoning_text)
+      // Thinking blocks first per Anthropic spec.
+      // Keep empty strings too: some providers require replaying even empty
+      // thinking/signature fields across tool-call turns.
+      if (m.reasoning_text != null)
         content.push({ type: 'thinking', thinking: m.reasoning_text });
-      if (m.reasoning_opaque)
+      if (m.reasoning_opaque != null)
         content.push({ type: 'redacted_thinking', data: m.reasoning_opaque });
 
       // Text content

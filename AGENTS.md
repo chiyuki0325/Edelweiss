@@ -261,6 +261,7 @@ Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the c
 ### Reasoning Signature Sanitization
 
 Anthropic models return reasoning as thinking text + cryptographic signature. The signature is only valid within the same provider family. Each TR records its `reasoningSignatureCompat` group. On replay: same compat → keep reasoning (model can resume); different/empty → strip all reasoning fields. In openai-chat format, reasoning appears as `reasoning_text` + `reasoning_opaque` fields on assistant entries. In responses format, reasoning appears as output items with `type: 'reasoning'`, carrying `encrypted_content` and `summary`. In anthropic format, reasoning appears as `thinking` and `redacted_thinking` content blocks in the assistant's content array. All pairs are always kept or stripped together. Format conversion preserves reasoning through round-trips (`redacted_thinking.data` ↔ `reasoning_opaque`, `thinking.thinking` ↔ `reasoning_text`, `encrypted_content` ↔ `reasoning_opaque`).
+For Anthropic replay compatibility (including DeepSeek thinking mode), preserve empty reasoning values too. Do not gate `reasoning_text` / `reasoning_opaque` on truthy checks when converting to `thinking` / `redacted_thinking`; use presence checks so empty strings are still emitted.
 
 ### Tool Call ID Sanitization
 

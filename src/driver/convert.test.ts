@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from 'xsai';
 
-import { chatTRToResponsesInput, messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
+import { anthropicTRToMessages, chatTRToResponsesInput, messagesToAnthropicMessages, messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
 import type { ResponsesTRDataItem, TRDataEntry } from './types';
 
 type AnyMsg = Record<string, any>;
@@ -333,5 +333,34 @@ describe('round-trip fidelity', () => {
     expect(second.role).toBe('tool');
     expect(second.tool_call_id).toBe('tc1');
     expect(second.content).toBe('result');
+  });
+});
+
+describe('anthropic reasoning replay', () => {
+  it('preserves empty thinking blocks across anthropic interleaved transforms', () => {
+    const entries: Parameters<typeof anthropicTRToMessages>[0] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '' },
+          { type: 'tool_use', id: 'tc1', name: 'get_date', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tc1', content: '2026-04-25' }],
+      },
+    ];
+
+    const intermediate = anthropicTRToMessages(entries);
+    expect((intermediate[0] as AnyMsg).reasoning_text).toBe('');
+
+    const replay = messagesToAnthropicMessages(intermediate);
+    const assistant = replay[0] as AnyMsg;
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.content).toEqual([
+      { type: 'thinking', thinking: '' },
+      { type: 'tool_use', id: 'tc1', name: 'get_date', input: {} },
+    ]);
   });
 });
