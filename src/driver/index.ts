@@ -3,16 +3,17 @@ import { computed, effect, signal } from 'alien-signals';
 import type { Message } from 'xsai';
 
 import { runCompaction } from './compaction';
-import { cloneMessagesForSend, composeContext, findWorkingWindowCursor, latestExternalEventMs, prepareChatMessagesForSend, prepareResponsesInputForSend, wasToolLoopInterrupted } from './context';
-import { xsaiToolToResponsesTool } from './convert';
+import { cloneMessagesForSend, composeContext, findWorkingWindowCursor, latestExternalEventMs, prepareChatMessagesForSend, prepareAnthropicMessagesForSend, prepareResponsesInputForSend, wasToolLoopInterrupted } from './context';
+import { xsaiToolToAnthropicTool, xsaiToolToResponsesTool } from './convert';
 import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { streamingChat } from './streaming';
+import { streamingAnthropic } from './streaming-anthropic';
 import { streamingResponses } from './streaming-responses';
 import { createBashTool, createAttachmentDownloader, createDismissMessageTool, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
-import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
+import type { AnthropicTRDataEntry, CompactionSessionMeta, DriverConfig, LlmEndpoint, ProviderFormat, ResponsesTRDataItem, TRDataEntry, TurnResponse } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
@@ -90,6 +91,7 @@ export const createDriver = (config: DriverConfig, deps: {
         apiKey: endpoint.apiKey,
         model: endpoint.model,
         apiFormat: endpoint.apiFormat ?? 'openai-chat',
+        maxTokens: endpoint.maxTokens,
         timeoutSec: endpoint.timeoutSec,
         thinking: endpoint.thinking,
       });
@@ -326,33 +328,51 @@ export const createDriver = (config: DriverConfig, deps: {
               const probeApiFormat: ProviderFormat = chatConfig.probe.model.apiFormat ?? 'openai-chat';
 
               // Unified probe call — extract { hasToolCalls, data, inputTokens, outputTokens }
-              const probe = probeApiFormat === 'responses'
-                ? await streamingResponses({
+              let probe: { hasToolCalls: boolean; data: Record<string, any>[]; inputTokens: number; outputTokens: number };
+              if (probeApiFormat === 'responses') {
+                const r = await streamingResponses({
                   baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
                   model: chatConfig.probe.model.model,
                   input: prepareResponsesInputForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
                   instructions: system, tools: tools.map(xsaiToolToResponsesTool),
                   thinking: chatConfig.probe.model.thinking,
                   log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
-                }).then(r => ({
+                });
+                probe = {
                   hasToolCalls: r.output.some(item => item.type === 'function_call'),
                   data: r.output as Record<string, any>[],
                   inputTokens: r.usage.input_tokens, outputTokens: r.usage.output_tokens,
-                }))
-                : await streamingChat({
+                };
+              } else if (probeApiFormat === 'anthropic') {
+                const r = await streamingAnthropic({
+                  baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
+                  model: chatConfig.probe.model.model,
+                  messages: prepareAnthropicMessagesForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
+                  system, tools: tools.map(xsaiToolToAnthropicTool),
+                  maxTokens: chatConfig.probe.model.maxTokens,
+                  thinking: chatConfig.probe.model.thinking,
+                  log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
+                });
+                probe = {
+                  hasToolCalls: r.content.some(b => b.type === 'tool_use'),
+                  data: [{ role: 'assistant', content: r.content }] as Record<string, any>[],
+                  inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens,
+                };
+              } else {
+                const r = await streamingChat({
                   baseURL: chatConfig.probe.model.apiBaseUrl, apiKey: chatConfig.probe.model.apiKey,
                   model: chatConfig.probe.model.model,
                   messages: prepareChatMessagesForSend(probeMessages, chatConfig.probe.model.maxImagesAllowed),
                   system, thinking: chatConfig.probe.model.thinking,
                   tools, log, label: `probe:${chatId}`, timeoutSec: chatConfig.probe.model.timeoutSec,
-                }).then(r => {
-                  const msg = r.choices[0]?.message;
-                  return {
-                    hasToolCalls: (msg?.tool_calls?.length ?? 0) > 0,
-                    data: msg ? [msg] as Record<string, any>[] : [],
-                    inputTokens: r.usage.prompt_tokens, outputTokens: r.usage.completion_tokens,
-                  };
                 });
+                const msg = r.choices[0]?.message;
+                probe = {
+                  hasToolCalls: (msg?.tool_calls?.length ?? 0) > 0,
+                  data: msg ? [msg] as Record<string, any>[] : [],
+                  inputTokens: r.usage.prompt_tokens, outputTokens: r.usage.completion_tokens,
+                };
+              }
 
               log.withFields({ chatId, hasToolCalls: probe.hasToolCalls }).log('Probe result');
 
@@ -407,6 +427,15 @@ export const createDriver = (config: DriverConfig, deps: {
                     requestedAtMs,
                     provider: 'responses',
                     data: stepData as ResponsesTRDataItem[],
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
+                  });
+                } else if (chatConfig.primaryApiFormat === 'anthropic') {
+                  deps.persistTurnResponse(chatId, {
+                    requestedAtMs,
+                    provider: 'anthropic',
+                    data: stepData as AnthropicTRDataEntry[],
                     inputTokens: usage.prompt_tokens,
                     outputTokens: usage.completion_tokens,
                     reasoningSignatureCompat: chatConfig.primaryModel.reasoningSignatureCompat ?? '',
@@ -563,6 +592,7 @@ export const createDriver = (config: DriverConfig, deps: {
               apiKey: compactEndpoint.apiKey,
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
+              maxTokens: compactEndpoint.maxTokens,
               timeoutSec: compactEndpoint.timeoutSec,
               thinking: compactEndpoint.thinking,
               chatId,

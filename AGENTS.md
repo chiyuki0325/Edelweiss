@@ -12,7 +12,7 @@ Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeli
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
 3. **Rendering**: `RC = Render(IC, RenderParams)` — serialization with viewport filtering, producing Rendered Context (RC).
 
-The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns tool call loops, reactive scheduling, and context compaction. Supports two API formats: OpenAI Chat Completions (`openai-chat`, via xsai with SSE streaming) and OpenAI Responses API (`responses`, via direct fetch with SSE streaming). TRs are stored in raw provider format; conversion happens at API boundaries when composing context or sending requests.
+The Driver layer sits after Rendering: it merges RC (chat context) with its own TRs (bot responses, tool results) by timestamp to assemble the final LLM API request. Driver owns tool call loops, reactive scheduling, and context compaction. Supports three API formats: OpenAI Chat Completions (`openai-chat`, via xsai with SSE streaming), OpenAI Responses API (`responses`, via direct fetch with SSE streaming), and Anthropic Messages API (`anthropic`, via direct fetch with SSE streaming). TRs are stored in raw provider format; conversion happens at API boundaries when composing context or sending requests.
 
 Key design goals: KV Cache friendly (append-only history, static system prompt, epoch-based compaction), group chat native (message batching, multi-user identity tracking, anti-injection via XML fencing), autonomous reply (bot decides whether to respond via Tool Call, not synchronous response).
 
@@ -25,14 +25,14 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses, image_alt_texts tables; 22 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses ↔ anthropic) at API boundaries |
 
 ## Tech Stack
 
 - **Runtime**: Node.js (>=22), TypeScript, tsx (dev), tsdown (build).
 - **Telegram Bot API**: grammY — primary message handling, sending replies, commands.
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
-- **LLM**: Two API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`) and OpenAI Responses API (via direct `fetch` with SSE streaming). `composeContext()` builds an intermediate `Message[]`: user content parts use Responses-style `input_text` / `input_image`, while assistant/tool entries stay TR-shaped. Final conversion to provider wire format happens only at the last send boundary (`prepareChatMessagesForSend` / `prepareResponsesInputForSend`) so probe, compaction, and step loops share the same normalization and image-limit enforcement. SSE streaming helpers in `src/driver/streaming.ts` (chat) and `src/driver/streaming-responses.ts` (responses) parse chunks and log deltas in real time.
+- **LLM**: Three API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`), OpenAI Responses API (via direct `fetch` with SSE streaming), and Anthropic Messages API (via direct `fetch` with SSE streaming, `x-api-key` auth, `anthropic-version: 2023-06-01` header). `composeContext()` builds an intermediate `Message[]`: user content parts use Responses-style `input_text` / `input_image`, while assistant/tool entries stay TR-shaped. Final conversion to provider wire format happens only at the last send boundary (`prepareChatMessagesForSend` / `prepareResponsesInputForSend` / `prepareAnthropicMessagesForSend`) so probe, compaction, and step loops share the same normalization and image-limit enforcement. SSE streaming helpers in `src/driver/streaming.ts` (chat), `src/driver/streaming-responses.ts` (responses), and `src/driver/streaming-anthropic.ts` (anthropic) parse chunks and log deltas in real time. Anthropic tool results use the canonical `ResponseInputContent[]` format (same as openai-chat) for uniform trimming and image handling. The Anthropic streaming path automatically injects `cache_control: {type: "ephemeral"}` breakpoints at three locations: (1) system block, (2) last tool definition, (3) `messages[-2]` last content block (the message just before the always-changing late-binding prompt at `messages[-1]`), maximising KV cache hit rate across turns.
 - **Image processing**: sharp — thumbnails, GIF frame extraction, image resizing.
 - **Animation processing**: ffmpeg-static + ffprobe-static (bundled binaries via npm) — MP4/WEBM frame extraction; lottie-frame (native rlottie + libpng addon) — TGS/Lottie frame rendering. System deps: `libpng-dev`, `librlottie-dev`.
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
@@ -74,14 +74,16 @@ src/
 │   ├── context.test.ts     # Context composition tests (openai-chat + responses provider branches)
 │   ├── merge.ts            # mergeContext(RC, TRs) → ContextChunk[] — timestamp-ordered interleave
 │   ├── merge.test.ts       # Merge logic tests
-│   ├── convert.ts          # Format conversion + chat-completions send prep helpers (openai-chat ↔ responses, tool-result image extraction)
+│   ├── convert.ts          # Format conversion + send prep helpers (openai-chat ↔ responses ↔ anthropic, tool-result image extraction)
 │   ├── convert.test.ts     # Conversion + round-trip fidelity tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
+│   ├── anthropic-types.ts  # Anthropic Messages API wire format types (request/response shapes, not stored in DB)
 │   ├── responses-types.ts  # OpenAI Responses API type definitions (request/response/stream events)
-│   ├── sse.ts              # Shared SSE line-buffer parser used by both provider streamers
-│   ├── runner.ts           # LLM step loop: dual-provider SSE streaming + manual tool execution
+│   ├── sse.ts              # Shared SSE line-buffer parser used by all provider streamers
+│   ├── runner.ts           # LLM step loop: triple-provider SSE streaming + manual tool execution
 │   ├── streaming.ts        # SSE streaming chat: parses OpenAI-compat SSE into ChatCompletion result with per-chunk logging
 │   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE into output items with per-chunk logging
+│   ├── streaming-anthropic.ts # SSE streaming anthropic: parses Anthropic Messages API SSE into content blocks with per-chunk logging
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (dual-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages) each check individually toggleable via `humanLikeness` config; used by late-binding
@@ -258,7 +260,7 @@ Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the c
 
 ### Reasoning Signature Sanitization
 
-Anthropic models return reasoning as thinking text + cryptographic signature. The signature is only valid within the same provider family. Each TR records its `reasoningSignatureCompat` group. On replay: same compat → keep reasoning (model can resume); different/empty → strip all reasoning fields. In openai-chat format, reasoning appears as `reasoning_text` + `reasoning_opaque` fields on assistant entries. In responses format, reasoning appears as output items with `type: 'reasoning'`, carrying `encrypted_content` and `summary`. The pair is always kept or stripped together. Format conversion preserves reasoning through round-trips (`encrypted_content` ↔ `reasoning_opaque`, `summary` ↔ `reasoning_text`).
+Anthropic models return reasoning as thinking text + cryptographic signature. The signature is only valid within the same provider family. Each TR records its `reasoningSignatureCompat` group. On replay: same compat → keep reasoning (model can resume); different/empty → strip all reasoning fields. In openai-chat format, reasoning appears as `reasoning_text` + `reasoning_opaque` fields on assistant entries. In responses format, reasoning appears as output items with `type: 'reasoning'`, carrying `encrypted_content` and `summary`. In anthropic format, reasoning appears as `thinking` and `redacted_thinking` content blocks in the assistant's content array. All pairs are always kept or stripped together. Format conversion preserves reasoning through round-trips (`redacted_thinking.data` ↔ `reasoning_opaque`, `thinking.thinking` ↔ `reasoning_text`, `encrypted_content` ↔ `reasoning_opaque`).
 
 ### Tool Call ID Sanitization
 
@@ -283,15 +285,15 @@ Data flows strictly forward (no backflow). Events table stores only IM platform 
 
 ### TR Storage
 
-TRs are stored in a `turn_responses` DB table (raw provider format, not provider-agnostic). Each TR records its `provider` field (`'openai-chat'` or `'responses'`). One row per TR:
+TRs are stored in a `turn_responses` DB table (raw provider format, not provider-agnostic). Each TR records its `provider` field (`'openai-chat'`, `'responses'`, or `'anthropic'`). One row per TR:
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | INTEGER PK | autoincrement |
 | chat_id | TEXT NOT NULL | Session ID (= Telegram chat ID) |
 | requested_at | INTEGER NOT NULL | millisecond timestamp, merge ordering key |
-| provider | TEXT NOT NULL | `'openai-chat'` or `'responses'` |
-| data | TEXT (JSON) NOT NULL | raw provider response entries (`unknown[]` — openai-chat: `TRDataEntry[]`, responses: output items + function_call_outputs) |
+| provider | TEXT NOT NULL | `'openai-chat'`, `'responses'`, or `'anthropic'` |
+| data | TEXT (JSON) NOT NULL | raw provider response entries (`unknown[]` — openai-chat: `TRDataEntry[]`, responses: output items + function_call_outputs, anthropic: `AnthropicTRDataEntry[]` — assistant content blocks + tool result groups) |
 | session_meta | TEXT (JSON) | deprecated — compaction now uses dedicated `compactions` table |
 | input_tokens | INTEGER NOT NULL | for statistics / cost tracking |
 | output_tokens | INTEGER NOT NULL | for statistics / cost tracking |
@@ -425,7 +427,7 @@ In group chats, most messages don't require a bot response. To avoid wasting tok
 | id | INTEGER PK | autoincrement |
 | chat_id | TEXT NOT NULL | indexed |
 | requested_at | INTEGER NOT NULL | millisecond timestamp |
-| provider | TEXT NOT NULL | `'openai-chat'` or `'responses'` |
+| provider | TEXT NOT NULL | `'openai-chat'`, `'responses'`, or `'anthropic'` |
 | data | TEXT (JSON) NOT NULL | probe LLM output |
 | input_tokens | INTEGER NOT NULL | token stats |
 | output_tokens | INTEGER NOT NULL | token stats |

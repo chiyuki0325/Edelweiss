@@ -4,10 +4,11 @@ import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
 import { DUMP_DIR, ensureDumpDir } from './constants';
-import { composeContext, prepareChatMessagesForSend, prepareResponsesInputForSend } from './context';
+import { composeContext, prepareChatMessagesForSend, prepareAnthropicMessagesForSend, prepareResponsesInputForSend } from './context';
 import { renderCompactionSystemPrompt, renderCompactionUserInstruction } from './prompt';
 import type { ResponseOutputMessage } from './responses-types';
 import { streamingChat } from './streaming';
+import { streamingAnthropic } from './streaming-anthropic';
 import { streamingResponses } from './streaming-responses';
 import type { CompactionSessionMeta, FeatureFlags, ProviderFormat, ThinkingConfig, TurnResponse } from './types';
 import type { RenderedContext } from '../rendering/types';
@@ -26,6 +27,7 @@ export interface CompactionParams {
   reasoningSignatureCompat?: string;
   featureFlags?: FeatureFlags;
   maxImagesAllowed?: number;
+  maxTokens?: number;
   timeoutSec?: number;
   thinking?: ThinkingConfig;
   log: Logger;
@@ -50,7 +52,30 @@ const callForText = async (
   messages: Message[],
   system: string,
 ): Promise<{ summary: string; inputTokens: number; outputTokens: number }> => {
-  if ((params.apiFormat ?? 'openai-chat') === 'responses') {
+  const apiFormat = params.apiFormat ?? 'openai-chat';
+
+  if (apiFormat === 'anthropic') {
+    const anthropicMessages = prepareAnthropicMessagesForSend(messages, params.maxImagesAllowed);
+    writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-request.json`, JSON.stringify({
+      model: params.model, system, messages: anthropicMessages, apiFormat: 'anthropic',
+    }, null, 2));
+
+    const result = await streamingAnthropic({
+      baseURL: params.apiBaseUrl, apiKey: params.apiKey, model: params.model,
+      messages: anthropicMessages, system,
+      maxTokens: params.maxTokens,
+      thinking: params.thinking,
+      log: params.log, label: `compact:${params.chatId}`, timeoutSec: params.timeoutSec,
+    });
+    writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-response.json`, JSON.stringify(result, null, 2));
+    const text = result.content
+      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+      .map(b => b.text)
+      .join('');
+    return { summary: text, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens };
+  }
+
+  if (apiFormat === 'responses') {
     const input = prepareResponsesInputForSend(messages, params.maxImagesAllowed);
     writeFileSync(`${DUMP_DIR}/${params.chatId}.compact-request.json`, JSON.stringify({
       model: params.model, instructions: system, input, apiFormat: 'responses',

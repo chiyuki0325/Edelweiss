@@ -1,9 +1,12 @@
 import type { Message, UserMessage } from 'xsai';
 
-import { messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
+import type { AnthropicMessage } from './anthropic-types';
+import { anthropicTRToMessages, messagesToAnthropicMessages, messagesToResponsesInput, prepareMessagesForChat, responsesOutputToMessages } from './convert';
 import { mergeContext } from './merge';
 import type { ResponseInputContent, ResponseInputItem } from './responses-types';
 import type {
+  AnthropicTRDataEntry,
+  AnthropicTurnResponse,
   ChatTurnResponse,
   ContextChunk,
   ExtendedMessage,
@@ -126,6 +129,21 @@ const sanitizeResponsesReasoningForTR = (
   return tr.data.filter(item => item.type !== 'reasoning');
 };
 
+const sanitizeAnthropicReasoningForTR = (
+  tr: AnthropicTurnResponse,
+  currentCompat: string | undefined,
+): AnthropicTRDataEntry[] => {
+  const compatMatch = (currentCompat ?? '') === (tr.reasoningSignatureCompat ?? '');
+  if (compatMatch) return tr.data;
+  return tr.data.map(entry => {
+    if (entry.role !== 'assistant') return entry;
+    return {
+      ...entry,
+      content: entry.content.filter(block => block.type !== 'thinking' && block.type !== 'redacted_thinking'),
+    };
+  });
+};
+
 const sanitizeChatReasoningForTR = (
   tr: ChatTurnResponse,
   currentCompat: string | undefined,
@@ -191,6 +209,13 @@ export const wasToolLoopInterrupted = (trs: TurnResponse[]): boolean => {
     return toolResults.some(tr => tr.requiresFollowUp === true);
   }
 
+  if (lastTr.provider === 'anthropic') {
+    const data = lastTr.data as AnthropicTRDataEntry[];
+    const toolResultGroups = data.filter((e): e is import('./types').AnthropicToolResultGroupEntry => e.role === 'user');
+    if (toolResultGroups.length === 0) return false;
+    return toolResultGroups.some(group => group.content.some(block => block.requiresFollowUp === true));
+  }
+
   // Responses format
   const data = lastTr.data as ResponsesTRDataItem[];
   const callOutputs = data.filter(
@@ -201,9 +226,13 @@ export const wasToolLoopInterrupted = (trs: TurnResponse[]): boolean => {
 };
 
 const estimateTRTokens = (tr: TurnResponse): number => {
-  const chunks: ContextChunk[] = tr.provider === 'responses'
-    ? tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'responses' as const, time: tr.requestedAtMs, step, data }))
-    : tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'openai-chat' as const, time: tr.requestedAtMs, step, data }));
+  let chunks: ContextChunk[];
+  if (tr.provider === 'responses')
+    chunks = tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'responses' as const, time: tr.requestedAtMs, step, data }));
+  else if (tr.provider === 'anthropic')
+    chunks = tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'anthropic' as const, time: tr.requestedAtMs, step, data }));
+  else
+    chunks = tr.data.map((data, step) => ({ type: 'tr' as const, provider: 'openai-chat' as const, time: tr.requestedAtMs, step, data }));
   return chunksToMessages(chunks).reduce((acc, msg) => acc + estimateMessageTokens(asMsg(msg)), 0);
 };
 
@@ -245,10 +274,12 @@ export const findWorkingWindowCursor = (
 // Keep only the latest N, trim older ones before merge.
 const KEEP_NO_TOOL_CALL_TRS = 5;
 
-const trHasToolCalls = (tr: TurnResponse): boolean =>
-  tr.provider === 'responses'
-    ? tr.data.some(item => item.type === 'function_call')
-    : tr.data.some(item => item.role === 'assistant' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0);
+const trHasToolCalls = (tr: TurnResponse): boolean => {
+  if (tr.provider === 'responses') return tr.data.some(item => item.type === 'function_call');
+  if (tr.provider === 'anthropic')
+    return tr.data.some(item => item.role === 'assistant' && item.content.some(b => b.type === 'tool_use'));
+  return tr.data.some(item => item.role === 'assistant' && Array.isArray(item.tool_calls) && item.tool_calls.length > 0);
+};
 
 const trimStaleNoToolCallTRs = (trs: TurnResponse[]): TurnResponse[] => {
   // Partition: indices of TRs without tool calls
@@ -329,6 +360,15 @@ const trimToolResults = (trs: TurnResponse[]): TurnResponse[] => {
       continue;
     }
 
+    if (tr.provider === 'anthropic') {
+      for (let dataIndex = 0; dataIndex < tr.data.length; dataIndex++) {
+        const item = tr.data[dataIndex]!;
+        if (item.role === 'user' && item.content.some(block => toolResultExceedsLimit(block.content)))
+          oversizedPositions.push({ trIndex, dataIndex });
+      }
+      continue;
+    }
+
     for (let dataIndex = 0; dataIndex < tr.data.length; dataIndex++) {
       const item = tr.data[dataIndex]!;
       if (item.role === 'tool' && toolResultExceedsLimit(item.content))
@@ -348,21 +388,37 @@ const trimToolResults = (trs: TurnResponse[]): TurnResponse[] => {
     const trimIndices = trimIndicesByTR.get(trIndex);
     if (!trimIndices) return tr;
 
-    return tr.provider === 'responses'
-      ? {
-          ...tr,
-          data: tr.data.map((item, dataIndex) =>
-            item.type === 'function_call_output' && trimIndices.has(dataIndex)
-              ? { ...item, output: trimToolResultContent(item.output) }
-              : item),
-        }
-      : {
-          ...tr,
-          data: tr.data.map((item, dataIndex) =>
-            item.role === 'tool' && trimIndices.has(dataIndex)
-              ? { ...item, content: trimToolResultContent(item.content) }
-              : item),
-        };
+    if (tr.provider === 'responses')
+      return {
+        ...tr,
+        data: tr.data.map((item, dataIndex) =>
+          item.type === 'function_call_output' && trimIndices.has(dataIndex)
+            ? { ...item, output: trimToolResultContent(item.output) }
+            : item),
+      };
+
+    if (tr.provider === 'anthropic')
+      return {
+        ...tr,
+        data: tr.data.map((item, dataIndex) => {
+          if (item.role !== 'user' || !trimIndices.has(dataIndex)) return item;
+          return {
+            ...item,
+            content: item.content.map(block => ({
+              ...block,
+              content: trimToolResultContent(block.content),
+            })),
+          };
+        }),
+      };
+
+    return {
+      ...tr,
+      data: tr.data.map((item, dataIndex) =>
+        item.role === 'tool' && trimIndices.has(dataIndex)
+          ? { ...item, content: trimToolResultContent(item.content) }
+          : item),
+    };
   });
 };
 
@@ -479,6 +535,13 @@ export const prepareResponsesInputForSend = (messages: Message[], maxImages?: nu
   return messagesToResponsesInput(prepared);
 };
 
+export const prepareAnthropicMessagesForSend = (messages: Message[], maxImages?: number): AnthropicMessage[] => {
+  const prepared = cloneMessagesForSend(messages);
+  if (maxImages != null)
+    trimImages(prepared, maxImages);
+  return messagesToAnthropicMessages(prepared);
+};
+
 // Convert ContextChunk[] to intermediate Message[].
 // RC chunks → user messages (content parts in Responses format).
 // TR chunks → converted to openai-chat-shaped messages (tool result content stays Responses format).
@@ -516,6 +579,9 @@ const chunksToMessages = (chunks: ContextChunk[]): Message[] => {
         pendingParts = [];
       }
       responsesBuffer.push(chunk.data);
+    } else if (chunk.provider === 'anthropic') {
+      flush();
+      messages.push(...anthropicTRToMessages([chunk.data]));
     } else {
       flush();
       messages.push(chunk.data as Message);
@@ -538,10 +604,13 @@ export const composeContext = (
   if (featureFlags?.trimSelfMessagesCoveredBySendToolCalls)
     effectiveRC = filterSelfSentSegments(effectiveRC);
 
-  let sanitizedTRs: TurnResponse[] = trs.map(tr =>
-    tr.provider === 'responses'
-      ? { ...tr, data: sanitizeResponsesReasoningForTR(tr, reasoningSignatureCompat) }
-      : { ...tr, data: sanitizeChatReasoningForTR(tr, reasoningSignatureCompat) });
+  let sanitizedTRs: TurnResponse[] = trs.map(tr => {
+    if (tr.provider === 'responses')
+      return { ...tr, data: sanitizeResponsesReasoningForTR(tr, reasoningSignatureCompat) };
+    if (tr.provider === 'anthropic')
+      return { ...tr, data: sanitizeAnthropicReasoningForTR(tr, reasoningSignatureCompat) };
+    return { ...tr, data: sanitizeChatReasoningForTR(tr, reasoningSignatureCompat) };
+  });
 
   if (featureFlags?.trimStaleNoToolCallTurnResponses)
     sanitizedTRs = trimStaleNoToolCallTRs(sanitizedTRs);

@@ -1,4 +1,4 @@
-// TR data format conversion between openai-chat and responses.
+// TR data format conversion between openai-chat, responses, and anthropic.
 // Called at API boundaries — never at storage time.
 //
 // Reasoning is preserved through conversions — sanitizeReasoningForTR already
@@ -7,9 +7,21 @@
 //
 // Mapping: responses encrypted_content ↔ openai-chat reasoning_opaque
 //          responses summary           ↔ openai-chat reasoning_text
+//          anthropic redacted_thinking ↔ openai-chat reasoning_opaque
+//          anthropic thinking          ↔ openai-chat reasoning_text
 
 import type { Message } from 'xsai';
 
+import type {
+  AnthropicAssistantContentBlock,
+  AnthropicImageBlock,
+  AnthropicMessage,
+  AnthropicTextBlock,
+  AnthropicTool,
+  AnthropicToolResultBlock,
+  AnthropicToolUseBlock,
+  AnthropicUserContentBlock,
+} from './anthropic-types';
 import type {
   ResponseFunctionCallOutputItem,
   ResponseFunctionToolCallItem,
@@ -21,7 +33,16 @@ import type {
   ResponseOutputMessage,
   ResponseTool,
 } from './responses-types';
-import type { ExtendedMessage, ExtendedMessagePart, ResponsesTRDataItem, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
+import type {
+  AnthropicTRDataEntry,
+  AnthropicToolResultGroupEntry,
+  ExtendedMessage,
+  ExtendedMessagePart,
+  ResponsesTRDataItem,
+  TRAssistantEntry,
+  TRDataEntry,
+  TRToolResultEntry,
+} from './types';
 
 // ── Content parts conversion: Chat ↔ Responses ──
 //
@@ -257,3 +278,174 @@ export const xsaiToolToResponsesTool = (t: ToolLike): ResponseTool => ({
   strict: false,
   ...(t.function.description ? { description: t.function.description } : {}),
 });
+
+// ── Tool schema → Anthropic API function tool ──
+export const xsaiToolToAnthropicTool = (t: ToolLike): AnthropicTool => ({
+  name: t.function.name,
+  input_schema: t.function.parameters,
+  ...(t.function.description ? { description: t.function.description } : {}),
+});
+
+// ── Anthropic TR data → intermediate Message[] ──
+// Used when replaying Anthropic TRs into context for any provider.
+// Thinking blocks convert to reasoning_text/reasoning_opaque (openai-chat compat).
+// Tool result content stays in canonical ResponseInputContent[] format.
+
+const anthropicEntryToMessages = (entry: AnthropicTRDataEntry): Message[] => {
+  if (entry.role === 'assistant') {
+    const msg: TRAssistantEntry = { role: 'assistant' };
+
+    const textParts = entry.content.filter((b): b is AnthropicTextBlock => b.type === 'text');
+    const toolUses = entry.content.filter((b): b is AnthropicToolUseBlock => b.type === 'tool_use');
+    const thinking = entry.content.find((b): b is { type: 'thinking'; thinking: string } => b.type === 'thinking');
+    const redacted = entry.content.find((b): b is { type: 'redacted_thinking'; data: string } => b.type === 'redacted_thinking');
+
+    if (textParts.length === 1) {
+      msg.content = textParts[0]!.text;
+    } else if (textParts.length > 1) {
+      msg.content = textParts.map(b => b.text).join('');
+    }
+
+    if (toolUses.length > 0) {
+      msg.tool_calls = toolUses.map(b => ({
+        id: b.id,
+        type: 'function' as const,
+        function: { name: b.name, arguments: JSON.stringify(b.input) },
+      }));
+    }
+
+    if (thinking) msg.reasoning_text = thinking.thinking;
+    if (redacted) msg.reasoning_opaque = redacted.data;
+
+    return [msg as Message];
+  }
+
+  // role === 'user': one tool result per item in content
+  return (entry as AnthropicToolResultGroupEntry).content.map(block => ({
+    role: 'tool' as const,
+    tool_call_id: block.tool_use_id,
+    content: block.content,
+    requiresFollowUp: block.requiresFollowUp,
+  } as unknown as Message));
+};
+
+export const anthropicTRToMessages = (entries: AnthropicTRDataEntry[]): Message[] =>
+  entries.flatMap(anthropicEntryToMessages);
+
+// ── Intermediate Message[] → Anthropic Messages API format ──
+// Converts openai-chat-shaped intermediate messages to Anthropic wire format.
+// Batches consecutive tool result messages into a single user message.
+// Merges consecutive user content parts into a single user message.
+
+const parseImageUrl = (url: string): AnthropicImageBlock['source'] => {
+  if (url.startsWith('data:')) {
+    const commaIdx = url.indexOf(',');
+    const header = url.slice(0, commaIdx);
+    const data = url.slice(commaIdx + 1);
+    const mediaType = header.slice('data:'.length).replace(';base64', '');
+    return { type: 'base64', media_type: mediaType, data };
+  }
+  return { type: 'url', url };
+};
+
+const convertUserPart = (part: ExtendedMessagePart): Array<AnthropicTextBlock | AnthropicImageBlock> => {
+  if ((part.type === 'input_text' || part.type === 'text') && typeof part.text === 'string')
+    return [{ type: 'text', text: part.text }];
+  if (part.type === 'input_image' && typeof part.image_url === 'string')
+    return [{ type: 'image', source: parseImageUrl(part.image_url) }];
+  if (part.type === 'image_url' && part.image_url)
+    return [{ type: 'image', source: parseImageUrl((part.image_url as { url: string }).url) }];
+  return [];
+};
+
+const responseContentToAnthropicParts = (parts: ResponseInputContent[]): Array<AnthropicTextBlock | AnthropicImageBlock> =>
+  parts.flatMap((part): Array<AnthropicTextBlock | AnthropicImageBlock> =>
+    part.type === 'input_text'
+      ? [{ type: 'text', text: part.text }]
+      : part.type === 'input_image'
+        ? [{ type: 'image', source: parseImageUrl(part.image_url) }]
+        : []);
+
+const convertToolMessageToToolResultBlock = (m: ExtendedMessage): AnthropicToolResultBlock => {
+  const content = m.content as string | ResponseInputContent[] | undefined;
+  const converted: AnthropicToolResultBlock['content'] = typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? responseContentToAnthropicParts(content)
+      : '';
+  return { type: 'tool_result', tool_use_id: m.tool_call_id ?? '', content: converted };
+};
+
+export const messagesToAnthropicMessages = (messages: Message[]): AnthropicMessage[] => {
+  const result: AnthropicMessage[] = [];
+  type PendingUser = { type: 'parts'; parts: Array<AnthropicTextBlock | AnthropicImageBlock> };
+  type PendingTool = { type: 'results'; blocks: AnthropicToolResultBlock[] };
+  let pending: PendingUser | PendingTool | null = null;
+
+  const flush = () => {
+    if (!pending) return;
+    if (pending.type === 'parts' && pending.parts.length > 0) {
+      result.push({ role: 'user', content: pending.parts } as AnthropicMessage);
+    } else if (pending.type === 'results' && pending.blocks.length > 0) {
+      result.push({ role: 'user', content: pending.blocks as AnthropicUserContentBlock[] } as AnthropicMessage);
+    }
+    pending = null;
+  };
+
+  for (const msg of messages) {
+    const m = msg as ExtendedMessage;
+
+    if (m.role === 'user') {
+      if (pending?.type === 'results') flush();
+      const newParts = typeof m.content === 'string'
+        ? (m.content ? [{ type: 'text' as const, text: m.content }] : [])
+        : Array.isArray(m.content)
+          ? (m.content as ExtendedMessagePart[]).flatMap(convertUserPart)
+          : [];
+      if (pending?.type === 'parts') {
+        pending.parts.push(...newParts);
+      } else {
+        flush();
+        pending = { type: 'parts', parts: newParts };
+      }
+    } else if (m.role === 'tool') {
+      if (pending?.type === 'parts') flush();
+      const block = convertToolMessageToToolResultBlock(m);
+      if (pending?.type === 'results') {
+        pending.blocks.push(block);
+      } else {
+        pending = { type: 'results', blocks: [block] };
+      }
+    } else if (m.role === 'assistant') {
+      flush();
+      const content: AnthropicAssistantContentBlock[] = [];
+
+      // Thinking blocks first per Anthropic spec
+      if (m.reasoning_text)
+        content.push({ type: 'thinking', thinking: m.reasoning_text });
+      if (m.reasoning_opaque)
+        content.push({ type: 'redacted_thinking', data: m.reasoning_opaque });
+
+      // Text content
+      if (typeof m.content === 'string' && m.content)
+        content.push({ type: 'text', text: m.content });
+      else if (Array.isArray(m.content))
+        for (const part of m.content as ExtendedMessagePart[])
+          if (part.type === 'text' && typeof part.text === 'string')
+            content.push({ type: 'text', text: part.text });
+
+      // Tool calls
+      for (const tc of m.tool_calls ?? []) {
+        let input: Record<string, unknown> = {};
+        try { input = JSON.parse(tc.function.arguments) as Record<string, unknown>; } catch { /* keep empty */ }
+        content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input });
+      }
+
+      if (content.length > 0)
+        result.push({ role: 'assistant', content } as AnthropicMessage);
+    }
+  }
+
+  flush();
+  return result;
+};

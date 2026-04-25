@@ -21,7 +21,8 @@ export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): ContextC
   type Entry =
     | { kind: 'rc'; time: number; step: -1; content: RenderedContentPiece[] }
     | { kind: 'tr'; provider: 'openai-chat'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'openai-chat' }>['data'] }
-    | { kind: 'tr'; provider: 'responses'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'responses' }>['data'] };
+    | { kind: 'tr'; provider: 'responses'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'responses' }>['data'] }
+    | { kind: 'tr'; provider: 'anthropic'; time: number; step: number; data: Extract<ContextChunk, { type: 'tr'; provider: 'anthropic' }>['data'] };
 
   const entries: Entry[] = [];
 
@@ -32,6 +33,9 @@ export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): ContextC
     if (t.provider === 'responses') {
       for (let i = 0; i < t.data.length; i++)
         entries.push({ kind: 'tr', provider: 'responses', time: t.requestedAtMs, step: i, data: t.data[i]! });
+    } else if (t.provider === 'anthropic') {
+      for (let i = 0; i < t.data.length; i++)
+        entries.push({ kind: 'tr', provider: 'anthropic', time: t.requestedAtMs, step: i, data: t.data[i]! });
     } else {
       for (let i = 0; i < t.data.length; i++)
         entries.push({ kind: 'tr', provider: 'openai-chat', time: t.requestedAtMs, step: i, data: t.data[i]! });
@@ -65,6 +69,8 @@ export const mergeContext = (rc: RenderedContext, trs: TurnResponse[]): ContextC
       flushRC();
       if (entry.provider === 'responses')
         chunks.push({ type: 'tr', provider: 'responses', time: entry.time, step: entry.step, data: entry.data });
+      else if (entry.provider === 'anthropic')
+        chunks.push({ type: 'tr', provider: 'anthropic', time: entry.time, step: entry.step, data: entry.data });
       else
         chunks.push({ type: 'tr', provider: 'openai-chat', time: entry.time, step: entry.step, data: entry.data });
     }

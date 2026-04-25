@@ -1,8 +1,9 @@
+import type { AnthropicAssistantContentBlock } from './anthropic-types';
 import type { ResponseFunctionCallOutputItem, ResponseInputContent, ResponseOutputItem } from './responses-types';
 import type { ResolvedChatConfig } from '../config/config';
 import type { RenderedContentPiece } from '../rendering/types';
 
-export type ProviderFormat = 'openai-chat' | 'responses';
+export type ProviderFormat = 'openai-chat' | 'responses' | 'anthropic';
 
 // OpenAI Chat Completions format entries stored in TR data.
 // No DB migration needed — these types describe the existing JSON shape.
@@ -52,6 +53,30 @@ export interface TRToolResultEntry {
 export type TRDataEntry = TRAssistantEntry | TRToolResultEntry;
 export type ResponsesTRDataItem = ResponseOutputItem | ResponseFunctionCallOutputItem;
 
+// Anthropic Messages API TR storage types.
+// Tool result content uses the canonical ResponseInputContent[] format (same as TRToolResultEntry),
+// so trimming, conversion, and image handling work uniformly across providers.
+export type { AnthropicAssistantContentBlock } from './anthropic-types';
+
+export interface AnthropicToolResultItem {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string | ResponseInputContent[];
+  requiresFollowUp?: boolean;
+}
+
+export interface AnthropicAssistantEntry {
+  role: 'assistant';
+  content: AnthropicAssistantContentBlock[];
+}
+
+export interface AnthropicToolResultGroupEntry {
+  role: 'user';
+  content: AnthropicToolResultItem[];
+}
+
+export type AnthropicTRDataEntry = AnthropicAssistantEntry | AnthropicToolResultGroupEntry;
+
 interface BaseTurnResponse {
   requestedAtMs: number;
   inputTokens: number;
@@ -69,7 +94,12 @@ export interface ResponsesTurnResponse extends BaseTurnResponse {
   data: ResponsesTRDataItem[];
 }
 
-export type TurnResponse = ChatTurnResponse | ResponsesTurnResponse;
+export interface AnthropicTurnResponse extends BaseTurnResponse {
+  provider: 'anthropic';
+  data: AnthropicTRDataEntry[];
+}
+
+export type TurnResponse = ChatTurnResponse | ResponsesTurnResponse | AnthropicTurnResponse;
 
 export interface ThinkingConfig {
   type?: 'enabled' | 'disabled';
@@ -83,6 +113,7 @@ export interface LlmEndpoint {
   apiFormat?: ProviderFormat;
   reasoningSignatureCompat?: string;
   maxImagesAllowed?: number;
+  maxTokens?: number;
   timeoutSec?: number;
   thinking?: ThinkingConfig;
 }
@@ -91,7 +122,8 @@ export interface LlmEndpoint {
 export type ContextChunk =
   | { type: 'rc'; time: number; step: -1; content: RenderedContentPiece[] }
   | { type: 'tr'; provider: 'openai-chat'; time: number; step: number; data: TRDataEntry }
-  | { type: 'tr'; provider: 'responses'; time: number; step: number; data: ResponsesTRDataItem };
+  | { type: 'tr'; provider: 'responses'; time: number; step: number; data: ResponsesTRDataItem }
+  | { type: 'tr'; provider: 'anthropic'; time: number; step: number; data: AnthropicTRDataEntry };
 
 export interface DriverConfig {
   chatIds: string[];

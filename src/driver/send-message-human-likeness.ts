@@ -165,10 +165,13 @@ const extractResponsesSendMessageAssessments = (
 const extractSendMessageAssessments = (
   tr: TurnResponse,
   toggles: HumanLikenessToggles = ALL_ENABLED,
-): SendMessageHumanLikenessAssessment[] =>
-  tr.provider === 'responses'
-    ? extractResponsesSendMessageAssessments(tr.data, toggles)
-    : extractChatSendMessageAssessments(tr.data, toggles);
+): SendMessageHumanLikenessAssessment[] => {
+  if (tr.provider === 'responses') return extractResponsesSendMessageAssessments(tr.data, toggles);
+  // Anthropic TRs store tool calls as tool_use blocks in assistant content — no direct send_message extraction path.
+  // Fall back to an empty result so the human-likeness check is a no-op for Anthropic TRs.
+  if (tr.provider === 'anthropic') return [];
+  return extractChatSendMessageAssessments(tr.data, toggles);
+};
 
 export const collectRecentSendMessageAssessments = (
   trs: TurnResponse[],

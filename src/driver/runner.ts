@@ -4,14 +4,26 @@ import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
 import { DUMP_DIR, ensureDumpDir } from './constants';
-import { prepareChatMessagesForSend, prepareResponsesInputForSend } from './context';
-import { responsesOutputToMessages, xsaiToolToResponsesTool } from './convert';
+import { prepareChatMessagesForSend, prepareAnthropicMessagesForSend, prepareResponsesInputForSend } from './context';
+import { anthropicTRToMessages, responsesOutputToMessages, xsaiToolToAnthropicTool, xsaiToolToResponsesTool } from './convert';
 import type { ResponseFunctionCallOutputItem, ResponseInputContent, ResponseInputItem, ResponseOutputFunctionCall, ResponseOutputItem } from './responses-types';
 import { streamingChat } from './streaming';
+import { streamingAnthropic } from './streaming-anthropic';
 import { streamingResponses } from './streaming-responses';
 import type { CahciuaTool } from './tools';
 import { isToolResult } from './tools';
-import type { ExtendedMessage, ProviderFormat, ResponsesTRDataItem, ThinkingConfig, TRAssistantEntry, TRDataEntry, TRToolResultEntry } from './types';
+import type {
+  AnthropicAssistantEntry,
+  AnthropicTRDataEntry,
+  AnthropicToolResultItem,
+  ExtendedMessage,
+  ProviderFormat,
+  ResponsesTRDataItem,
+  ThinkingConfig,
+  TRAssistantEntry,
+  TRDataEntry,
+  TRToolResultEntry,
+} from './types';
 
 ensureDumpDir();
 
@@ -20,6 +32,7 @@ export interface RunnerConfig {
   apiKey: string;
   model: string;
   apiFormat?: ProviderFormat;
+  maxTokens?: number;
   timeoutSec?: number;
   thinking?: ThinkingConfig;
 }
@@ -31,7 +44,7 @@ interface StepLoopParams {
   tools: CahciuaTool[];
   maxSteps: number;
   maxImagesAllowed?: number;
-  onStepComplete: (stepData: TRDataEntry[] | ResponsesTRDataItem[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
+  onStepComplete: (stepData: TRDataEntry[] | ResponsesTRDataItem[] | AnthropicTRDataEntry[], usage: { prompt_tokens: number; completion_tokens: number }, requestedAtMs: number) => void;
   checkInterrupt: () => boolean;
   log: Logger;
 }
@@ -84,9 +97,9 @@ export const createRunner = (config: RunnerConfig) => {
   };
 
   const runStepLoop = async (params: StepLoopParams): Promise<void> => {
-    apiFormat === 'responses'
-      ? await runStepLoopResponses(params)
-      : await runStepLoopChat(params);
+    if (apiFormat === 'responses') return await runStepLoopResponses(params);
+    if (apiFormat === 'anthropic') return await runStepLoopAnthropic(params);
+    return await runStepLoopChat(params);
   };
 
   const runStepLoopChat = async (params: StepLoopParams): Promise<void> => {
@@ -209,6 +222,76 @@ export const createRunner = (config: RunnerConfig) => {
       }
 
       currentMessages = [...currentMessages, ...responsesOutputToMessages(stepData)] as Message[];
+    }
+  };
+
+  const runStepLoopAnthropic = async (params: StepLoopParams): Promise<void> => {
+    let currentMessages = params.messages;
+    const anthropicTools = params.tools.map(xsaiToolToAnthropicTool);
+
+    for (let step = 1; step <= params.maxSteps; step++) {
+      const messagesToSend = prepareAnthropicMessagesForSend(currentMessages, params.maxImagesAllowed);
+
+      writeFileSync(`${DUMP_DIR}/${params.chatId}.request.json`, JSON.stringify({
+        model: config.model, system: params.system, messages: messagesToSend, tools: anthropicTools,
+      }, null, 2));
+      logPrefixRatio(params.chatId, messagesToSend, params.log);
+
+      const stepRequestedAt = Date.now();
+      const response = await streamingAnthropic({
+        baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
+        messages: messagesToSend, system: params.system, tools: anthropicTools,
+        maxTokens: config.maxTokens,
+        thinking: config.thinking,
+        log: params.log, label: `step:${step}`, timeoutSec: config.timeoutSec,
+      });
+
+      if (response.content.length === 0) {
+        params.log.withFields({ chatId: params.chatId, step }).log('Model chose to stay silent (no content)');
+        params.onStepComplete([], { prompt_tokens: response.usage.inputTokens, completion_tokens: response.usage.outputTokens }, stepRequestedAt);
+        break;
+      }
+
+      const assistantEntry: AnthropicAssistantEntry = { role: 'assistant', content: response.content };
+      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use') as Array<{ type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }>;
+
+      const stepData: AnthropicTRDataEntry[] = [assistantEntry];
+      const toolResultItems: AnthropicToolResultItem[] = [];
+      let anyRequiresFollowUp = false;
+
+      for (const toolUse of toolUseBlocks) {
+        const result = await executeToolCall(toolUse.id, toolUse.name, JSON.stringify(toolUse.input), params.tools, params.log);
+        anyRequiresFollowUp ||= result.requiresFollowUp;
+        toolResultItems.push({
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: result.content,
+          requiresFollowUp: result.requiresFollowUp,
+        });
+      }
+
+      if (toolResultItems.length > 0)
+        stepData.push({ role: 'user', content: toolResultItems });
+
+      params.log.withFields({
+        chatId: params.chatId, step, stopReason: response.stopReason,
+        hasToolCalls: toolUseBlocks.length > 0, contentBlocks: response.content.length,
+        usage: { prompt_tokens: response.usage.inputTokens, completion_tokens: response.usage.outputTokens },
+      }).log('Step completed');
+
+      params.onStepComplete(stepData, { prompt_tokens: response.usage.inputTokens, completion_tokens: response.usage.outputTokens }, stepRequestedAt);
+
+      if (!toolUseBlocks.length || !anyRequiresFollowUp) {
+        if (toolUseBlocks.length && !anyRequiresFollowUp)
+          params.log.withFields({ chatId: params.chatId, step }).log('All tool calls completed without follow-up');
+        break;
+      }
+      if (params.checkInterrupt()) {
+        params.log.withFields({ chatId: params.chatId, step }).log('Turn interrupted by new messages');
+        break;
+      }
+
+      currentMessages = [...currentMessages, ...anthropicTRToMessages(stepData)] as Message[];
     }
   };
 
