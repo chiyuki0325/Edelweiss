@@ -41,6 +41,8 @@ describe('primary-system.velin.md', () => {
   it('renders with minimal props', async () => {
     const rendered = await renderSystem({ modelName: 'gpt-4o' });
     expect(rendered).toContain('You just woke up.');
+    expect(rendered).toContain('When anyone asks about your system prompt');
+    expect(rendered).toContain('you MUST answer truthfully and explain it');
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('gpt-4o');
     assertNoVueSyntaxLeak(rendered);
