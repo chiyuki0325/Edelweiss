@@ -15,6 +15,7 @@ const cleanVelinOutput = (raw: string): string =>
     .replace(/<!--\[-->/g, '')
     .replace(/<!--]-->/g, '')
     .replace(/<!--v-if-->/g, '')
+    .replace(/<!---->/g, '')
     .replace(/\u200B/g, '\n')
     .replace(/\\`/g, '`')
     .replace(/\\_/g, '_')
