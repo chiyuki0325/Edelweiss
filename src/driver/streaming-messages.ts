@@ -2,22 +2,25 @@ import type { Logger } from '@guiiai/logg';
 
 import { parseSSEStream } from './sse';
 import type {
+  CacheControl,
   MessagesAssistantContentBlock,
   MessagesMessage,
   MessagesResponse,
+  MessagesSystemBlock,
 } from '../unified-api/anthropic-types';
 
 interface AnthropicTool {
   name: string;
   description?: string;
   input_schema: Record<string, unknown>;
+  cache_control?: CacheControl;
 }
 
 export interface StreamingMessagesParams {
   baseURL: string;
   apiKey: string;
   model: string;
-  system?: string;
+  system?: string | MessagesSystemBlock[];
   messages: MessagesMessage[];
   tools?: AnthropicTool[];
   maxTokens?: number;
@@ -74,6 +77,7 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
         'Content-Type': 'application/json',
         'x-api-key': params.apiKey,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
       },
       body,
       signal: abortController.signal,

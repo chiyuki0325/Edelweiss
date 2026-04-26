@@ -1,3 +1,13 @@
+export interface CacheControl {
+  type: 'ephemeral';
+}
+
+export interface MessagesSystemBlock {
+  type: 'text';
+  text: string;
+  cache_control?: CacheControl;
+}
+
 export interface MessagesTextBlock {
   type: 'text';
   text: string;

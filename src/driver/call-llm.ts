@@ -16,6 +16,7 @@ import {
   toMessagesInput,
   toResponsesInput,
 } from '../unified-api';
+import type { MessagesSystemBlock } from '../unified-api/anthropic-types';
 import type { ChatCompletionsAssistantMessage } from '../unified-api/chat-types';
 import type { ResponsesAssistantItem } from '../unified-api/responses-types';
 import type { ConversationEntry } from '../unified-api/types';
@@ -108,11 +109,39 @@ export const callLlm = async (
     const { system: sysFromEntries, messages } = await toMessagesInput(prepared);
     const effectiveSystem = sysFromEntries ?? system;
     const wireTools = optionalTools(tools?.map(toAnthropicToolSchema));
-    dump(options?.dumpId, 'request', { model: config.model, system: effectiveSystem, messages, tools: wireTools });
+
+    // Prompt cache breakpoints: system, last tool, messages[-2]
+    const cachedSystem: MessagesSystemBlock[] | undefined = effectiveSystem
+      ? [{ type: 'text', text: effectiveSystem, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
+    if (wireTools && wireTools.length > 0)
+      (wireTools[wireTools.length - 1]! as Record<string, unknown>).cache_control = { type: 'ephemeral' };
+
+    // Walk backward from messages[-2] to find the last block that accepts cache_control.
+    // thinking/redacted_thinking blocks do not support it and will cause a 400 error.
+    const startIdx = messages.length >= 2 ? messages.length - 2 : messages.length - 1;
+    outer: for (let mi = startIdx; mi >= 0; mi--) {
+      const msg = messages[mi]!;
+      if (typeof msg.content === 'string') {
+        (msg as unknown as Record<string, unknown>).content = [
+          { type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } },
+        ];
+        break;
+      }
+      for (let bi = msg.content.length - 1; bi >= 0; bi--) {
+        const block = msg.content[bi]!;
+        if (block.type === 'thinking' || block.type === 'redacted_thinking') continue;
+        (block as Record<string, unknown>).cache_control = { type: 'ephemeral' };
+        break outer;
+      }
+    }
+
+    dump(options?.dumpId, 'request', { model: config.model, system: cachedSystem, messages, tools: wireTools });
 
     const response = await streamingMessages({
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
-      system: effectiveSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
+      system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
       log: log!, label, timeoutSec: config.timeoutSec,
     });
     dump(options?.dumpId, 'response', response);
