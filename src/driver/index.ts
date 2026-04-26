@@ -299,8 +299,11 @@ export const createDriver = (config: DriverConfig, deps: {
 
                 const hasToolCalls = probeResult.entries.some(
                   e => e.kind === 'message' && e.role === 'assistant'
-                    && e.parts.some(p => p.kind === 'toolCall'),
-                );
+                    && e.parts.some(
+                      p => p.kind === 'toolCall' && p.name != "dismiss_message"
+                      /* dismiss_message calls are not considered activations */,
+                    ),
+                )
 
                 log.withFields({ chatId, hasToolCalls }).log('Probe result');
 
