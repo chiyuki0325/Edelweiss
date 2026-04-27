@@ -25,7 +25,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses, image_alt_texts tables; 22 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries |
+| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries, typing-aware debounce scheduling |
 
 ## Tech Stack
 
@@ -199,7 +199,7 @@ The queue is fail-closed. If the head event's transform does not succeed, that c
 ### Dual Telegram Client
 
 - **grammY** (Bot API): receives messages from non-bot users, sends replies, handles `/commands`.
-- **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete events.
+- **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete/typing events.
 
 Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
 
@@ -229,7 +229,14 @@ Design rule: metadata changes about entities → append-only; content changes to
 
 ### Message Scheduling
 
-Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **immediate trigger + natural batching** — the reply effect fires as soon as new external messages are detected (`setTimeout(0)` only exits the synchronous signal graph). The `running` flag prevents concurrent LLM calls; messages arriving during a call accumulate and are picked up on the next run. No debounce/throttle is currently implemented. Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **debounce + natural batching** — when new external messages trigger the reply effect, a debounce timer (`initialDelayMs`, default 5s) starts. New messages arriving during the wait reset the timer to `typingExtendMs` (default 5s). MTProto typing events (`SendMessageTypingAction`) from non-bot users in the same chat also extend the debounce. A hard cap (`maxDelayMs`, default 30s) forces the LLM call regardless of ongoing activity. The `running` flag prevents concurrent LLM calls; messages arriving during a call accumulate and start a fresh debounce cycle when the call finishes. Bot responds via `send_message` tool call (not 1:1 response).
+
+The reply effect reads `rc()` directly (in addition to `needsReply()`) so that it re-runs when RC changes even if `needsReply()` stays `true` — this is required for debounce extension on new messages. Typing events bypass the signal graph entirely via `extendDebounce()`, which resets only the debounce timer without touching the maxDelay cap.
+
+**Config** (`debounce` section in chat config, per-chat overridable):
+- `initialDelayMs` (number, default `5000`): delay before first LLM call after new external messages.
+- `typingExtendMs` (number, default `5000`): delay reset on new messages or typing events.
+- `maxDelayMs` (number, default `30000`): hard cap — forces LLM call regardless of activity.
 
 Scheduling lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing it would create coordination overhead.
 

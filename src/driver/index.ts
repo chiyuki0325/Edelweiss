@@ -98,6 +98,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
   const chatScopes = new Map<string, {
     rc: ReturnType<typeof signal<RenderedContext>>;
+    extendDebounce: () => void;
     cleanup: () => void;
   }>();
 
@@ -113,7 +114,6 @@ export const createDriver = (config: DriverConfig, deps: {
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
     const running = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
     // --- Compaction state as signal ---
     // Initialized from DB on scope creation (cold start). Updated by the
@@ -137,10 +137,12 @@ export const createDriver = (config: DriverConfig, deps: {
       if (newRC) rc(newRC);
     });
 
-    // --- Main LLM reply effect ---
-    // Triggers immediately when new external messages arrive (no debounce).
-    // Natural batching: `running` prevents concurrent calls, so messages
-    // arriving during an LLM call accumulate and get picked up on the next run.
+    // --- Main LLM reply effect with debounce ---
+    // When new external messages arrive, start a debounce timer (initialDelayMs).
+    // New messages or typing events reset it to typingExtendMs. A hard cap
+    // (maxDelayMs) forces the call even if activity continues. The `running`
+    // flag prevents concurrent calls; messages arriving during an LLM call
+    // accumulate and start a fresh debounce cycle when the call finishes.
     const needsReply = computed(() => {
       const rcVal = rc();
       if (rcVal.length === 0) return false;
@@ -148,225 +150,272 @@ export const createDriver = (config: DriverConfig, deps: {
       return latestExternalEventMs(rcVal, lastProcessedMs()) != null;
     });
 
-    const disposeReplyEffect = effect(() => {
-      const isRunning = running();
-      if (timer) { clearTimeout(timer); timer = undefined; }
-      if (isRunning) return;
+    const { initialDelayMs, typingExtendMs, maxDelayMs } = chatConfig.debounce;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    let maxDelayTimer: ReturnType<typeof setTimeout> | undefined;
+    let debounceWaiting = false;
 
-      if (!needsReply()) return;
+    const clearDebounceTimers = () => {
+      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
+      if (maxDelayTimer) { clearTimeout(maxDelayTimer); maxDelayTimer = undefined; }
+    };
 
-      // setTimeout(0) to exit the synchronous signal graph before starting async work
-      timer = setTimeout(() => {
-        const rcAtStart = rc();
-        running(true);
+    // Called from timer callbacks to start the async LLM work.
+    const executeLlmCall = () => {
+      if (running()) return;
+      clearDebounceTimers();
+      debounceWaiting = false;
 
-        void (async () => {
-          try {
-            // Read compaction state from signal — no DB query.
-            const cursor = cursorMs();
-            const sum = summary();
+      const rcAtStart = rc();
+      running(true);
 
-            const trs = await loadTRs(chatId, cursor);
-            const ctx = composeContext(rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, chatConfig.primaryModel.model, sum);
-            if (!ctx) return;
+      void (async () => {
+        try {
+          // Read compaction state from signal — no DB query.
+          const cursor = cursorMs();
+          const sum = summary();
 
+          const trs = await loadTRs(chatId, cursor);
+          const ctx = composeContext(rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, chatConfig.primaryModel.model, sum);
+          if (!ctx) return;
+
+          log.withFields({
+            chatId,
+            entries: ctx.entries.length,
+            estimatedTokens: ctx.estimatedTokens,
+          }).log('Triggering LLM call');
+
+          const sendMessageTool = createSendMessageTool(async (text, replyTo, attachments) => {
             log.withFields({
               chatId,
-              entries: ctx.entries.length,
-              estimatedTokens: ctx.estimatedTokens,
-            }).log('Triggering LLM call');
+              text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
+              replyTo,
+              attachments: attachments?.length ?? 0,
+            }).log('send_message tool called');
+            const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
+            return { messageId: String(sent.messageId) };
+          });
 
-            const sendMessageTool = createSendMessageTool(async (text, replyTo, attachments) => {
-              log.withFields({
-                chatId,
-                text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
-                replyTo,
-                attachments: attachments?.length ?? 0,
-              }).log('send_message tool called');
-              const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
-              return { messageId: String(sent.messageId) };
-            });
+          const downloadAttachment = createAttachmentDownloader({
+            chatId,
+            loadMessageAttachments: deps.loadMessageAttachments,
+            downloadFile: deps.downloadFile,
+            downloadMessageMedia: deps.downloadMessageMedia,
+          });
 
-            const downloadAttachment = createAttachmentDownloader({
-              chatId,
-              loadMessageAttachments: deps.loadMessageAttachments,
-              downloadFile: deps.downloadFile,
-              downloadMessageMedia: deps.downloadMessageMedia,
-            });
-
-            const tools: CahciuaTool[] = [sendMessageTool, createDismissMessageTool()];
-            tools.push(createBashTool(deps.runtimeConfig, {
-              startTask: deps.backgroundTask.startTask,
-              sessionId: chatId,
-              backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
-            }));
-            tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
-            tools.push(createDownloadFileTool({
-              downloadAttachment,
-              runtime: deps.runtimeConfig,
-            }));
-            {
-              const readFileCmd = deps.runtimeConfig.readFile;
-              const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
-                ? async (buffer: Buffer, detail: 'low' | 'high') => {
-                  const maxEdge = detail === 'high' ? 1024 : 512;
-                  const { default: sharp } = await import('sharp');
-                  const resized = await sharp(buffer)
-                    .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
-                    .png()
-                    .toBuffer();
-                  const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
-                  const system = await renderImageToTextSystemPrompt({ caption: '', detail });
-                  const model = deps.resolveModel(chatConfig.imageToText.model!);
-                  const result = await callDescriptionLlm({
-                    model, system,
-                    userText: 'Describe this image.',
-                    images: [{ url: imageUrl }],
-                    log, label: 'read-image',
-                  });
-                  return result.text.trim();
-                }
-                : undefined;
-
-              tools.push(createReadImageTool({
-                downloadAttachment,
-                readFile: async path => {
-                  const { execFile } = await import('node:child_process');
-                  return await new Promise<Buffer>((resolve, reject) => {
-                    const child = execFile(
-                      readFileCmd[0]!,
-                      [...readFileCmd.slice(1), path],
-                      { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
-                      (error, stdout) => {
-                        if (error) reject(new Error(`Failed to read file: ${error.message}`));
-                        else resolve(stdout as unknown as Buffer);
-                      },
-                    );
-                    child.stdin?.end();
-                  });
-                },
-                resolveImageToText,
-              }));
-            }
-            tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
-            tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
-
-            const system = await renderSystemPrompt({
-              currentChannel: 'telegram',
-              modelName: chatConfig.primaryModel.model,
-              systemFiles: chatConfig.systemFiles,
-            });
-
-            // --- Compute mention/reply/interrupt state from RC + TRs ---
-            const rcVal = rcAtStart;
-            const isInterrupted = wasToolLoopInterrupted(trs);
-            const lastMentionedAtMs = rcVal.reduce((max, seg) =>
-              (seg.mentionsMe || seg.repliesToMe || seg.isRuntimeEvent) ? Math.max(max, seg.receivedAtMs) : max, 0);
-            const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
-            const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
-            const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
-              collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
-            );
-
-            const lateBindingParams = {
-              timeNow: localTimeNow(),
-              isMentioned, isReplied,
-              recentSendMessageHumanLikenessXml,
-              isInterrupted,
-              activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
-            };
-
-            // --- Probe gate ---
-            // Skip probe if: mentioned, replied to, runtime event, or tool loop was interrupted.
-            // In those cases go straight to primary model.
-            if (chatConfig.probe.enabled && !isInterrupted) {
-              const needsProbe = lastMentionedAtMs <= lastProcessedMs();
-
-              if (needsProbe) {
-                log.withFields({ chatId, lastMentionedAtMs, lastProcessedMs: lastProcessedMs() }).log('Running probe');
-
-                const probeEntries = [...ctx.entries];
-                injectLateBindingPrompt(probeEntries, await renderLateBindingPrompt({
-                  ...lateBindingParams, isProbeEnabled: true, isProbing: true,
-                }));
-
-                const probeRequestedAt = Date.now();
-                const probeResult = await callLlm(
-                  chatConfig.probe.model, probeEntries, system,
-                  tools.map(toToolSchema),
-                  { log, label: `probe:${chatId}`, maxImagesAllowed: chatConfig.probe.model.maxImagesAllowed },
-                );
-
-                const hasToolCalls = probeResult.entries.some(
-                  e => e.kind === 'message' && e.role === 'assistant'
-                    && e.parts.some(
-                      p => p.kind === 'toolCall' && p.name != 'dismiss_message'
-                      /* dismiss_message calls are not considered activations */,
-                    ),
-                );
-
-                const usage = probeResult.usage;
-
-                log.withFields({ chatId, usage, hasToolCalls }).log('Probe result');
-
-                await deps.persistProbeResponse(chatId, {
-                  requestedAtMs: probeRequestedAt,
-                  entries: probeResult.entries,
-                  inputTokens: probeResult.usage.inputTokens,
-                  outputTokens: probeResult.usage.outputTokens,
-                  modelName: chatConfig.probe.model.model,
-                  isActivated: hasToolCalls,
-                  createdAt: Date.now(),
+          const tools: CahciuaTool[] = [sendMessageTool, createDismissMessageTool()];
+          tools.push(createBashTool(deps.runtimeConfig, {
+            startTask: deps.backgroundTask.startTask,
+            sessionId: chatId,
+            backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
+          }));
+          tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
+          tools.push(createDownloadFileTool({
+            downloadAttachment,
+            runtime: deps.runtimeConfig,
+          }));
+          {
+            const readFileCmd = deps.runtimeConfig.readFile;
+            const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
+              ? async (buffer: Buffer, detail: 'low' | 'high') => {
+                const maxEdge = detail === 'high' ? 1024 : 512;
+                const { default: sharp } = await import('sharp');
+                const resized = await sharp(buffer)
+                  .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+                  .png()
+                  .toBuffer();
+                const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
+                const system = await renderImageToTextSystemPrompt({ caption: '', detail });
+                const model = deps.resolveModel(chatConfig.imageToText.model!);
+                const result = await callDescriptionLlm({
+                  model, system,
+                  userText: 'Describe this image.',
+                  images: [{ url: imageUrl }],
+                  log, label: 'read-image',
                 });
-
-                lastProcessedMs(probeRequestedAt);
-
-                if (!hasToolCalls) {
-                  log.withFields({ chatId }).log('Probe: model chose silence');
-                  return;
-                }
-                log.withFields({ chatId }).log('Probe: tool calls detected, activating primary model');
+                return result.text.trim();
               }
-            }
+              : undefined;
 
-            injectLateBindingPrompt(ctx.entries, await renderLateBindingPrompt({
-              ...lateBindingParams, isProbeEnabled: chatConfig.probe.enabled, isProbing: false,
-            }));
-
-            const runner = getOrCreateRunner(chatConfig.primaryModel);
-            await runner.runStepLoop({
-              chatId,
-              entries: ctx.entries,
-              system,
-              tools,
-              maxSteps: MAX_STEPS,
-              maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
-              onStepComplete: async (stepEntries, usage, requestedAtMs) => {
-                await deps.persistTurnResponse(chatId, {
-                  requestedAtMs,
-                  entries: stepEntries,
-                  inputTokens: usage.inputTokens,
-                  outputTokens: usage.outputTokens,
-                  modelName: chatConfig.primaryModel.model,
+            tools.push(createReadImageTool({
+              downloadAttachment,
+              readFile: async path => {
+                const { execFile } = await import('node:child_process');
+                return await new Promise<Buffer>((resolve, reject) => {
+                  const child = execFile(
+                    readFileCmd[0]!,
+                    [...readFileCmd.slice(1), path],
+                    { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
+                    (error, stdout) => {
+                      if (error) reject(new Error(`Failed to read file: ${error.message}`));
+                      else resolve(stdout as unknown as Buffer);
+                    },
+                  );
+                  child.stdin?.end();
                 });
-                lastProcessedMs(requestedAtMs);
               },
-              checkInterrupt: () => {
-                if (rc() === rcAtStart) return false;
-                return latestExternalEventMs(rc(), lastProcessedMs()) != null;
-              },
-              log,
-            });
-          } catch (err) {
-            // No retry or backoff — a failed call is recorded via failedRc and
-            // only re-attempted when new external messages produce a fresh RC.
-            log.withError(err).error('LLM call failed');
-            failedRc(rcAtStart);
-          } finally {
-            running(false);
+              resolveImageToText,
+            }));
           }
-        })();
-      }, 0);
+          tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
+          tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
+
+          const system = await renderSystemPrompt({
+            currentChannel: 'telegram',
+            modelName: chatConfig.primaryModel.model,
+            systemFiles: chatConfig.systemFiles,
+          });
+
+          // --- Compute mention/reply/interrupt state from RC + TRs ---
+          const rcVal = rcAtStart;
+          const isInterrupted = wasToolLoopInterrupted(trs);
+          const lastMentionedAtMs = rcVal.reduce((max, seg) =>
+            (seg.mentionsMe || seg.repliesToMe || seg.isRuntimeEvent) ? Math.max(max, seg.receivedAtMs) : max, 0);
+          const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
+          const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
+          const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
+            collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
+          );
+
+          const lateBindingParams = {
+            timeNow: localTimeNow(),
+            isMentioned, isReplied,
+            recentSendMessageHumanLikenessXml,
+            isInterrupted,
+            activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
+          };
+
+          // --- Probe gate ---
+          // Skip probe if: mentioned, replied to, runtime event, or tool loop was interrupted.
+          // In those cases go straight to primary model.
+          if (chatConfig.probe.enabled && !isInterrupted) {
+            const needsProbe = lastMentionedAtMs <= lastProcessedMs();
+
+            if (needsProbe) {
+              log.withFields({ chatId, lastMentionedAtMs, lastProcessedMs: lastProcessedMs() }).log('Running probe');
+
+              const probeEntries = [...ctx.entries];
+              injectLateBindingPrompt(probeEntries, await renderLateBindingPrompt({
+                ...lateBindingParams, isProbeEnabled: true, isProbing: true,
+              }));
+
+              const probeRequestedAt = Date.now();
+              const probeResult = await callLlm(
+                chatConfig.probe.model, probeEntries, system,
+                tools.map(toToolSchema),
+                { log, label: `probe:${chatId}`, maxImagesAllowed: chatConfig.probe.model.maxImagesAllowed },
+              );
+
+              const hasToolCalls = probeResult.entries.some(
+                e => e.kind === 'message' && e.role === 'assistant'
+                  && e.parts.some(
+                    p => p.kind === 'toolCall' && p.name != 'dismiss_message'
+                    /* dismiss_message calls are not considered activations */,
+                  ),
+              );
+
+              const usage = probeResult.usage;
+
+              log.withFields({ chatId, usage, hasToolCalls }).log('Probe result');
+
+              await deps.persistProbeResponse(chatId, {
+                requestedAtMs: probeRequestedAt,
+                entries: probeResult.entries,
+                inputTokens: probeResult.usage.inputTokens,
+                outputTokens: probeResult.usage.outputTokens,
+                modelName: chatConfig.probe.model.model,
+                isActivated: hasToolCalls,
+                createdAt: Date.now(),
+              });
+
+              lastProcessedMs(probeRequestedAt);
+
+              if (!hasToolCalls) {
+                log.withFields({ chatId }).log('Probe: model chose silence');
+                return;
+              }
+              log.withFields({ chatId }).log('Probe: tool calls detected, activating primary model');
+            }
+          }
+
+          injectLateBindingPrompt(ctx.entries, await renderLateBindingPrompt({
+            ...lateBindingParams, isProbeEnabled: chatConfig.probe.enabled, isProbing: false,
+          }));
+
+          const runner = getOrCreateRunner(chatConfig.primaryModel);
+          await runner.runStepLoop({
+            chatId,
+            entries: ctx.entries,
+            system,
+            tools,
+            maxSteps: MAX_STEPS,
+            maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
+            onStepComplete: async (stepEntries, usage, requestedAtMs) => {
+              await deps.persistTurnResponse(chatId, {
+                requestedAtMs,
+                entries: stepEntries,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                modelName: chatConfig.primaryModel.model,
+              });
+              lastProcessedMs(requestedAtMs);
+            },
+            checkInterrupt: () => {
+              if (rc() === rcAtStart) return false;
+              return latestExternalEventMs(rc(), lastProcessedMs()) != null;
+            },
+            log,
+          });
+        } catch (err) {
+          // No retry or backoff — a failed call is recorded via failedRc and
+          // only re-attempted when new external messages produce a fresh RC.
+          log.withError(err).error('LLM call failed');
+          failedRc(rcAtStart);
+        } finally {
+          running(false);
+        }
+      })();
+    };
+
+    // Exposed to handleTyping — extends the debounce window if waiting.
+    const extendDebounce = () => {
+      if (!debounceWaiting || running()) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(executeLlmCall, typingExtendMs);
+    };
+
+    // The effect reads rc() directly (not just needsReply) so that it re-runs
+    // when RC changes even if needsReply stays true — this triggers debounce
+    // extension on new messages arriving during the wait period.
+    const disposeReplyEffect = effect(() => {
+      rc();
+      const isRunning = running();
+
+      if (isRunning) {
+        clearDebounceTimers();
+        debounceWaiting = false;
+        return;
+      }
+
+      if (!needsReply()) {
+        clearDebounceTimers();
+        debounceWaiting = false;
+        return;
+      }
+
+      // needsReply is true and we're not running.
+      if (!debounceWaiting) {
+        // First trigger — start debounce with initialDelayMs + hard cap.
+        debounceWaiting = true;
+        debounceTimer = setTimeout(executeLlmCall, initialDelayMs);
+        maxDelayTimer = setTimeout(executeLlmCall, maxDelayMs);
+        log.withFields({ chatId, initialDelayMs, maxDelayMs }).log('Debounce started');
+      } else {
+        // RC changed while waiting (new message) — extend debounce timer,
+        // maxDelayTimer stays unchanged as the hard cap.
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(executeLlmCall, typingExtendMs);
+      }
     });
 
     // --- Independent compaction effect ---
@@ -443,14 +492,14 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const cleanup = () => {
-      if (timer) clearTimeout(timer);
+      clearDebounceTimers();
       if (compactionTimer) clearTimeout(compactionTimer);
       disposeCursorEffect();
       disposeReplyEffect();
       disposeCompactionEffect();
     };
 
-    const entry = { rc, cleanup };
+    const entry = { rc, extendDebounce, cleanup };
     chatScopes.set(chatId, entry);
     return entry;
   };
@@ -460,11 +509,15 @@ export const createDriver = (config: DriverConfig, deps: {
     getOrCreateScope(chatId).rc(newRC);
   };
 
+  const handleTyping = (chatId: string) => {
+    chatScopes.get(chatId)?.extendDebounce();
+  };
+
   const stop = () => {
     for (const scope of chatScopes.values())
       scope.cleanup();
     chatScopes.clear();
   };
 
-  return { handleEvent, stop };
+  return { handleEvent, handleTyping, stop };
 };

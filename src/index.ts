@@ -496,6 +496,11 @@ const main = async () => {
     driver.handleEvent(event.chatId, rc);
   });
 
+  telegram.onTyping(event => {
+    if (event.userId === botUserId) return;
+    driver.handleTyping(event.chatId);
+  });
+
   const shutdown = async () => {
     logger.log('Shutting down...');
     backgroundTaskManager.shutdown();
