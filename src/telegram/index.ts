@@ -302,6 +302,15 @@ export const createTelegramManager = (
       bot.start(),
       userbot?.start(),
     ]);
+    // Warm up MTProto update subscription for each known chat. Without this,
+    // Telegram only delivers UpdateChannelUserTyping / UpdateChatUserTyping to
+    // sessions that have recently "opened" the chat via a native client.
+    // Fetching 1 message per chat signals activity to the server and activates
+    // the subscription for this session. Fire-and-forget — failures are harmless.
+    if (userbot) {
+      for (const chatId of botChats)
+        userbot.fetchMessages(chatId, { limit: 1 }).catch(() => { /* ignore */ });
+    }
   };
 
   const stop = async () => {
