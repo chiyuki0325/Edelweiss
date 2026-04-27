@@ -2,8 +2,8 @@ import { writeFileSync } from 'node:fs';
 
 import type { Logger } from '@guiiai/logg';
 
-import { trimImages } from './context';
 import { DUMP_DIR } from './constants';
+import { trimImages } from './context';
 import { streamingChat } from './streaming';
 import { streamingMessages } from './streaming-messages';
 import { streamingResponses } from './streaming-responses';
@@ -182,7 +182,7 @@ export const callLlm = async (
       outputTokens: response.usage.completion_tokens ?? 0,
       cacheCreationTokens: -1,
       cacheReadTokens: -1,
-    }
+    },
   };
 
   return {
@@ -192,6 +192,6 @@ export const callLlm = async (
       outputTokens: response.usage.completion_tokens ?? 0,
       cacheCreationTokens: -1,
       cacheReadTokens: -1,
-    }
+    },
   };
 };

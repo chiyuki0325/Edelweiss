@@ -115,7 +115,7 @@ export const assessSendMessageHumanLikeness = (
   return features;
 };
 
-const extractSendMessageAssessments = (entries: ConversationEntry[], toggles: HumanLikenessToggles = ALL_ENABLED,): SendMessageHumanLikenessAssessment[] => {
+const extractSendMessageAssessments = (entries: ConversationEntry[], toggles: HumanLikenessToggles = ALL_ENABLED): SendMessageHumanLikenessAssessment[] => {
   const successfulCallIds = new Set(
     entries
       .filter((e): e is Extract<ConversationEntry, { kind: 'toolResult' }> => e.kind === 'toolResult')
@@ -152,7 +152,7 @@ export const appendRecentSendMessageAssessments = (
   toggles: HumanLikenessToggles = ALL_ENABLED,
 ): SendMessageHumanLikenessAssessment[] =>
   [...current, ...extractSendMessageAssessments(tr.entries, toggles)].slice(-limit);
-  
+
 export const renderRecentSendMessageHumanLikenessXml = (
   recentMessages: SendMessageHumanLikenessAssessment[],
 ): string => {

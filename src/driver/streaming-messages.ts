@@ -194,12 +194,12 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
 
     return {
       content: content.filter((b): b is MessagesAssistantContentBlock => b != null),
-      usage: { 
-        input_tokens: inputTokens, 
+      usage: {
+        input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_creation_input_tokens: cacheCreationTokens,
-        cache_read_input_tokens: cacheReadTokens
-       },
+        cache_read_input_tokens: cacheReadTokens,
+      },
       stop_reason: stopReason,
     };
   } finally {
