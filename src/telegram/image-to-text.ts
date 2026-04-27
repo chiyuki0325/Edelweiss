@@ -45,13 +45,13 @@ const prepareImageToTextUrl = async (buffer: Buffer): Promise<string> => {
 export const createImageToTextResolver = (params: {
   enabled: boolean;
   model?: LlmEndpoint;
-  maxConcurrency?: number;
+  semaphore?: ReturnType<typeof createSemaphore>;
   logger: Logger;
   lookupByHash: (imageHash: string) => ImageAltTextRecord | null;
   persist: (record: ImageAltTextRecord) => void;
 }): ImageToTextResolver => {
   const log = params.logger.withContext('telegram:image-to-text');
-  const semaphore = createSemaphore(params.maxConcurrency ?? 3);
+  const semaphore = params.semaphore ?? createSemaphore(3);
   const inflightByHash = new Map<string, Promise<ImageAltTextRecord>>();
 
   // Core: thumbnail hash → dedup → cache lookup → semaphore-gated LLM → persist

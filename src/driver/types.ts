@@ -28,6 +28,8 @@ export interface LlmEndpoint {
   apiFormat?: ProviderFormat;
   maxImagesAllowed?: number;
   timeoutSec?: number;
+  /** Max concurrent description calls (image/animation/custom-emoji-to-text) for this endpoint. Defaults to 3; set to 1 to serialize. */
+  descriptionConcurrency?: number;
 }
 
 export interface DriverConfig {

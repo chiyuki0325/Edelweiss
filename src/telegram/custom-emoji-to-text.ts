@@ -34,7 +34,7 @@ const prepareStaticImageUrl = async (buffer: Buffer): Promise<string> => {
 export const createCustomEmojiToTextResolver = (params: {
   enabled: boolean;
   model?: LlmEndpoint;
-  maxConcurrency?: number;
+  semaphore?: ReturnType<typeof createSemaphore>;
   maxFrames?: number;
   logger: Logger;
   lookupByHash: (hash: string) => ImageAltTextRecord | null;
@@ -50,7 +50,7 @@ export const createCustomEmojiToTextResolver = (params: {
   resolvePackTitle: (setName: string) => Promise<string>;
 }): CustomEmojiToTextResolver => {
   const log = params.logger.withContext('telegram:custom-emoji-to-text');
-  const semaphore = createSemaphore(params.maxConcurrency ?? 3);
+  const semaphore = params.semaphore ?? createSemaphore(3);
   const inflightByKey = new Map<string, Promise<void>>();
   const errors = new Map<string, string>();
 

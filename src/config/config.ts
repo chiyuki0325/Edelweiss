@@ -14,6 +14,7 @@ const llmEndpointEntries = {
   apiFormat: v.optional(v.picklist(['openai-chat', 'responses', 'anthropic-messages'])),
   maxImagesAllowed: v.optional(v.number()),
   timeoutSec: v.optional(v.number()),
+  descriptionConcurrency: v.optional(v.number()),
 };
 
 // --- Runtime config schema (top-level, global) ---

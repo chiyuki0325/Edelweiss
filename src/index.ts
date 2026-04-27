@@ -17,6 +17,7 @@ import { createAnimationToTextResolver } from './telegram/animation-to-text';
 import { createCustomEmojiToTextResolver, emojiCacheKey } from './telegram/custom-emoji-to-text';
 import { canExtractFrames, extractFrames } from './telegram/frame-extractor';
 import { computeThumbnailHash, createImageToTextResolver } from './telegram/image-to-text';
+import { createSemaphore } from './telegram/llm-description';
 import { renderMarkdownToTelegramHTML } from './telegram/markdown';
 import type { Attachment } from './telegram/message/types';
 import { normalizeStickerSetMetadata } from './telegram/pack-title';
@@ -69,10 +70,25 @@ const main = async () => {
   runMigrations(db, logger);
   await migrateV1ToV2(db, logger);
 
+  // Build a semaphore per description model key so resolvers sharing the same endpoint
+  // share the same concurrency limit. If the model sets parallel=false, enforce serial execution.
+  const descriptionSemaphores = new Map<string, ReturnType<typeof createSemaphore>>();
+  const getDescriptionSemaphore = (modelKey: string | undefined): ReturnType<typeof createSemaphore> | undefined => {
+    if (!modelKey) return undefined;
+    let sem = descriptionSemaphores.get(modelKey);
+    if (!sem) {
+      const endpoint = resolveModel(config, modelKey);
+      sem = createSemaphore(endpoint.descriptionConcurrency ?? 3);
+      descriptionSemaphores.set(modelKey, sem);
+    }
+    return sem;
+  };
+
   // Image-to-text resolver — shared between cold-start replay and live ingress.
   const imageToTextResolver = createImageToTextResolver({
     enabled: imageToTextChatIds.size > 0,
     model: defaultChatConfig.imageToText.model ? resolveModel(config, defaultChatConfig.imageToText.model) : undefined,
+    semaphore: getDescriptionSemaphore(defaultChatConfig.imageToText.model),
     logger,
     lookupByHash: imageHash => loadImageAltTextByHash(db, imageHash),
     persist: record => persistImageAltText(db, record),
@@ -82,6 +98,7 @@ const main = async () => {
   const animationToTextResolver = createAnimationToTextResolver({
     enabled: animationToTextChatIds.size > 0,
     model: defaultChatConfig.animationToText.model ? resolveModel(config, defaultChatConfig.animationToText.model) : undefined,
+    semaphore: getDescriptionSemaphore(defaultChatConfig.animationToText.model),
     logger,
     lookupByHash: hash => loadImageAltTextByHash(db, hash),
     persist: record => persistImageAltText(db, record),
@@ -93,6 +110,7 @@ const main = async () => {
   const customEmojiToTextResolver = createCustomEmojiToTextResolver({
     enabled: customEmojiToTextChatIds.size > 0,
     model: defaultChatConfig.customEmojiToText.model ? resolveModel(config, defaultChatConfig.customEmojiToText.model) : undefined,
+    semaphore: getDescriptionSemaphore(defaultChatConfig.customEmojiToText.model),
     maxFrames: defaultChatConfig.customEmojiToText.maxFrames,
     logger,
     lookupByHash: hash => loadImageAltTextByHash(db, hash),
