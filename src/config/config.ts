@@ -56,6 +56,11 @@ const ChatConfigSchema = v.object({
     model: v.optional(v.string(), ''),
     maxFrames: v.optional(v.number(), 5),
   }), {}),
+  debounce: v.optional(v.object({
+    initialDelayMs: v.optional(v.number(), 5000),
+    typingExtendMs: v.optional(v.number(), 5000),
+    maxDelayMs: v.optional(v.number(), 30000),
+  }), {}),
   humanLikeness: v.optional(v.object({
     trailingPeriod: v.optional(v.boolean(), true),
     denseClausePunctuation: v.optional(v.boolean(), true),
@@ -100,6 +105,11 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     enabled: v.boolean(),
     model: v.string(),
     maxFrames: v.number(),
+  })),
+  debounce: v.partial(v.object({
+    initialDelayMs: v.number(),
+    typingExtendMs: v.number(),
+    maxDelayMs: v.number(),
   })),
   humanLikeness: v.partial(v.object({
     trailingPeriod: v.boolean(),
@@ -165,6 +175,11 @@ export interface ResolvedChatConfig {
   imageToText: { enabled: boolean; model?: string };
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
+  debounce: {
+    initialDelayMs: number;
+    typingExtendMs: number;
+    maxDelayMs: number;
+  };
   humanLikeness: {
     trailingPeriod: boolean;
     denseClausePunctuation: boolean;
@@ -249,6 +264,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: merged.customEmojiToText.model || undefined,
       maxFrames: merged.customEmojiToText.maxFrames,
     },
+    debounce: merged.debounce,
     humanLikeness: merged.humanLikeness,
     tools: {
       bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec },

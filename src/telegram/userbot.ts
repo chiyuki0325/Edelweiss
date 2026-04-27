@@ -3,6 +3,7 @@ import { Api, TelegramClient } from 'telegram';
 import { NewMessage, type NewMessageEvent } from 'telegram/events';
 import { DeletedMessage, type DeletedMessageEvent } from 'telegram/events/DeletedMessage';
 import { EditedMessage, type EditedMessageEvent } from 'telegram/events/EditedMessage';
+import { Raw } from 'telegram/events';
 import { StringSession } from 'telegram/sessions';
 
 import { createEventBus } from './event-bus';
@@ -16,12 +17,18 @@ export interface UserbotOptions {
   session: string;
 }
 
+export interface TypingEvent {
+  chatId: string;
+  userId: string;
+}
+
 export interface UserbotClient {
   start(): Promise<void>;
   stop(): Promise<void>;
   onMessage: (handler: (msg: TelegramMessage) => void) => void;
   onMessageEdit: (handler: (edit: TelegramMessageEdit) => void) => void;
   onMessageDelete: (handler: (del: TelegramMessageDelete) => void) => void;
+  onTyping: (handler: (event: TypingEvent) => void) => void;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
   downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
@@ -47,6 +54,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
   const messageBus = createEventBus<TelegramMessage>('userbot:message', log);
   const editBus = createEventBus<TelegramMessageEdit>('userbot:edit', log);
   const deleteBus = createEventBus<TelegramMessageDelete>('userbot:delete', log);
+  const typingBus = createEventBus<TypingEvent>('userbot:typing', log);
   let eventHandlerRegistered = false;
 
   const registerEventHandler = () => {
@@ -84,6 +92,28 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
         deleteBus.emit(fromGramjsDeletedMessage(event.deletedIds, peer));
       },
       new DeletedMessage({}),
+    );
+
+    client.addEventHandler(
+      (update: Api.TypeUpdate) => {
+        let chatId: string | undefined;
+        let userId: string | undefined;
+
+        if (update instanceof Api.UpdateChannelUserTyping) {
+          chatId = `-100${update.channelId.toJSNumber()}`;
+          if (update.fromId instanceof Api.PeerUser)
+            userId = `${update.fromId.userId.toJSNumber()}`;
+          if (update.action instanceof Api.SendMessageTypingAction && chatId && userId)
+            typingBus.emit({ chatId, userId });
+        } else if (update instanceof Api.UpdateChatUserTyping) {
+          chatId = `-${update.chatId.toJSNumber()}`;
+          if (update.fromId instanceof Api.PeerUser)
+            userId = `${update.fromId.userId.toJSNumber()}`;
+          if (update.action instanceof Api.SendMessageTypingAction && chatId && userId)
+            typingBus.emit({ chatId, userId });
+        }
+      },
+      new Raw({ types: [Api.UpdateChannelUserTyping, Api.UpdateChatUserTyping] }),
     );
 
     log.log('Event handlers registered');
@@ -161,6 +191,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     onMessage: messageBus.on,
     onMessageEdit: editBus.on,
     onMessageDelete: deleteBus.on,
+    onTyping: typingBus.on,
     fetchMessages,
     fetchSpecificMessages,
     downloadMessageMedia,
