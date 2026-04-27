@@ -305,7 +305,9 @@ export const createDriver = (config: DriverConfig, deps: {
                     ),
                 )
 
-                log.withFields({ chatId, hasToolCalls }).log('Probe result');
+                const usage = probeResult.usage;
+
+                log.withFields({ chatId, usage, hasToolCalls }).log('Probe result');
 
                 await deps.persistProbeResponse(chatId, {
                   requestedAtMs: probeRequestedAt,
@@ -343,8 +345,8 @@ export const createDriver = (config: DriverConfig, deps: {
                 await deps.persistTurnResponse(chatId, {
                   requestedAtMs,
                   entries: stepEntries,
-                  inputTokens: usage.prompt_tokens,
-                  outputTokens: usage.completion_tokens,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
                   modelName: chatConfig.primaryModel.model,
                 });
                 lastProcessedMs(requestedAtMs);

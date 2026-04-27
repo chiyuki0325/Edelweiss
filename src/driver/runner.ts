@@ -8,6 +8,7 @@ import type {
   ConversationEntry,
   ToolResult,
 } from '../unified-api/types';
+import type { Usage } from './types';
 
 ensureDumpDir();
 
@@ -22,7 +23,7 @@ interface StepLoopParams {
   maxImagesAllowed?: number;
   onStepComplete: (
     stepEntries: ConversationEntry[],
-    usage: { prompt_tokens: number; completion_tokens: number },
+    usage: Usage,
     requestedAtMs: number,
   ) => void | Promise<void>;
   checkInterrupt: () => boolean;
@@ -42,7 +43,7 @@ export const createRunner = (config: RunnerConfig) => {
     step: number,
   ): Promise<{
     stepEntries: ConversationEntry[];
-    usage: { prompt_tokens: number; completion_tokens: number };
+    usage: Usage;
     requestedAtMs: number;
     hasToolCalls: boolean;
   }> => {
@@ -57,8 +58,10 @@ export const createRunner = (config: RunnerConfig) => {
     });
 
     const usage = {
-      prompt_tokens: result.usage.inputTokens,
-      completion_tokens: result.usage.outputTokens,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      cacheCreationTokens: result.usage.cacheCreationTokens,
+      cacheReadTokens: result.usage.cacheReadTokens,
     };
 
     if (result.entries.length === 0)

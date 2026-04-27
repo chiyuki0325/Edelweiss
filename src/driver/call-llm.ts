@@ -7,7 +7,7 @@ import { DUMP_DIR } from './constants';
 import { streamingChat } from './streaming';
 import { streamingMessages } from './streaming-messages';
 import { streamingResponses } from './streaming-responses';
-import type { ProviderFormat } from './types';
+import type { ProviderFormat, Usage } from './types';
 import {
   fromChatCompletionsOutput,
   fromMessagesOutput,
@@ -37,7 +37,7 @@ export interface ToolSchema {
 
 export interface LlmCallResult {
   entries: ConversationEntry[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: Usage;
 }
 
 const dump = (dumpId: string | undefined, suffix: string, body: unknown) => {
@@ -101,7 +101,13 @@ export const callLlm = async (
       item.type === 'message' || item.type === 'function_call' || item.type === 'reasoning');
     return {
       entries: fromResponsesOutput(assistantItems),
-      usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        // not supported for openai format
+        cacheCreationTokens: -1,
+        cacheReadTokens: -1,
+      },
     };
   }
 
@@ -148,7 +154,12 @@ export const callLlm = async (
 
     return {
       entries: fromMessagesOutput(response.content),
-      usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
+      usage: {
+        inputTokens: response.usage.input_tokens ?? 0,
+        outputTokens: response.usage.output_tokens ?? 0,
+        cacheCreationTokens: response.usage.cache_creation_input_tokens ?? -1,
+        cacheReadTokens: response.usage.cache_read_input_tokens ?? -1,
+      },
     };
   }
 
@@ -165,10 +176,22 @@ export const callLlm = async (
   dump(options?.dumpId, 'response', response);
 
   const choice = response.choices[0];
-  if (!choice) return { entries: [], usage: { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens } };
+  if (!choice) return {
+    entries: [], usage: {
+      inputTokens: response.usage.prompt_tokens ?? 0,
+      outputTokens: response.usage.completion_tokens ?? 0,
+      cacheCreationTokens: -1,
+      cacheReadTokens: -1,
+    }
+  };
 
   return {
     entries: fromChatCompletionsOutput([choice.message as ChatCompletionsAssistantMessage]),
-    usage: { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens },
+    usage: {
+      inputTokens: response.usage.prompt_tokens ?? 0,
+      outputTokens: response.usage.completion_tokens ?? 0,
+      cacheCreationTokens: -1,
+      cacheReadTokens: -1,
+    }
   };
 };

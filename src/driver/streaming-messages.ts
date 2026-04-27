@@ -31,12 +31,19 @@ export interface StreamingMessagesParams {
 
 export interface StreamingMessagesResult {
   content: MessagesAssistantContentBlock[];
-  usage: { input_tokens: number; output_tokens: number };
+  usage: AnthropicUsage;
   stop_reason: MessagesResponse['stop_reason'];
 }
 
+export interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 type SSEEvent =
-  | { type: 'message_start'; message: { usage?: { input_tokens?: number; output_tokens?: number } } }
+  | { type: 'message_start'; message: { usage?: AnthropicUsage } }
   | { type: 'content_block_start'; index: number; content_block: MessagesAssistantContentBlock }
   | { type: 'content_block_delta'; index: number; delta: {
     type: 'text_delta'; text: string;
@@ -48,7 +55,7 @@ type SSEEvent =
     type: 'signature_delta'; signature: string;
   }; }
   | { type: 'content_block_stop'; index: number }
-  | { type: 'message_delta'; delta: { stop_reason: MessagesResponse['stop_reason'] }; usage?: { output_tokens?: number } }
+  | { type: 'message_delta'; delta: { stop_reason: MessagesResponse['stop_reason'] }; usage?: AnthropicUsage }
   | { type: 'message_stop' }
   | { type: 'error'; error: { type: string; message: string } }
   | { type: 'ping' };
@@ -96,6 +103,8 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
     const toolJsonBuffers = new Map<number, string>();
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
     let stopReason: MessagesResponse['stop_reason'] = null;
 
     let textBuf = '';
@@ -114,6 +123,10 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
           inputTokens = event.message.usage.input_tokens;
         if (event.message.usage?.output_tokens != null)
           outputTokens = event.message.usage.output_tokens;
+        if (event.message.usage?.cache_creation_input_tokens != null)
+          cacheCreationTokens = event.message.usage.cache_creation_input_tokens;
+        if (event.message.usage?.cache_read_input_tokens != null)
+          cacheReadTokens = event.message.usage.cache_read_input_tokens;
         break;
 
       case 'content_block_start': {
@@ -181,7 +194,12 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
 
     return {
       content: content.filter((b): b is MessagesAssistantContentBlock => b != null),
-      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      usage: { 
+        input_tokens: inputTokens, 
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: cacheCreationTokens,
+        cache_read_input_tokens: cacheReadTokens
+       },
       stop_reason: stopReason,
     };
   } finally {

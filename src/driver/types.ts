@@ -49,4 +49,11 @@ export interface CompactionSessionMeta {
   outputTokens: number;
 }
 
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
 export type { ResolvedChatConfig } from '../config/config';
