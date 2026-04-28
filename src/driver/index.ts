@@ -98,6 +98,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
   const chatScopes = new Map<string, {
     rc: ReturnType<typeof signal<RenderedContext>>;
+    offline: ReturnType<typeof signal<boolean>>;
     extendDebounce: () => void;
     cleanup: () => void;
   }>();
@@ -110,6 +111,7 @@ export const createDriver = (config: DriverConfig, deps: {
     const chatConfig = config.resolveChatConfig(chatId);
 
     const rc = signal<RenderedContext>([]);
+    const offline = signal(false);
     const lastProcessedMs = signal(0);
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
     const running = signal(false);
@@ -147,6 +149,12 @@ export const createDriver = (config: DriverConfig, deps: {
       const rcVal = rc();
       if (rcVal.length === 0) return false;
       if (rcVal === failedRc()) return false;
+      if (offline()) {
+        // In offline mode, only trigger on explicit @mention or reply-to-bot
+        const after = lastProcessedMs();
+        return rcVal.some(seg =>
+          !seg.isMyself && (!!seg.mentionsMe || !!seg.repliesToMe) && seg.receivedAtMs > after);
+      }
       return latestExternalEventMs(rcVal, lastProcessedMs()) != null;
     });
 
@@ -166,6 +174,9 @@ export const createDriver = (config: DriverConfig, deps: {
       clearDebounceTimers();
       debounceWaiting = false;
 
+      // Capture offline state: if this call was triggered in offline mode
+      // (by an explicit mention/reply), auto-return to online when done.
+      const wasOffline = offline();
       const rcAtStart = rc();
       running(true);
 
@@ -309,7 +320,7 @@ export const createDriver = (config: DriverConfig, deps: {
               const hasToolCalls = probeResult.entries.some(
                 e => e.kind === 'message' && e.role === 'assistant'
                   && e.parts.some(
-                    p => p.kind === 'toolCall' && p.name != 'dismiss_message'
+                    p => p.kind === 'toolCall' && p.name !== 'dismiss_message'
                     /* dismiss_message calls are not considered activations */,
                   ),
               );
@@ -373,6 +384,10 @@ export const createDriver = (config: DriverConfig, deps: {
           failedRc(rcAtStart);
         } finally {
           running(false);
+          if (wasOffline) {
+            offline(false);
+            log.withFields({ chatId }).log('Offline mode: auto-returning to online after response');
+          }
         }
       })();
     };
@@ -499,7 +514,7 @@ export const createDriver = (config: DriverConfig, deps: {
       disposeCompactionEffect();
     };
 
-    const entry = { rc, extendDebounce, cleanup };
+    const entry = { rc, offline, extendDebounce, cleanup };
     chatScopes.set(chatId, entry);
     return entry;
   };
@@ -513,11 +528,17 @@ export const createDriver = (config: DriverConfig, deps: {
     chatScopes.get(chatId)?.extendDebounce();
   };
 
+  const setOfflineMode = (chatId: string, isOffline: boolean) => {
+    if (!chatIds.has(chatId)) return;
+    getOrCreateScope(chatId).offline(isOffline);
+    log.withFields({ chatId, offline: isOffline }).log('Offline mode changed');
+  };
+
   const stop = () => {
     for (const scope of chatScopes.values())
       scope.cleanup();
     chatScopes.clear();
   };
 
-  return { handleEvent, handleTyping, stop };
+  return { handleEvent, handleTyping, setOfflineMode, stop };
 };

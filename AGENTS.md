@@ -25,7 +25,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses, image_alt_texts tables; 22 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries, typing-aware debounce scheduling |
+| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries, typing-aware debounce scheduling, offline/online reply gating via /offline /online commands |
 
 ## Tech Stack
 
@@ -96,7 +96,7 @@ src/
 │   └── index.ts            # Barrel exports
 └── telegram/
     ├── index.ts             # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
-    ├── bot.ts               # grammY Bot API client
+    ├── bot.ts               # grammY Bot API client; registerCommand() for external command registration before on('message')
     ├── userbot.ts           # gramjs MTProto client
     ├── event-bus.ts         # Simple typed pub/sub
     ├── pack-title.ts        # Sticker pack metadata normalization (set_name → display title)
@@ -239,6 +239,12 @@ The reply effect reads `rc()` directly (in addition to `needsReply()`) so that i
 - `maxDelayMs` (number, default `30000`): hard cap — forces LLM call regardless of activity.
 
 Scheduling lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing it would create coordination overhead.
+
+**Offline mode**: Each chat scope has an `offline` signal. When offline, `needsReply` only becomes true if there is an unprocessed RC segment with `mentionsMe` or `repliesToMe` — ordinary new messages are ignored. After the LLM call triggered by a mention/reply completes (success or failure), the Driver automatically resets `offline` to `false` (back to online). Sending `/offline` while an LLM call is already running leaves the call unaffected and keeps offline mode active after it finishes. Commands:
+- `/offline` — enter offline mode; bot responds only to @mentions and replies, then auto-returns online.
+- `/online` — return to online mode immediately.
+
+Commands are registered via `bot.registerCommand()` in `src/index.ts` and reported to Telegram via `setMyCommands` at startup. Command messages are intercepted before `bot.on('message')` in the grammY middleware chain so they do not enter the LLM pipeline.
 
 ### Tool Call Loop Interleaving
 

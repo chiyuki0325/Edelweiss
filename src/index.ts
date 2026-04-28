@@ -530,6 +530,16 @@ const main = async () => {
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
 
+  telegram.bot.registerCommand('offline', 'Pause automatic responses (only respond to @mentions and replies)', async chatId => {
+    driver.setOfflineMode(chatId, true);
+    await telegram.bot.sendMessage(chatId, 'Offline mode enabled. I will only respond when @mentioned or replied to, then automatically return online.');
+  });
+
+  telegram.bot.registerCommand('online', 'Resume automatic responses', async chatId => {
+    driver.setOfflineMode(chatId, false);
+    await telegram.bot.sendMessage(chatId, 'Online mode enabled.');
+  });
+
   await telegram.start();
   logger.log('Cahciua is running');
 

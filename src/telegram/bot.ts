@@ -50,6 +50,7 @@ export interface BotClient {
   start(): Promise<void>;
   stop(): Promise<void>;
   onMessage: (handler: (msg: TelegramMessage) => void) => void;
+  registerCommand(name: string, description: string, handler: (chatId: string) => Promise<void>): void;
   sendMessage(chatId: string | number, text: string, options?: SendOptions): Promise<SentMessage>;
   sendPhoto(chatId: string | number, photo: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendDocument(chatId: string | number, document: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
@@ -78,13 +79,15 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     return await httpGetBuffer(`https://api.telegram.org/file/bot${options.token}/${file.file_path}`);
   };
 
-  bot.command('start', async ctx => {
-    await ctx.reply('Cahciua is running.');
-  });
+  type PendingCommand = { name: string; description: string; handler: (chatId: string) => Promise<void> };
+  const pendingCommands: PendingCommand[] = [];
 
-  bot.on('message', (ctx: Context) => {
-    if (!ctx.message) return;
-    messageBus.emit(fromGrammyMessage(ctx.message));
+  const registerCommand = (name: string, description: string, handler: (chatId: string) => Promise<void>) => {
+    pendingCommands.push({ name, description, handler });
+  };
+
+  bot.command('start', async ctx => {
+    await ctx.reply('Edelweiss is running.');
   });
 
   bot.catch(err => {
@@ -104,6 +107,28 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
       username: me.username,
       name: [me.first_name, me.last_name].filter(Boolean).join(' '),
     }).log('Bot authenticated');
+
+    // Register external commands before on('message') so they intercept command
+    // messages before the general message handler emits them to the pipeline.
+    for (const { name, handler } of pendingCommands) {
+      bot.command(name, async ctx => {
+        if (!ctx.chat) return;
+        await handler(String(ctx.chat.id));
+      });
+    }
+
+    // Report all commands to Telegram so they appear in the UI command menu.
+    const allCommands = [
+      { command: 'start', description: 'Check bot status' },
+      ...pendingCommands.map(c => ({ command: c.name, description: c.description })),
+    ];
+    await bot.api.setMyCommands(allCommands);
+
+    // General message handler runs after command handlers in the middleware chain.
+    bot.on('message', (ctx: Context) => {
+      if (!ctx.message) return;
+      messageBus.emit(fromGrammyMessage(ctx.message));
+    });
 
     void bot.start({
       onStart: () => {
@@ -260,6 +285,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     start,
     stop,
     onMessage: messageBus.on,
+    registerCommand,
     sendMessage,
     sendPhoto,
     sendDocument,
