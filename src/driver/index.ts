@@ -8,7 +8,7 @@ import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { loadSkillsFromFolder } from './skills';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool, createDismissMessageTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -279,6 +279,7 @@ export const createDriver = (config: DriverConfig, deps: {
           }
           tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
           tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
+          tools.push(createSleepTool());
           if (allSkills.size > 0) {
             tools.push(createLoadSkillTool(
               () => new Map([...allSkills].filter(([k]) => !loadedSkillNames().has(k))),
