@@ -174,7 +174,7 @@ md.renderer.rules.td_close = () => ' | ';
 
 export const renderMarkdownToTelegramHTML = (markdown: string): string => {
   listDepth = 0;
-  let html = md.render(markdown)
+  const html = md.render(markdown)
     .replace(/\n<\/blockquote>/g, '</blockquote>')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/\n+$/, '');
@@ -194,5 +194,3 @@ export const renderMarkdownToTelegramHTML = (markdown: string): string => {
     return html;
   }
 };
-
-
