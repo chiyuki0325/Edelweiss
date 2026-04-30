@@ -174,8 +174,25 @@ md.renderer.rules.td_close = () => ' | ';
 
 export const renderMarkdownToTelegramHTML = (markdown: string): string => {
   listDepth = 0;
-  return md.render(markdown)
+  let html = md.render(markdown)
     .replace(/\n<\/blockquote>/g, '</blockquote>')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/\n+$/, '');
+
+  const plainText = html.replace(/<[^>]*>?/gm, '');
+  let estimatedLength = 0;
+  for (let i = 0; i < plainText.length; i++) {
+    estimatedLength += plainText.charCodeAt(i) > 127 ? 2 : 1;
+    // non-ASCII chars may take more space when escaped
+  }
+
+  if (estimatedLength > 1024) {
+    // fold long messages into an expandable blockquote to avoid noisy message in Telegram chats
+    // https://core.telegram.org/bots/api#html-style
+    return `<blockquote expandable>${html}</blockquote>`;
+  } else {
+    return html;
+  }
 };
+
+
