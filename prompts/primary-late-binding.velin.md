@@ -10,6 +10,13 @@ const props = defineProps({
   recentSendMessageHumanLikenessXml: { type: String, default: '' },
   isInterrupted: { type: Boolean, default: false },
   activeBackgroundTasks: { type: Array, default: () => [] },
+  availableSkills: { type: Array, default: () => [] },
+})
+
+const availableSkillsList = computed(() => {
+  const skills = props.availableSkills
+  if (!skills || skills.length === 0) return ''
+  return skills.map(s => `- \`${s.name}\`: ${s.title}`).join('\n')
 })
 
 const backgroundTasksXml = computed(() => {
@@ -54,6 +61,12 @@ Someone replied to your message — you will likely want to respond.
 <template v-if="recentSendMessageHumanLikenessXml">
 
 {{ recentSendMessageHumanLikenessXml }}
+
+</template>
+<template v-if="availableSkillsList">
+
+Available skills (load with `load_skill`):
+{{ availableSkillsList }}
 
 </template>
 <template v-if="backgroundTasksXml">

@@ -11,6 +11,7 @@ const props = defineProps({
 
   // --- Semi-static section (changes rarely) ---
   currentChannel: { type: String, default: 'telegram' },
+  hasLoadSkillTool: { type: Boolean, default: false },
 })
 
 // Build tool list as plain markdown lines in script setup to avoid
@@ -27,6 +28,9 @@ const toolListBlock = computed(() => {
     '`kill_task` — Kill a running background task by its ID.',
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
   ]
+  if (props.hasLoadSkillTool) {
+    lines.push('`load_skill` — Load a predefined skill module into the current session. Skills are curated sets of instructions and capabilities that can be activated on demand. Check the available skills list in the context for what is currently loadable.')
+  }
   return 'Your available tools are:' + NL + NL + lines.map(l => '- ' + l).join(NL)
 })
 </script>

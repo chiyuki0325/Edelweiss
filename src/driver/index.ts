@@ -7,7 +7,8 @@ import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, lates
 import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool, createDismissMessageTool } from './tools';
+import { loadSkillsFromFolder } from './skills';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createWebSearchTool, createDismissMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -116,6 +117,14 @@ export const createDriver = (config: DriverConfig, deps: {
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
     const running = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
+
+    // --- Skills state ---
+    // Loaded synchronously at scope creation. loadedSkillNames tracks which
+    // skills have been injected in the current epoch; reset on compaction.
+    const allSkills = chatConfig.skills?.folder
+      ? loadSkillsFromFolder(chatConfig.skills.folder)
+      : new Map();
+    const loadedSkillNames = signal<Set<string>>(new Set());
 
     // --- Compaction state as signal ---
     // Initialized from DB on scope creation (cold start). Updated by the
@@ -270,11 +279,18 @@ export const createDriver = (config: DriverConfig, deps: {
           }
           tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
           tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
+          if (allSkills.size > 0) {
+            tools.push(createLoadSkillTool(
+              () => new Map([...allSkills].filter(([k]) => !loadedSkillNames().has(k))),
+              name => loadedSkillNames(new Set([...loadedSkillNames(), name])),
+            ));
+          }
 
           const system = await renderSystemPrompt({
             currentChannel: 'telegram',
             modelName: chatConfig.primaryModel.model,
             systemFiles: chatConfig.systemFiles,
+            hasLoadSkillTool: allSkills.size > 0,
           });
 
           // --- Compute mention/reply/interrupt state from RC + TRs ---
@@ -288,12 +304,16 @@ export const createDriver = (config: DriverConfig, deps: {
             collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
           );
 
+          const loaded = loadedSkillNames();
           const lateBindingParams = {
             timeNow: localTimeNow(),
             isMentioned, isReplied,
             recentSendMessageHumanLikenessXml,
             isInterrupted,
             activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
+            availableSkills: [...allSkills.values()]
+              .filter(s => !loaded.has(s.name))
+              .map(s => ({ name: s.name, title: s.title })),
           };
 
           // --- Probe gate ---
@@ -497,6 +517,8 @@ export const createDriver = (config: DriverConfig, deps: {
             }).log('Compaction complete');
 
             compactionMeta(newMeta);
+            // Reset loaded skills so they become available again in the new epoch.
+            loadedSkillNames(new Set());
           } catch (err) {
             log.withError(err).error('Compaction failed');
           } finally {

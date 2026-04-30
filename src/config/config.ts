@@ -70,6 +70,9 @@ const ChatConfigSchema = v.object({
     markdownHeader: v.optional(v.boolean(), true),
     newline: v.optional(v.boolean(), true),
   }), {}),
+  skills: v.optional(v.object({
+    folder: v.pipe(v.string(), v.nonEmpty()),
+  })),
   tools: v.object({
     bash: v.optional(v.object({
       backgroundThresholdSec: v.optional(v.number(), 10),
@@ -120,6 +123,9 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     markdownHeader: v.boolean(),
     newline: v.boolean(),
   })),
+  skills: v.object({
+    folder: v.string(),
+  }),
   tools: v.partial(v.object({
     bash: v.partial(v.object({
       backgroundThresholdSec: v.number(),
@@ -189,6 +195,7 @@ export interface ResolvedChatConfig {
     markdownHeader: boolean;
     newline: boolean;
   };
+  skills?: { folder: string };
   tools: {
     bash: { backgroundThresholdSec: number };
     webSearch: { tavilyKey: string };
@@ -265,6 +272,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: merged.customEmojiToText.model || undefined,
       maxFrames: merged.customEmojiToText.maxFrames,
     },
+    skills: merged.skills,
     debounce: merged.debounce,
     humanLikeness: merged.humanLikeness,
     tools: {

@@ -4,6 +4,7 @@ import { Validator } from '@cfworker/json-schema';
 import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
+import type { SkillInfo } from './skills';
 import type { RuntimeConfig } from '../config/config';
 import type { Attachment } from '../telegram/message/types';
 import type {
@@ -383,6 +384,29 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buf
     .png()
     .toBuffer();
 };
+
+export const createLoadSkillTool = (
+  availableSkills: () => Map<string, SkillInfo>,
+  onSkillLoaded: (name: string) => void,
+): CahciuaTool => createTool({
+  name: 'load_skill',
+  description: 'Load a predefined skill module into the current session. Skills are curated sets of instructions and capabilities for specific tasks. Check the available skills list in the context for what is currently loadable.',
+  parameters: {
+    type: 'object',
+    properties: {
+      skill_name: { type: 'string', description: 'The name of the skill to load (as listed in the available skills section of the context).' },
+    },
+    required: ['skill_name'],
+  },
+  execute: input => {
+    const { skill_name } = input as { skill_name: string };
+    const skill = availableSkills().get(skill_name);
+    if (!skill)
+      return { content: JSON.stringify({ error: `Skill "${skill_name}" not found or already loaded.` }), requiresFollowUp: true };
+    onSkillLoaded(skill_name);
+    return { content: `# ${skill.title}\n\n${skill.content}`, requiresFollowUp: true };
+  },
+});
 
 export const createDismissMessageTool = (): CahciuaTool => createTool({
   name: 'dismiss_message',

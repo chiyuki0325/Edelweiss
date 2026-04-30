@@ -33,6 +33,7 @@ export const renderSystemPrompt = async (params: {
   modelName: string;
   currentChannel?: string;
   systemFiles?: { filename: string; content: string }[];
+  hasLoadSkillTool?: boolean;
 }) => {
   const { rendered } = await renderMarkdownString(systemPromptTemplate, params, basePath);
   return cleanVelinOutput(rendered);
@@ -47,6 +48,7 @@ export const renderLateBindingPrompt = async (params: {
   recentSendMessageHumanLikenessXml?: string;
   activeBackgroundTasks?: { id: number; typeName: string; intention?: string; liveSummary: string; startedMs: number; timeoutMs: number }[];
   isInterrupted?: boolean;
+  availableSkills?: { name: string; title: string }[];
 }) => {
   const { rendered } = await renderMarkdownString(lateBindingTemplate, params, basePath);
   return cleanVelinOutput(rendered);
