@@ -59,3 +59,25 @@ export interface Usage {
 }
 
 export type { ResolvedChatConfig } from '../config/config';
+
+// --- Platform adapter ---
+
+export interface SendMessageOptions {
+  replyTo?: string;
+  attachments?: {
+    type: 'document' | 'photo' | 'video' | 'audio' | 'voice' | 'animation' | 'video_note';
+    path: string;
+    file_name?: string;
+  }[];
+}
+
+export interface SentMessage {
+  messageId: string;
+}
+
+export interface PlatformAdapter {
+  kind: 'telegram' | 'onebot';
+  sendMessage(chatId: string, text: string, options?: SendMessageOptions): Promise<SentMessage>;
+  downloadFile(identifier: string, chatId: string): Promise<Buffer>;
+  downloadImage(identifier: string, chatId: string): Promise<Buffer>;
+}

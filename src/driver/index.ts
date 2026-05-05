@@ -10,7 +10,7 @@ import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, render
 import { loadSkillsFromFolder } from './skills';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
-import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
+import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
@@ -62,6 +62,7 @@ export const createDriver = (config: DriverConfig, deps: {
     getActiveTasks: (sessionId: string) => ActiveTaskInfo[];
     readTaskOutput: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>;
   };
+  getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
   logger: Logger;
 }) => {
   const { logger } = deps;
@@ -205,6 +206,8 @@ export const createDriver = (config: DriverConfig, deps: {
             estimatedTokens: ctx.estimatedTokens,
           }).log('Triggering LLM call');
 
+          const platform = deps.getPlatformAdapter?.(chatId);
+
           const sendMessageTool = createSendMessageTool(async (text, replyTo, attachments) => {
             log.withFields({
               chatId,
@@ -212,6 +215,10 @@ export const createDriver = (config: DriverConfig, deps: {
               replyTo,
               attachments: attachments?.length ?? 0,
             }).log('send_message tool called');
+            if (platform) {
+              const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
+              return { messageId: result.messageId };
+            }
             const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
             return { messageId: String(sent.messageId) };
           });

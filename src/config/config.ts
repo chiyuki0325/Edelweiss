@@ -32,6 +32,7 @@ const RuntimeSchema = v.object({
 // --- Chat-level config schemas ---
 
 const ChatConfigSchema = v.object({
+  platform: v.optional(v.picklist(['telegram', 'onebot']), 'telegram'),
   model: v.optional(v.string(), 'primary'),
   systemFiles: v.optional(v.array(v.string()), []),
   compaction: v.optional(v.object({
@@ -85,6 +86,7 @@ const ChatConfigSchema = v.object({
 
 // Per-chat overrides: all fields optional, no defaults
 const ChatOverrideSchema = v.optional(v.partial(v.object({
+  platform: v.picklist(['telegram', 'onebot']),
   model: v.string(),
   systemFiles: v.array(v.string()),
   compaction: v.partial(v.object({
@@ -141,14 +143,22 @@ const BackgroundTasksSchema = v.optional(v.object({
   retentionCount: v.optional(v.number(), 20),
 }), {});
 
+const OneBotConfigSchema = v.optional(v.object({
+  enabled: v.optional(v.boolean(), false),
+  host: v.optional(v.string(), '0.0.0.0'),
+  port: v.optional(v.number(), 3001),
+  accessToken: v.optional(v.string(), ''),
+}), {});
+
 const ConfigSchema = v.object({
   models: v.record(v.string(), v.object(llmEndpointEntries)),
-  telegram: v.object({
+  telegram: v.optional(v.object({
     botToken: v.string(),
     apiId: v.optional(v.number()),
     apiHash: v.optional(v.string()),
     session: v.optional(v.string(), ''),
-  }),
+  })),
+  onebot: OneBotConfigSchema,
   database: v.optional(v.object({
     path: v.optional(v.string(), './data/cahciua.db'),
   }), {}),
@@ -174,6 +184,7 @@ export interface BackgroundTasksConfig {
 }
 
 export interface ResolvedChatConfig {
+  platform: 'telegram' | 'onebot';
   primaryModel: LlmEndpoint;
   primaryApiFormat: ProviderFormat;
   systemFiles: { filename: string; content: string }[];
@@ -247,6 +258,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
   }));
 
   return {
+    platform: merged.platform,
     primaryModel,
     primaryApiFormat,
     systemFiles,

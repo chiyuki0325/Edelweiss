@@ -19,6 +19,16 @@ telegram:
   apiHash: ""
   session: ""
 
+# OneBot 11 (reverse WebSocket) — QQ platform integration.
+# When enabled, the bot starts a WebSocket server and waits for a QQ client
+# (NapCatQQ, LLOneBot, etc.) to connect. Each chat's platform field in the
+# chats section determines whether it's a Telegram or QQ chat.
+onebot:
+  enabled: false
+  host: "0.0.0.0"               # listen address
+  port: 3001                     # WebSocket server port
+  accessToken: ""               # optional: Bearer token for client authentication
+
 database:
   path: "./data/cahciua.db"
 
@@ -35,6 +45,7 @@ runtime:
 # Each per-chat entry is deep-merged with "default" — only specify overrides.
 chats:
   default:
+    platform: telegram          # 'telegram' (default) or 'onebot'
     model: "primary"            # references a key in models
     # systemFiles:              # identity files injected into the system prompt (read at startup)
     #   - "./prompts/IDENTITY.md"
@@ -80,4 +91,7 @@ chats:
   # Per-chat overrides — uncomment and customize:
   # "751414718":                   # per-chat partial override (deep-merged with default)
   #   model: "secondary"
-  # "-1002173016093": {}           # whitelisted with all defaults
+  # "-1002173016093": {}           # whitelisted Telegram group with all defaults
+  # "987654321":                   # QQ group (OneBot)
+  #   platform: onebot
+  # "private:123456": {}           # QQ private chat with all defaults

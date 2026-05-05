@@ -56,6 +56,8 @@ const renderContentNode = (node: ContentNode): string => {
   case 'mention': return node.userId
     ? `<mention uid="${escapeXml(node.userId)}">${renderContent(node.children)}</mention>`
     : `<mention>${renderContent(node.children)}</mention>`;
+  case 'face':
+    return `<face id="${escapeXml(node.faceId)}">${escapeXml(node.text)}</face>`;
   case 'custom_emoji':
     if (node.altText) {
       const packAttr = node.stickerSetName ? ` pack="${escapeXml(node.stickerSetName)}"` : '';

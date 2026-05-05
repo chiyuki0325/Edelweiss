@@ -9,6 +9,8 @@ import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
 import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
 import { createDriver } from './driver';
+import type { PlatformAdapter } from './driver/types';
+import { createOneBotPlatformAdapter, createOneBotServer } from './onebot';
 import { createPipeline } from './pipeline';
 import type { PipelineEvent } from './pipeline';
 import type { RenderParams } from './rendering';
@@ -137,26 +139,31 @@ const main = async () => {
     }
   };
 
-  const hasUserbot = config.telegram.apiId != null && config.telegram.apiHash != null;
+  const hasTelegram = config.telegram != null;
+  const hasUserbot = hasTelegram && config.telegram!.apiId != null && config.telegram!.apiHash != null;
 
-  const telegram = createTelegramManager({
-    botToken: config.telegram.botToken,
-    ...(hasUserbot ? {
-      apiId: config.telegram.apiId,
-      apiHash: config.telegram.apiHash,
-      session: loadSession(config.telegram.session ?? ''),
-    } : {}),
-    initialChatIds: loadKnownChatIds(db),
-    resolveChatId: messageIds => lookupChatId(db, messageIds),
-    imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
-    imageToTextChatIds,
-    animationToText: animationToTextChatIds.size > 0 ? animationToTextResolver : undefined,
-    animationToTextChatIds,
-    animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
-    customEmojiToText: customEmojiToTextChatIds.size > 0 ? customEmojiToTextResolver : undefined,
-    customEmojiToTextChatIds,
-  }, logger);
-  ref.telegram = telegram;
+  let telegram: ReturnType<typeof createTelegramManager> | undefined;
+
+  if (hasTelegram) {
+    telegram = createTelegramManager({
+      botToken: config.telegram!.botToken,
+      ...(hasUserbot ? {
+        apiId: config.telegram!.apiId,
+        apiHash: config.telegram!.apiHash,
+        session: loadSession(config.telegram!.session ?? ''),
+      } : {}),
+      initialChatIds: loadKnownChatIds(db),
+      resolveChatId: messageIds => lookupChatId(db, messageIds),
+      imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
+      imageToTextChatIds,
+      animationToText: animationToTextChatIds.size > 0 ? animationToTextResolver : undefined,
+      animationToTextChatIds,
+      animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
+      customEmojiToText: customEmojiToTextChatIds.size > 0 ? customEmojiToTextResolver : undefined,
+      customEmojiToTextChatIds,
+    }, logger);
+    ref.telegram = telegram;
+  }
 
   const hydrateAltTextFromCache = (event: PipelineEvent) => {
     if (event.type !== 'message' && event.type !== 'edit') return;
@@ -190,8 +197,11 @@ const main = async () => {
     }
   };
 
-  // Bot user ID from token — available immediately, used for myself detection
-  const botUserId = config.telegram.botToken.split(':')[0]!;
+  // Bot user ID from token — available immediately, used for myself detection.
+  // When both platforms are configured, Telegram's botUserId is used for myself detection.
+  // OneBot's self_id is only known after the first WS lifecycle event; until then,
+  // myself detection for OneBot chats will not trigger.
+  const botUserId = hasTelegram ? config.telegram!.botToken.split(':')[0]! : '0';
   const contactNames = loadContacts(logger);
   const renderParams: RenderParams = { botUserId, contactNames };
 
@@ -209,15 +219,18 @@ const main = async () => {
 
     // Legacy events stored raw set_name in stickerSetName. Normalize them once and
     // persist the resolved title so cold-start replay and live ingress share one format.
-    const packTitleTasks: Promise<void>[] = [];
-    for (const { id: eventId, event } of eventsWithId) {
-      if ((event.type !== 'message' && event.type !== 'edit') || event.attachments.length === 0) continue;
-      packTitleTasks.push((async () => {
-        if (await normalizeStickerSetMetadata(event.attachments, telegram.resolvePackTitle))
-          updateEventAttachments(db, eventId, event.attachments);
-      })());
+    // Requires Telegram (resolvePackTitle uses Bot API).
+    if (hasTelegram) {
+      const packTitleTasks: Promise<void>[] = [];
+      for (const { id: eventId, event } of eventsWithId) {
+        if ((event.type !== 'message' && event.type !== 'edit') || event.attachments.length === 0) continue;
+        packTitleTasks.push((async () => {
+          if (await normalizeStickerSetMetadata(event.attachments, telegram!.resolvePackTitle))
+            updateEventAttachments(db, eventId, event.attachments);
+        })());
+      }
+      if (packTitleTasks.length > 0) await Promise.all(packTitleTasks);
     }
-    if (packTitleTasks.length > 0) await Promise.all(packTitleTasks);
 
     if (imageToTextChatIds.has(chatId)) {
       const tasks: Promise<void>[] = [];
@@ -264,6 +277,7 @@ const main = async () => {
     replyToMessageId?: number,
     fileName?: string,
   ) => {
+    const tg = telegram!;
     const opts = {
       caption,
       captionParseMode: caption ? 'HTML' as const : undefined,
@@ -271,20 +285,21 @@ const main = async () => {
       fileName,
     };
     switch (type) {
-    case 'photo': return await telegram.sendPhoto(chatId, buffer, opts);
-    case 'video': return await telegram.sendVideo(chatId, buffer, opts);
-    case 'audio': return await telegram.sendAudio(chatId, buffer, opts);
-    case 'voice': return await telegram.sendVoice(chatId, buffer, opts);
-    case 'animation': return await telegram.sendAnimation(chatId, buffer, opts);
-    case 'video_note': return await telegram.sendVideoNote(chatId, buffer, opts);
+    case 'photo': return await tg.sendPhoto(chatId, buffer, opts);
+    case 'video': return await tg.sendVideo(chatId, buffer, opts);
+    case 'audio': return await tg.sendAudio(chatId, buffer, opts);
+    case 'voice': return await tg.sendVoice(chatId, buffer, opts);
+    case 'animation': return await tg.sendAnimation(chatId, buffer, opts);
+    case 'video_note': return await tg.sendVideoNote(chatId, buffer, opts);
     case 'document':
-    default: return await telegram.sendDocument(chatId, buffer, { ...opts, fileName });
+    default: return await tg.sendDocument(chatId, buffer, { ...opts, fileName });
     }
   };
 
   // Helper: create a synthetic event for a bot-sent message and inject into pipeline.
   const injectSyntheticEvent = (chatId: string, sent: { messageId: number; date: number; text: string; entities?: import('./telegram/message/types').MessageEntity[] }, replyToMessageId?: number) => {
-    const botInfo = telegram.bot.botInfo();
+    const tg = telegram!;
+    const botInfo = tg.bot.botInfo();
     const syntheticMsg = {
       messageId: sent.messageId,
       chatId,
@@ -314,7 +329,11 @@ const main = async () => {
   };
 
   // Background task manager — created before driver, wired via lazy ref.
-  const driverRef: { handleEvent?: (chatId: string, rc: import('./rendering/types').RenderedContext) => void } = {};
+  const driverRef: {
+    handleEvent?: (chatId: string, rc: import('./rendering/types').RenderedContext) => void;
+    setOfflineMode?: (chatId: string, offline: boolean) => void;
+    sendMessage?: (chatId: string, text: string) => Promise<void>;
+  } = {};
   const backgroundTaskManager = createBackgroundTaskManager({
     db,
     persistEvent: event => persistEvent(db, event),
@@ -331,6 +350,59 @@ const main = async () => {
   // immediately complete with a failure message, generating a RuntimeEvent.
   backgroundTaskManager.recoverTasks();
 
+  // --- OneBot setup ---
+
+  const platformAdapters = new Map<string, PlatformAdapter>();
+  let oneBotServer: ReturnType<typeof createOneBotServer> | undefined;
+
+  const onebotConfig = config.onebot;
+  if (onebotConfig?.enabled) {
+    const onebotChatIds = chatIds.filter(id => resolveChatConfig(config, id).platform === 'onebot');
+
+    oneBotServer = createOneBotServer(onebotConfig, {
+      onEvent: (chatId, event) => {
+        void (async () => {
+          try {
+            // Only accept events for configured OneBot chats
+            if (!onebotChatIds.includes(chatId)) return;
+
+            // Command interception: /offline and /online
+            if (event.type === 'message') {
+              const text = contentToPlainText(event.content).trim();
+              if (text === '/offline' || text === '/online') {
+                const off = text === '/offline';
+                driverRef.setOfflineMode?.(chatId, off);
+                const reply = off
+                  ? 'Offline mode enabled. I will only respond when @mentioned or replied to, then automatically return online.'
+                  : 'Online mode enabled.';
+                await driverRef.sendMessage?.(chatId, reply);
+                return;
+              }
+            }
+
+            persistEvent(db, event);
+            const rc = pipeline.pushEvent(chatId, event);
+            driverRef.handleEvent?.(chatId, rc);
+          } catch (err) {
+            logger.withError(err).error('OneBot event processing failed');
+          }
+        })();
+      },
+      log: logger.withContext('onebot'),
+    });
+
+    await oneBotServer.start();
+
+    // Register platform adapter for each OneBot chat ID
+    for (const chatId of onebotChatIds) {
+      const api = oneBotServer.api;
+      if (api)
+        platformAdapters.set(chatId, createOneBotPlatformAdapter(api, runtimeConfig));
+    }
+  }
+
+  // --- Driver ---
+
   const driver = createDriver({
     chatIds,
     resolveChatConfig: id => resolveChatConfig(config, id),
@@ -338,10 +410,10 @@ const main = async () => {
     loadTurnResponses: (chatId, afterMs) => loadTurnResponses(db, chatId, afterMs),
     persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, tr),
     persistProbeResponse: (chatId, probe) => persistProbeResponse(db, chatId, probe),
-    sendMessage: async (chatId, text, replyToMessageId, attachments) => {
+    sendMessage: hasTelegram ? async (chatId, text, replyToMessageId, attachments) => {
       // --- Text-only message ---
       if (!attachments || attachments.length === 0) {
-        const sent = await telegram.sendMessage(chatId, text, replyToMessageId ? { replyToMessageId } : undefined);
+        const sent = await telegram!.sendMessage(chatId, text, replyToMessageId ? { replyToMessageId } : undefined);
         injectSyntheticEvent(chatId, sent, replyToMessageId);
         return sent;
       }
@@ -363,7 +435,6 @@ const main = async () => {
       }
 
       // Multiple attachments — use sendMediaGroup
-      // Map to MediaGroupItem (only photo, video, audio, document allowed in media groups)
       const mediaGroupTypes = new Set(['photo', 'video', 'audio', 'document']);
       const media = attachments.map((att, i) => ({
         type: (mediaGroupTypes.has(att.type) ? att.type : 'document') as 'photo' | 'video' | 'audio' | 'document',
@@ -373,7 +444,7 @@ const main = async () => {
         captionParseMode: i === 0 && htmlCaption ? 'HTML' as const : undefined,
       }));
 
-      const sentMessages = await telegram.sendMediaGroup(chatId, media, replyToMessageId ? { replyToMessageId } : undefined);
+      const sentMessages = await telegram!.sendMediaGroup(chatId, media, replyToMessageId ? { replyToMessageId } : undefined);
 
       // Inject synthetic events for each sent message in the group
       for (const sent of sentMessages) {
@@ -382,17 +453,22 @@ const main = async () => {
 
       // Return the first message's info
       return sentMessages[0]!;
-    },
+    } : async () => { throw new Error('send_message not available: no Telegram configured'); },
     loadCompaction: chatId => loadCompaction(db, chatId),
     loadLastProbeTime: chatId => loadLastProbeTime(db, chatId),
     persistCompaction: (chatId, meta) => persistCompaction(db, chatId, meta),
     setCompactCursor: (chatId, cursorMs) => pipeline.setCompactCursor(chatId, cursorMs),
     runtimeConfig,
-    loadMessageAttachments: (chatId, messageId) => loadMessageAttachments(db, chatId, messageId),
-    downloadFile: fileId => telegram.bot.downloadFile(fileId),
-    downloadMessageMedia: telegram.userbot
-      ? (chatId, messageId) => telegram.userbot!.downloadMessageMedia(chatId, messageId)
+    loadMessageAttachments: hasTelegram
+      ? (chatId, messageId) => loadMessageAttachments(db, chatId, messageId)
+      : () => undefined,
+    downloadFile: hasTelegram
+      ? fileId => telegram!.bot.downloadFile(fileId)
+      : async () => { throw new Error('download_file not supported without Telegram'); },
+    downloadMessageMedia: hasTelegram && telegram!.userbot
+      ? (chatId, messageId) => telegram!.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
+    getPlatformAdapter: chatId => platformAdapters.get(chatId),
     resolveModel: name => resolveModel(config, name),
     backgroundTask: {
       startTask: (typeName, sessionId, params, intention, timeoutMs) =>
@@ -406,6 +482,11 @@ const main = async () => {
 
   // Wire lazy driver ref for background task completion notifications
   driverRef.handleEvent = driver.handleEvent;
+  driverRef.setOfflineMode = driver.setOfflineMode;
+  driverRef.sendMessage = async (chatId, text) => {
+    const platform = platformAdapters.get(chatId);
+    if (platform) await platform.sendMessage(chatId, text);
+  };
 
   logger.withFields({ chatIds }).log('Driver initialized');
 
@@ -417,135 +498,141 @@ const main = async () => {
     if (rc) driver.handleEvent(chatId, rc);
   }
 
-  telegram.onMessage(msg => {
-    // Bot's own messages picked up by userbot are already injected into the
-    // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
-    // to avoid a spurious driver trigger that would enter the probe flow.
-    // Still persist the raw message for richer metadata (upsert is idempotent).
-    if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
-      try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist self message'); }
-      return;
-    }
+  if (hasTelegram) {
+    const tg = telegram!;
 
-    // Service messages (join/leave/rename/pin/etc.) — route to service event path
-    if (isServiceMessage(msg)) {
-      const event = adaptServiceEvent(msg);
-      if (event) {
-        logger.withFields({
-          source: msg.source,
-          chatId: msg.chatId,
-          action: event.action.action,
-        }).log('Service event received');
-
-        persistEvent(db, event);
-        const rc = pipeline.pushEvent(event.chatId, event);
-        driver.handleEvent(event.chatId, rc);
-      }
-      return;
-    }
-
-    logger.withFields({
-      source: msg.source,
-      chatId: msg.chatId,
-      messageId: msg.messageId,
-      sender: msg.sender?.username ?? msg.sender?.firstName ?? msg.sender?.id ?? 'unknown',
-      text: msg.text.length > 100 ? `${msg.text.slice(0, 100)}...` : msg.text,
-      length: msg.text.length,
-    }).log('Message received');
-
-    const event = adaptMessage(msg);
-    persistEvent(db, event);
-    hydrateAltTextFromCache(event);
-
-    try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
-
-    const rc = pipeline.pushEvent(event.chatId, event);
-    driver.handleEvent(event.chatId, rc);
-  });
-
-  telegram.onMessageEdit(edit => {
-    logger.withFields({
-      chatId: edit.chatId,
-      messageId: edit.messageId,
-      sender: edit.sender?.username ?? edit.sender?.firstName ?? edit.sender?.id ?? 'unknown',
-      text: edit.text.length > 100 ? `${edit.text.slice(0, 100)}...` : edit.text,
-      length: edit.text.length,
-    }).log('Message edited');
-
-    const event = adaptEdit(edit);
-
-    // Phantom edit detection: Telegram fires updateEditMessage with editDate set
-    // for metadata-only changes (link preview resolved, reactions, client re-saves).
-    // Skip if text, content, and attachments are identical to the stored event.
-    const prev = loadLatestMessageContent(db, event.chatId, event.messageId);
-    if (prev) {
-      const newText = contentToPlainText(event.content) || null;
-      const newContent = event.content.length > 0 ? event.content : null;
-      const newAttachments = event.attachments.length > 0 ? event.attachments : null;
-      if (prev.text === newText
-        && JSON.stringify(prev.content) === JSON.stringify(newContent)
-        && JSON.stringify(prev.attachments) === JSON.stringify(newAttachments)) {
-        logger.withFields({ chatId: edit.chatId, messageId: edit.messageId }).log('Phantom edit skipped (content unchanged)');
+    tg.onMessage(msg => {
+      // Bot's own messages picked up by userbot are already injected into the
+      // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
+      // to avoid a spurious driver trigger that would enter the probe flow.
+      // Still persist the raw message for richer metadata (upsert is idempotent).
+      if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
+        try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist self message'); }
         return;
       }
-    }
 
-    persistEvent(db, event);
-    hydrateAltTextFromCache(event);
+      // Service messages (join/leave/rename/pin/etc.) — route to service event path
+      if (isServiceMessage(msg)) {
+        const event = adaptServiceEvent(msg);
+        if (event) {
+          logger.withFields({
+            source: msg.source,
+            chatId: msg.chatId,
+            action: event.action.action,
+          }).log('Service event received');
 
-    try { persistMessageEdit(db, edit); } catch (err) { logger.withError(err).error('Failed to persist message edit'); }
+          persistEvent(db, event);
+          const rc = pipeline.pushEvent(event.chatId, event);
+          driver.handleEvent(event.chatId, rc);
+        }
+        return;
+      }
 
-    const rc = pipeline.pushEvent(event.chatId, event);
-    driver.handleEvent(event.chatId, rc);
-  });
+      logger.withFields({
+        source: msg.source,
+        chatId: msg.chatId,
+        messageId: msg.messageId,
+        sender: msg.sender?.username ?? msg.sender?.firstName ?? msg.sender?.id ?? 'unknown',
+        text: msg.text.length > 100 ? `${msg.text.slice(0, 100)}...` : msg.text,
+        length: msg.text.length,
+      }).log('Message received');
 
-  telegram.onMessageDelete(del => {
-    logger.withFields({
-      chatId: del.chatId ?? 'unknown',
-      messageIds: del.messageIds,
-    }).log('Message deleted');
+      const event = adaptMessage(msg);
+      persistEvent(db, event);
+      hydrateAltTextFromCache(event);
 
-    const event = adaptDelete(del);
-    persistEvent(db, event);
+      try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
 
-    try { persistMessageDelete(db, del); } catch (err) { logger.withError(err).error('Failed to persist message delete'); }
+      const rc = pipeline.pushEvent(event.chatId, event);
+      driver.handleEvent(event.chatId, rc);
+    });
 
-    const rc = pipeline.pushEvent(event.chatId, event);
-    driver.handleEvent(event.chatId, rc);
-  });
+    tg.onMessageEdit(edit => {
+      logger.withFields({
+        chatId: edit.chatId,
+        messageId: edit.messageId,
+        sender: edit.sender?.username ?? edit.sender?.firstName ?? edit.sender?.id ?? 'unknown',
+        text: edit.text.length > 100 ? `${edit.text.slice(0, 100)}...` : edit.text,
+        length: edit.text.length,
+      }).log('Message edited');
 
-  telegram.onTyping(event => {
-    if (event.userId === botUserId) return;
-    driver.handleTyping(event.chatId);
-  });
+      const event = adaptEdit(edit);
+
+      // Phantom edit detection: Telegram fires updateEditMessage with editDate set
+      // for metadata-only changes (link preview resolved, reactions, client re-saves).
+      // Skip if text, content, and attachments are identical to the stored event.
+      const prev = loadLatestMessageContent(db, event.chatId, event.messageId);
+      if (prev) {
+        const newText = contentToPlainText(event.content) || null;
+        const newContent = event.content.length > 0 ? event.content : null;
+        const newAttachments = event.attachments.length > 0 ? event.attachments : null;
+        if (prev.text === newText
+          && JSON.stringify(prev.content) === JSON.stringify(newContent)
+          && JSON.stringify(prev.attachments) === JSON.stringify(newAttachments)) {
+          logger.withFields({ chatId: edit.chatId, messageId: edit.messageId }).log('Phantom edit skipped (content unchanged)');
+          return;
+        }
+      }
+
+      persistEvent(db, event);
+      hydrateAltTextFromCache(event);
+
+      try { persistMessageEdit(db, edit); } catch (err) { logger.withError(err).error('Failed to persist message edit'); }
+
+      const rc = pipeline.pushEvent(event.chatId, event);
+      driver.handleEvent(event.chatId, rc);
+    });
+
+    tg.onMessageDelete(del => {
+      logger.withFields({
+        chatId: del.chatId ?? 'unknown',
+        messageIds: del.messageIds,
+      }).log('Message deleted');
+
+      const event = adaptDelete(del);
+      persistEvent(db, event);
+
+      try { persistMessageDelete(db, del); } catch (err) { logger.withError(err).error('Failed to persist message delete'); }
+
+      const rc = pipeline.pushEvent(event.chatId, event);
+      driver.handleEvent(event.chatId, rc);
+    });
+
+    tg.onTyping(event => {
+      if (event.userId === botUserId) return;
+      driver.handleTyping(event.chatId);
+    });
+
+    tg.bot.registerCommand('offline', 'Pause automatic responses (only respond to @mentions and replies)', async chatId => {
+      driver.setOfflineMode(chatId, true);
+      await tg.bot.sendMessage(chatId, 'Offline mode enabled. I will only respond when @mentioned or replied to, then automatically return online.');
+    });
+
+    tg.bot.registerCommand('online', 'Resume automatic responses', async chatId => {
+      driver.setOfflineMode(chatId, false);
+      await tg.bot.sendMessage(chatId, 'Online mode enabled.');
+    });
+
+    await tg.start();
+  }
 
   const shutdown = async () => {
     logger.log('Shutting down...');
     backgroundTaskManager.shutdown();
     driver.stop();
-    await telegram.stop();
+    if (hasTelegram) await telegram!.stop();
+    if (oneBotServer) await oneBotServer.stop();
     process.exit(0);
   };
 
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
-
-  telegram.bot.registerCommand('offline', 'Pause automatic responses (only respond to @mentions and replies)', async chatId => {
-    driver.setOfflineMode(chatId, true);
-    await telegram.bot.sendMessage(chatId, 'Offline mode enabled. I will only respond when @mentioned or replied to, then automatically return online.');
-  });
-
-  telegram.bot.registerCommand('online', 'Resume automatic responses', async chatId => {
-    driver.setOfflineMode(chatId, false);
-    await telegram.bot.sendMessage(chatId, 'Online mode enabled.');
-  });
-
-  await telegram.start();
   logger.log('Cahciua is running');
 
   // Post-startup: backfill animationHash for historical events that lack it.
   // Runs after telegram.start() so download functions are available.
-  if (animationToTextChatIds.size > 0) {
+  // Only supported when Telegram is configured.
+  if (hasTelegram && animationToTextChatIds.size > 0) {
     const backfillLog = logger.withContext('animation-backfill');
     for (const chatId of animationToTextChatIds) {
       const compaction = loadCompaction(db, chatId);
@@ -568,10 +655,10 @@ const main = async () => {
               if (isNaN(messageId)) return;
 
               // Try userbot first (works for all media), then Bot API via fileId from messages table
-              let buffer = await telegram.userbot?.downloadMessageMedia(chatId, messageId);
+              let buffer = await telegram!.userbot?.downloadMessageMedia(chatId, messageId);
               if (!buffer) {
                 const fileId = loadMessageFileId(db, chatId, messageId);
-                if (fileId) buffer = await telegram.bot.downloadFile(fileId);
+                if (fileId) buffer = await telegram!.bot.downloadFile(fileId);
               }
               if (!buffer) {
                 backfillLog.withFields({ chatId, messageId }).warn('Backfill skipped: download failed');
@@ -615,7 +702,8 @@ const main = async () => {
   }
   // Post-startup: resolve custom emoji descriptions for historical events.
   // Runs after telegram.start() so Bot API (getCustomEmojiStickers) is available.
-  if (customEmojiToTextChatIds.size > 0) {
+  // Only supported when Telegram is configured.
+  if (hasTelegram && customEmojiToTextChatIds.size > 0) {
     for (const chatId of customEmojiToTextChatIds) {
       const compaction = loadCompaction(db, chatId);
       const events = loadEvents(db, chatId, compaction?.newCursorMs);

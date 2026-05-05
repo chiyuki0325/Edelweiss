@@ -34,7 +34,8 @@ export type ContentNode =
   | { type: 'blockquote'; children: ContentNode[] }
   | { type: 'link'; url: string; children: ContentNode[] }
   | { type: 'mention'; userId?: string; children: ContentNode[] }
-  | { type: 'custom_emoji'; customEmojiId: string; children: ContentNode[]; altText?: string; altTextError?: string; stickerSetName?: string };
+  | { type: 'custom_emoji'; customEmojiId: string; children: ContentNode[]; altText?: string; altTextError?: string; stickerSetName?: string }
+  | { type: 'face'; faceId: string; text: string };
 
 export interface CanonicalForwardInfo {
   fromUserId?: string;
