@@ -393,12 +393,6 @@ const main = async () => {
 
     await oneBotServer.start();
 
-    // Register platform adapter for each OneBot chat ID
-    for (const chatId of onebotChatIds) {
-      const api = oneBotServer.api;
-      if (api)
-        platformAdapters.set(chatId, createOneBotPlatformAdapter(api, runtimeConfig));
-    }
   }
 
   // --- Driver ---
@@ -468,7 +462,16 @@ const main = async () => {
     downloadMessageMedia: hasTelegram && telegram!.userbot
       ? (chatId, messageId) => telegram!.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
-    getPlatformAdapter: chatId => platformAdapters.get(chatId),
+    getPlatformAdapter: chatId => {
+      const existing = platformAdapters.get(chatId);
+      if (existing) return existing;
+      if (resolveChatConfig(config, chatId).platform === 'onebot' && oneBotServer?.api) {
+        const adapter = createOneBotPlatformAdapter(oneBotServer.api, runtimeConfig);
+        platformAdapters.set(chatId, adapter);
+        return adapter;
+      }
+      return undefined;
+    },
     resolveModel: name => resolveModel(config, name),
     backgroundTask: {
       startTask: (typeName, sessionId, params, intention, timeoutMs) =>
