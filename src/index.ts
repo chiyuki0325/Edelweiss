@@ -11,6 +11,7 @@ import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImage
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
 import { createOneBotPlatformAdapter, createOneBotServer } from './onebot';
+import { resolveOneBotImageAltText } from './onebot/image-to-text';
 import { createPipeline } from './pipeline';
 import type { PipelineEvent } from './pipeline';
 import type { RenderParams } from './rendering';
@@ -378,9 +379,20 @@ const main = async () => {
                 await driverRef.sendMessage?.(chatId, reply);
                 return;
               }
+
+              // Image-to-text: resolve alt text for image attachments before pipeline
+              if (imageToTextChatIds.has(chatId) && event.attachments.length > 0) {
+                const api = oneBotServer?.api;
+                if (api) {
+                  const caption = contentToPlainText(event.content);
+                  await Promise.all(event.attachments.map(att =>
+                    resolveOneBotImageAltText(att, caption, api, imageToTextResolver)));
+                }
+              }
             }
 
             persistEvent(db, event);
+            hydrateAltTextFromCache(event);
             const rc = pipeline.pushEvent(chatId, event);
             driverRef.handleEvent?.(chatId, rc);
           } catch (err) {

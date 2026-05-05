@@ -102,10 +102,10 @@ const createApiClient = (
       // OneBot file references can be:
       // - base64://... (inline base64 data)
       // - http://... or https://... (URL)
-      // - An absolute path on the QQ server (for get_image action)
-      if (file.startsWith('base64://')) {
+      // - A local path / file reference on the QQ server
+
+      if (file.startsWith('base64://'))
         return Buffer.from(file.slice(9), 'base64');
-      }
 
       if (file.startsWith('http://') || file.startsWith('https://')) {
         const resp = await fetch(file, { signal: AbortSignal.timeout(60_000) });
@@ -113,17 +113,24 @@ const createApiClient = (
         return Buffer.from(await resp.arrayBuffer());
       }
 
-      // Try get_image action as fallback
-      const result = await call<{ file?: string }>('get_image', { file });
+      // Detect image extension — prefer get_image for proper decoding
+      const imageExts = /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff)(\?|$)/i;
+      const isImage = imageExts.test(file);
+
+      const action = isImage ? 'get_image' : 'get_file';
+      const result = await call<{ file?: string }>(action, { file });
       if (result.file) {
         if (result.file.startsWith('base64://'))
           return Buffer.from(result.file.slice(9), 'base64');
-        if (result.file.startsWith('http'))
-          return Buffer.from(await (await fetch(result.file)).arrayBuffer());
+        if (result.file.startsWith('http')) {
+          const resp = await fetch(result.file, { signal: AbortSignal.timeout(60_000) });
+          return Buffer.from(await resp.arrayBuffer());
+        }
+        // Assume base64-encoded result
         return Buffer.from(result.file, 'base64');
       }
 
-      throw new Error(`Cannot download file: unsupported file reference "${file.slice(0, 80)}"`);
+      throw new Error(`Cannot download file: ${action} returned no data for "${file.slice(0, 80)}"`);
     },
   };
 };
