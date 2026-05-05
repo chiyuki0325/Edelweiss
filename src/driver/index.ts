@@ -228,6 +228,7 @@ export const createDriver = (config: DriverConfig, deps: {
             loadMessageAttachments: deps.loadMessageAttachments,
             downloadFile: deps.downloadFile,
             downloadMessageMedia: deps.downloadMessageMedia,
+            platformAdapter: platform,
           });
 
           const tools: CahciuaTool[] = [sendMessageTool, createDismissMessageTool()];

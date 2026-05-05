@@ -97,7 +97,10 @@ const renderAttachment = (att: CanonicalAttachment, messageId: string, index: nu
   if (att.width != null && att.height != null) attrs.push(`size="${att.width}x${att.height}"`);
   if (att.duration != null) attrs.push(`duration="${att.duration}"`);
   if (att.stickerSetName) attrs.push(`pack="${escapeXml(att.stickerSetName)}"`);
-  attrs.push(`file-id="${escapeXml(messageId)}:${index}"`);
+  if (att.fileRef)
+    attrs.push(`file-id="ob:${escapeXml(Buffer.from(att.fileRef).toString('base64'))}"`);
+  else
+    attrs.push(`file-id="${escapeXml(messageId)}:${index}"`);
   if (att.altText) {
     const tag = att.type === 'sticker' ? 'sticker' : (att.animationHash ? 'animation' : 'image');
     return `<${tag} ${attrs.join(' ')}>${escapeXml(att.altText)}</${tag}>`;

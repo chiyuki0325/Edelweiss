@@ -17,6 +17,8 @@ export interface CanonicalAttachment {
   stickerSetId?: string;
   stickerSetName?: string;
   altText?: string;
+  /** Platform-specific file reference for downloading (OneBot URL/base64, etc.). */
+  fileRef?: string;
 }
 
 // Rich text content tree — platform-agnostic representation parsed from

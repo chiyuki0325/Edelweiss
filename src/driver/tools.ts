@@ -5,6 +5,7 @@ import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
 import type { SkillInfo } from './skills';
+import type { PlatformAdapter } from './types';
 import type { RuntimeConfig } from '../config/config';
 import type { Attachment } from '../telegram/message/types';
 import type {
@@ -247,8 +248,17 @@ export const createAttachmentDownloader = (deps: {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  platformAdapter?: PlatformAdapter;
 }): (fileId: string) => Promise<Buffer> =>
   async (fileId: string): Promise<Buffer> => {
+    // OneBot path: file-id starts with "ob:" prefix — decode the base64-encoded fileRef
+    // and download via the platform adapter.
+    if (fileId.startsWith('ob:') && deps.platformAdapter) {
+      const fileRef = Buffer.from(fileId.slice(3), 'base64').toString();
+      return await deps.platformAdapter.downloadFile(fileRef, deps.chatId);
+    }
+
+    // Telegram path: file-id is "messageId:index"
     const colonIdx = fileId.lastIndexOf(':');
     if (colonIdx < 0) throw new Error('Invalid file_id format. Expected "messageId:index".');
 

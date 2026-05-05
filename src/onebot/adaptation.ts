@@ -45,6 +45,7 @@ const adaptSegment = (
     const att: CanonicalAttachment = {
       type: 'photo',
       fileName: extractFileName(seg.data.file),
+      fileRef: seg.data.file,
     };
     attachments.push(att);
     return null;
@@ -54,6 +55,7 @@ const adaptSegment = (
     const att: CanonicalAttachment = {
       type: 'voice',
       fileName: extractFileName(seg.data.file),
+      fileRef: seg.data.file,
     };
     attachments.push(att);
     return null;
@@ -63,6 +65,7 @@ const adaptSegment = (
     const att: CanonicalAttachment = {
       type: 'video',
       fileName: extractFileName(seg.data.file),
+      fileRef: seg.data.file,
     };
     attachments.push(att);
     return null;
@@ -72,6 +75,7 @@ const adaptSegment = (
     const att: CanonicalAttachment = {
       type: 'document',
       fileName: seg.data.name ?? extractFileName(seg.data.file),
+      fileRef: seg.data.file,
     };
     attachments.push(att);
     return null;
