@@ -99,11 +99,6 @@ const createApiClient = (
     },
 
     downloadFile: async (file: string, _chatId: string): Promise<Buffer> => {
-      // OneBot file references can be:
-      // - base64://... (inline base64 data)
-      // - http://... or https://... (URL)
-      // - A local path / file reference on the QQ server
-
       if (file.startsWith('base64://'))
         return Buffer.from(file.slice(9), 'base64');
 
@@ -113,24 +108,31 @@ const createApiClient = (
         return Buffer.from(await resp.arrayBuffer());
       }
 
-      // Detect image extension — prefer get_image for proper decoding
       const imageExts = /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff)(\?|$)/i;
       const isImage = imageExts.test(file);
-
       const action = isImage ? 'get_image' : 'get_file';
-      const result = await call<{ file?: string }>(action, { file });
+
+      const downloadFromUrl = async (url: string): Promise<Buffer> => {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return Buffer.from(await resp.arrayBuffer());
+      };
+
+      const result = await call<{ file?: string; url?: string }>(action, { file });
+
+      // url field is the HTTP download URL — prefer it
+      if (result.url)
+        return await downloadFromUrl(result.url);
+
+      // file field may be base64://... or a local path
       if (result.file) {
         if (result.file.startsWith('base64://'))
           return Buffer.from(result.file.slice(9), 'base64');
-        if (result.file.startsWith('http')) {
-          const resp = await fetch(result.file, { signal: AbortSignal.timeout(60_000) });
-          return Buffer.from(await resp.arrayBuffer());
-        }
-        // Assume base64-encoded result
-        return Buffer.from(result.file, 'base64');
+        if (result.file.startsWith('http'))
+          return await downloadFromUrl(result.file);
       }
 
-      throw new Error(`Cannot download file: ${action} returned no data for "${file.slice(0, 80)}"`);
+      throw new Error(`Cannot download file: ${action} returned no url for "${file.slice(0, 80)}"`);
     },
   };
 };

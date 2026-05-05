@@ -35,19 +35,23 @@ export const resolveOneBotImageAltText = async (
 ): Promise<void> => {
   if (!att.fileRef) return;
 
-  // 1. Download the image
-  const buffer = await api.downloadFile(att.fileRef, '');
-
-  // 2. Generate thumbnail for cache key + rendering
-  const thumbnailBuffer = await generateThumbnail(buffer);
-  att.thumbnailWebp = thumbnailBuffer.toString('base64');
-
-  // 3. Resolve via shared resolver (handles cache lookup + LLM)
   try {
-    const record = await resolver.resolve(thumbnailBuffer, caption, buffer);
-    att.altText = record.altText;
-    if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+    // 1. Download the image
+    const buffer = await api.downloadFile(att.fileRef, '');
+
+    // 2. Generate thumbnail for cache key + rendering
+    const thumbnailBuffer = await generateThumbnail(buffer);
+    att.thumbnailWebp = thumbnailBuffer.toString('base64');
+
+    // 3. Resolve via shared resolver (handles cache lookup + LLM)
+    try {
+      const record = await resolver.resolve(thumbnailBuffer, caption, buffer);
+      att.altText = record.altText;
+      if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+    } catch {
+      // LLM failure: leave altText unset, attachment still renders with thumbnail
+    }
   } catch {
-    // Image-to-text failure: leave altText unset, attachment still renders with thumbnail
+    // Download or thumbnail failure: leave attachment as-is
   }
 };
