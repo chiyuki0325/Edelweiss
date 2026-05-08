@@ -47,6 +47,8 @@ const ChatConfigSchema = v.object({
   imageToText: v.optional(v.object({
     enabled: v.optional(v.boolean(), false),
     model: v.optional(v.string(), ''),
+    compress: v.optional(v.boolean(), true),
+    pixelBudget: v.optional(v.number(), 512 * 512),
   }), {}),
   animationToText: v.optional(v.object({
     enabled: v.optional(v.boolean(), false),
@@ -101,6 +103,8 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
   imageToText: v.partial(v.object({
     enabled: v.boolean(),
     model: v.string(),
+    compress: v.boolean(),
+    pixelBudget: v.number(),
   })),
   animationToText: v.partial(v.object({
     enabled: v.boolean(),
@@ -190,7 +194,7 @@ export interface ResolvedChatConfig {
   systemFiles: { filename: string; content: string }[];
   compaction: CompactionConfig;
   probe: { enabled: boolean; model: LlmEndpoint };
-  imageToText: { enabled: boolean; model?: string };
+  imageToText: { enabled: boolean; model?: string; compress: boolean; pixelBudget: number };
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
   debounce: {
@@ -273,6 +277,8 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     imageToText: {
       enabled: merged.imageToText.enabled,
       model: merged.imageToText.model || undefined,
+      compress: merged.imageToText.compress,
+      pixelBudget: merged.imageToText.pixelBudget,
     },
     animationToText: {
       enabled: merged.animationToText.enabled,

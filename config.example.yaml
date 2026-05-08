@@ -64,6 +64,8 @@ chats:
     imageToText:
       enabled: false
       model: "primary"            # references a key in models
+      # compress: true             # resize image-to-text inputs before calling the model (stickers always compress)
+      # pixelBudget: 262144        # max pixels when compress=true (default 512*512)
     animationToText:
       enabled: false
       model: "primary"            # references a key in models

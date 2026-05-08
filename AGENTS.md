@@ -429,7 +429,7 @@ Optional blocking ingress transform that resolves image attachments into cached 
 **Processing model**:
 - Only image events with unresolved image attachments trigger the workflow.
 - Cache key is the sha256 of the generated thumbnail (deterministic sharp WebP output). Both live ingress and cold-start replay produce the same thumbnail from the same image, so the cache key is stable.
-- The LLM input image is a resized PNG with long edge capped at 512px (`fit: inside`, no enlargement). This is larger than the chat-context thumbnail budget and is used only for the image-to-text workflow.
+- The LLM input image is encoded as PNG. By default it is resized with a 512×512 pixel budget (`fit: inside`, no enlargement); `imageToText.compress=false` sends the original image pixels to the description model. Static stickers always force compression regardless of this config.
 - If alt text is present on an attachment, Rendering emits inline `<image ...>alt text</image>` and does **not** attach a separate image buffer content piece.
 - Alt text is **never** stored in the `events` table — it is always queried transiently from the `image_alt_texts` table at runtime.
 - Only whitelisted chats (`driver.chatIds`) trigger image-to-text resolution.
@@ -448,6 +448,8 @@ Optional blocking ingress transform that resolves image attachments into cached 
 **Config** (`imageToText` section in `config.yaml`):
 - `enabled` (boolean, default `false`): whether to block ingress on image-to-text
 - `model`: model for the image-to-text workflow (references a key in the `models` registry)
+- `compress` (boolean, default `true`): whether to resize normal image inputs before calling the model; static stickers always compress
+- `pixelBudget` (number, default `262144`): maximum pixel count when compression is enabled (`512 * 512`)
 
 ### Animation To Text
 

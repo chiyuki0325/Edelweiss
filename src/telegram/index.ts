@@ -166,7 +166,7 @@ export const createTelegramManager = (
           if (!att.thumbnailWebp) return;
           const thumbnailBuffer = Buffer.from(att.thumbnailWebp, 'base64');
           const highResBuffer = originalBuffers.get(att);
-          await imageToText.resolve(thumbnailBuffer, text, highResBuffer);
+          await imageToText.resolve(thumbnailBuffer, text, highResBuffer, { isSticker: att.type === 'sticker' });
         }));
       }
 

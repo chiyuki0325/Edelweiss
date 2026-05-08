@@ -92,6 +92,10 @@ const main = async () => {
     enabled: imageToTextChatIds.size > 0,
     model: defaultChatConfig.imageToText.model ? resolveModel(config, defaultChatConfig.imageToText.model) : undefined,
     semaphore: getDescriptionSemaphore(defaultChatConfig.imageToText.model),
+    compression: {
+      compress: defaultChatConfig.imageToText.compress,
+      pixelBudget: defaultChatConfig.imageToText.pixelBudget,
+    },
     logger,
     lookupByHash: imageHash => loadImageAltTextByHash(db, imageHash),
     persist: record => persistImageAltText(db, record),

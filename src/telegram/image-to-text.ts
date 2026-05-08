@@ -8,7 +8,46 @@ import { callDescriptionLlm, createSemaphore } from './llm-description';
 import type { CanonicalAttachment } from '../adaptation/types';
 import type { LlmEndpoint } from '../driver/types';
 
-const IMAGE_TO_TEXT_MAX_EDGE = 512;
+export interface ImageToTextCompressionConfig {
+  compress: boolean;
+  pixelBudget: number;
+}
+
+export interface ImageToTextResolveOptions {
+  isSticker?: boolean;
+}
+
+const DEFAULT_IMAGE_TO_TEXT_COMPRESSION: ImageToTextCompressionConfig = {
+  compress: true,
+  pixelBudget: 512 * 512,
+};
+
+const maxEdgeForPixelBudget = (buffer: Buffer, pixelBudget: number): Promise<number> =>
+  sharp(buffer).metadata().then(meta => {
+    const w = meta.width ?? Math.floor(Math.sqrt(pixelBudget));
+    const h = meta.height ?? Math.floor(Math.sqrt(pixelBudget));
+    const longEdge = Math.max(w, h);
+    const shortEdge = Math.max(Math.min(w, h), 1);
+    return Math.floor(Math.sqrt(pixelBudget * (longEdge / shortEdge)));
+  });
+
+export const prepareImageToTextUrl = async (
+  buffer: Buffer,
+  compression: ImageToTextCompressionConfig = DEFAULT_IMAGE_TO_TEXT_COMPRESSION,
+  options: ImageToTextResolveOptions = {},
+): Promise<string> => {
+  const image = sharp(buffer);
+  const shouldCompress = options.isSticker === true || compression.compress;
+  const maxEdge = shouldCompress ? await maxEdgeForPixelBudget(buffer, compression.pixelBudget) : undefined;
+  const prepared = maxEdge
+    ? image.resize(maxEdge, maxEdge, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+    : image;
+  const png = await prepared.png().toBuffer();
+  return `data:image/png;base64,${png.toString('base64')}`;
+};
 
 export interface ImageAltTextRecord {
   imageHash: string;
@@ -18,9 +57,7 @@ export interface ImageAltTextRecord {
 }
 
 export interface ImageToTextResolver {
-  /** Generate + persist alt text. thumbnailBuffer used as cache key; highResBuffer (if provided) used for LLM input. */
-  resolve(thumbnailBuffer: Buffer, caption: string, highResBuffer?: Buffer): Promise<ImageAltTextRecord>;
-  /** Hydrate altText on canonical attachments from cache/LLM (for cold-start replay). */
+  resolve(thumbnailBuffer: Buffer, caption: string, highResBuffer?: Buffer, options?: ImageToTextResolveOptions): Promise<ImageAltTextRecord>;
   hydrateCanonicalAttachments(attachments: CanonicalAttachment[], caption: string): Promise<void>;
 }
 
@@ -31,20 +68,10 @@ const hashBuffer = (buffer: Buffer): string =>
 export const computeThumbnailHash = (thumbnailWebp: string): string =>
   hashBuffer(Buffer.from(thumbnailWebp, 'base64'));
 
-const prepareImageToTextUrl = async (buffer: Buffer): Promise<string> => {
-  const resized = await sharp(buffer)
-    .resize(IMAGE_TO_TEXT_MAX_EDGE, IMAGE_TO_TEXT_MAX_EDGE, {
-      fit: 'inside',
-      withoutEnlargement: true,
-    })
-    .png()
-    .toBuffer();
-  return `data:image/png;base64,${resized.toString('base64')}`;
-};
-
 export const createImageToTextResolver = (params: {
   enabled: boolean;
   model?: LlmEndpoint;
+  compression?: ImageToTextCompressionConfig;
   semaphore?: ReturnType<typeof createSemaphore>;
   logger: Logger;
   lookupByHash: (imageHash: string) => ImageAltTextRecord | null;
@@ -52,6 +79,7 @@ export const createImageToTextResolver = (params: {
 }): ImageToTextResolver => {
   const log = params.logger.withContext('telegram:image-to-text');
   const semaphore = params.semaphore ?? createSemaphore(3);
+  const compression = params.compression ?? DEFAULT_IMAGE_TO_TEXT_COMPRESSION;
   const inflightByHash = new Map<string, Promise<ImageAltTextRecord>>();
 
   // Core: thumbnail hash → dedup → cache lookup → semaphore-gated LLM → persist
@@ -59,6 +87,7 @@ export const createImageToTextResolver = (params: {
     thumbnailBuffer: Buffer,
     caption: string,
     highResBuffer?: Buffer,
+    options: ImageToTextResolveOptions = {},
   ): Promise<ImageAltTextRecord> => {
     const imageHash = hashBuffer(thumbnailBuffer);
 
@@ -78,7 +107,7 @@ export const createImageToTextResolver = (params: {
         const model = params.model;
         if (!model) throw new Error('imageToText.model is required when imageToText.enabled=true');
 
-        const imageUrl = await prepareImageToTextUrl(highResBuffer ?? thumbnailBuffer);
+        const imageUrl = await prepareImageToTextUrl(highResBuffer ?? thumbnailBuffer, compression, options);
         const system = await renderImageToTextSystemPrompt({ caption });
 
         const result = await callDescriptionLlm({
@@ -110,8 +139,8 @@ export const createImageToTextResolver = (params: {
   };
 
   return {
-    resolve(thumbnailBuffer, caption, highResBuffer) {
-      return resolveByBuffer(thumbnailBuffer, caption, highResBuffer);
+    resolve(thumbnailBuffer, caption, highResBuffer, options) {
+      return resolveByBuffer(thumbnailBuffer, caption, highResBuffer, options);
     },
 
     async hydrateCanonicalAttachments(attachments, caption) {
