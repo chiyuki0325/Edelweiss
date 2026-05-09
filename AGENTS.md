@@ -52,6 +52,8 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 ```
 src/
 ├── index.ts                # Entry point — thin wiring shell (config, DB, telegram, pipeline, driver)
+├── startup.ts              # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
+├── startup.test.ts         # Startup chat selection tests
 ├── pipeline.ts             # Per-chat IC/RC state manager (reduce → render → log → dump)
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── config/
@@ -215,6 +217,10 @@ The queue is fail-closed. If the head event's transform does not succeed, that c
 - **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete/typing events.
 
 Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
+
+### Configured Chat Residency
+
+The `chats` config is the in-memory residency whitelist. Startup seeds Telegram's known-chat filter from the full events table so historical unconfigured groups can still persist incoming messages/edits/deletes, but cold-start replay only rebuilds IC/RC for chats present in config. Live ingress for unconfigured chats still persists `events` and `messages`, then stops before hydration, Projection, Rendering, Driver, and compaction. This keeps archival chats out of memory and avoids startup replay cost for chats that are no longer enabled.
 
 ### Phantom Edit Filtering
 
