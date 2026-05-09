@@ -1,6 +1,6 @@
 <script setup>
 const props = defineProps({
-  language: { type: String, default: 'en' },
+  language: { type: String, default: 'zh-CN' },
   modelName: { type: String, required: true },
   task: { type: String, required: true },
   context: { type: String, default: '' },
