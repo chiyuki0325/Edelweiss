@@ -78,6 +78,7 @@ const ChatConfigSchema = v.object({
     markdownList: v.optional(v.boolean(), true),
     markdownHeader: v.optional(v.boolean(), true),
     newline: v.optional(v.boolean(), true),
+    queshi: v.optional(v.boolean(), true),
   }), {}),
   skills: v.optional(v.object({
     folder: v.pipe(v.string(), v.nonEmpty()),
@@ -140,6 +141,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     markdownList: v.boolean(),
     markdownHeader: v.boolean(),
     newline: v.boolean(),
+    queshi: v.boolean(),
   })),
   skills: v.object({
     folder: v.string(),
@@ -228,6 +230,7 @@ export interface ResolvedChatConfig {
     markdownList: boolean;
     markdownHeader: boolean;
     newline: boolean;
+    queshi: boolean;
   };
   skills?: { folder: string };
   tools: {

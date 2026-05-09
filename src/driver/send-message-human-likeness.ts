@@ -4,6 +4,7 @@ import type { ConversationEntry } from '../unified-api/types';
 export const RECENT_SEND_MESSAGE_WINDOW = 5;
 const SHORT_MESSAGE_CHAR_LIMIT = 32;
 const DENSE_CLAUSE_PUNCTUATION_THRESHOLD = 2;
+const QUESHI_OVERUSE_RATIO = 0.5;
 
 export interface HumanLikenessToggles {
   trailingPeriod: boolean;
@@ -12,6 +13,7 @@ export interface HumanLikenessToggles {
   markdownList: boolean;
   markdownHeader: boolean;
   newline: boolean;
+  queshi: boolean;
 }
 
 const ALL_ENABLED: HumanLikenessToggles = {
@@ -21,6 +23,7 @@ const ALL_ENABLED: HumanLikenessToggles = {
   markdownList: true,
   markdownHeader: true,
   newline: true,
+  queshi: true,
 };
 
 export const potentiallyNotHumanFeatureDefinitions = [
@@ -47,6 +50,10 @@ export const potentiallyNotHumanFeatureDefinitions = [
   {
     name: 'newline',
     description: 'Used a newline.',
+  },
+  {
+    name: 'queshi',
+    description: "Used '确实' (indeed) — excessive verbal agreement.",
   },
 ] as const;
 
@@ -112,6 +119,8 @@ export const assessSendMessageHumanLikeness = (
     features.push('markdown-header');
   if (toggles.newline && NEWLINE_RE.test(text))
     features.push('newline');
+  if (toggles.queshi && text.includes('确实'))
+    features.push('queshi');
   return features;
 };
 
@@ -164,7 +173,11 @@ export const renderRecentSendMessageHumanLikenessXml = (
       ...feature,
       count: recentMessages.filter(message => message.features.includes(feature.name)).length,
     }))
-    .filter(feature => feature.count > 0);
+    .filter(feature => {
+      if (feature.count === 0) return false;
+      if (feature.name === 'queshi' && feature.count / recentMessages.length <= QUESHI_OVERUSE_RATIO) return false;
+      return true;
+    });
 
   if (featureCounts.length === 0)
     return '';
@@ -176,7 +189,12 @@ export const renderRecentSendMessageHumanLikenessXml = (
   for (const feature of featureCounts)
     lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
 
-  lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.</guidance>');
+  const hasQueshi = featureCounts.some(f => f.name === 'queshi');
+  const guidanceParts = ['If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.'];
+  if (hasQueshi) {
+    guidanceParts.push('Stop echoing or verbally agreeing with others. Do not use phrases like "确实" to signal agreement.');
+  }
+  lines.push(`<guidance>${guidanceParts.join(' ')}</guidance>`);
 
   lines.push('</human-likeness>');
   return lines.join('\n');

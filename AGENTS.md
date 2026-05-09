@@ -349,7 +349,7 @@ The following optimizations are always active in `composeContext()`:
 
 ### Human-Likeness Heuristic Toggles
 
-Each of the 6 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
+Each of the 7 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
 
 | Config key | Check | Default |
 |------------|-------|---------|
@@ -359,6 +359,9 @@ Each of the 6 heuristic checks in `send-message-human-likeness.ts` can be disabl
 | `humanLikeness.markdownList` | Markdown list | `true` |
 | `humanLikeness.markdownHeader` | Markdown header | `true` |
 | `humanLikeness.newline` | Any newline in a send_message | `true` |
+| `humanLikeness.queshi` | Message contains '确实', triggered only when >50% of recent messages contain it | `true` |
+
+`queshi` is a DeepSeek V4 model quirk — the model overuses '确实' (indeed) as verbal agreement at ~3.7× the human rate. The >50% threshold prevents false alarms on occasional legitimate use.
 
 Toggles are per-chat (deep-merged with `default` like all other config). Defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; passed to `collectRecentSendMessageAssessments()` via `chatConfig.humanLikeness` in the Driver.
 
