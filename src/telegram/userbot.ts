@@ -144,7 +144,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
 
   const stop = async () => {
     log.log('Disconnecting...');
-    await client.disconnect();
+    await client.destroy();
     log.log('Disconnected');
   };
 

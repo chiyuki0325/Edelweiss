@@ -636,13 +636,21 @@ const main = async () => {
     await tg.start();
   }
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.log('Shutting down...');
     backgroundTaskManager.shutdown();
     driver.stop();
-    if (hasTelegram) await telegram!.stop();
-    if (oneBotServer) await oneBotServer.stop();
-    process.exit(0);
+    try {
+      if (hasTelegram) await telegram!.stop();
+      if (oneBotServer) await oneBotServer.stop();
+      process.exit(0);
+    } catch (err) {
+      logger.withError(err).error('Shutdown failed');
+      process.exit(1);
+    }
   };
 
   process.on('SIGINT', () => void shutdown());
