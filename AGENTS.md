@@ -582,6 +582,19 @@ Optional blocking ingress transform that resolves custom emoji (inline `MessageE
 
 When existing data doesn't match the current schema or design, fix it with a **DB migration** (SQL UPDATE in a new migration file). Never add backward-compatibility code or runtime fallbacks to handle old data formats — code should only handle the latest design. This keeps the codebase clean and avoids accumulating compatibility shims.
 
+## DB Migration Workflow
+
+When you modify `src/db/schema.ts` (add/remove/change tables, columns, or indexes):
+
+1. **Generate**: `pnpm db:generate` — diffs schema.ts against the latest meta snapshot, produces a SQL migration with a random codename.
+2. **Review the generated SQL**: check that every statement is correct and necessary. Remove or adjust any unintended changes before committing. Verify:
+   - New tables have all expected columns, indexes, and constraints.
+   - Column additions use correct types and defaults.
+   - No unnecessary table recreations (e.g. boolean default `false` vs integer `0` mismatch — fix the snapshot if the diff is cosmetic).
+3. **Rename**: give the migration a descriptive name (e.g. `0026_create_subagents.sql`) and update the `tag` field for the corresponding entry in `drizzle/meta/_journal.json` to match.
+
+The meta snapshot chain (`drizzle/meta/` + `_journal.json`) is the source of truth for Drizzle Kit diffs. Keep it in sync with the actual database state. Never edit `_journal.json` to add entries for migrations that don't exist in the DB. If the chain breaks (duplicate snapshot ids, missing snapshot files), fix the chain before generating new migrations.
+
 ## Commit Conventions
 
 - Use Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, etc.
