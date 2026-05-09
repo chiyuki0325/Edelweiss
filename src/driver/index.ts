@@ -325,21 +325,25 @@ export const createDriver = (config: DriverConfig, deps: {
             estimatedTokens: ctx.estimatedTokens,
           }).log('Triggering LLM call');
 
-          const tools: CahciuaTool[] = createSharedTools(true);
-          if (chatConfig.subagents.enabled)
-            tools.push(...subagentManager.mainTools());
+          const sharedTools = createSharedTools(true);
+          const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
+          const skillTools: CahciuaTool[] = [];
           if (allSkills.size > 0) {
-            tools.push(createLoadSkillTool(
+            skillTools.push(createLoadSkillTool(
               () => new Map([...allSkills].filter(([k]) => !loadedSkillNames().has(k))),
               name => loadedSkillNames(new Set([...loadedSkillNames(), name])),
             ));
           }
+          const tools: CahciuaTool[] = [...sharedTools, ...subagentTools, ...skillTools];
+          // Probe should not see subagent tools — it only needs to decide silence vs activation.
+          const probeTools: CahciuaTool[] = [...sharedTools, ...skillTools];
 
           const system = await renderSystemPrompt({
             currentChannel: 'telegram',
             modelName: chatConfig.primaryModel.model,
             systemFiles: chatConfig.systemFiles,
             hasLoadSkillTool: allSkills.size > 0,
+            hasSubagentTools: chatConfig.subagents.enabled,
           });
 
           // --- Compute mention/reply/interrupt state from RC + TRs ---
@@ -382,7 +386,7 @@ export const createDriver = (config: DriverConfig, deps: {
               const probeRequestedAt = Date.now();
               const probeResult = await callLlm(
                 chatConfig.probe.model, probeEntries, system,
-                tools.map(toToolSchema),
+                probeTools.map(toToolSchema),
                 { log, label: `probe:${chatId}`, maxImagesAllowed: chatConfig.probe.model.maxImagesAllowed },
               );
 

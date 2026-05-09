@@ -12,6 +12,7 @@ const props = defineProps({
   // --- Semi-static section (changes rarely) ---
   currentChannel: { type: String, default: 'telegram' },
   hasLoadSkillTool: { type: Boolean, default: false },
+  hasSubagentTools: { type: Boolean, default: false },
 })
 
 // Build tool list as plain markdown lines in script setup to avoid
@@ -27,9 +28,13 @@ const toolListBlock = computed(() => {
     '`read_image` — Read and analyze an image from a chat attachment (by file-id) or the filesystem (by path). Set detail to "high" for fine details or text.',
     '`kill_task` — Kill a running background task by its ID.',
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
-    '`start_subagent` — Start an isolated helper agent for a non-trivial investigation or tool-heavy task. Use this only when delegation will keep your own context cleaner than doing the work directly.',
-    '`message_subagent` — Send a short instruction or status request to an active helper agent.',
   ]
+  if (props.hasSubagentTools) {
+    lines.push(
+      '`start_subagent` — Start an isolated helper agent for a non-trivial investigation or tool-heavy task. Use this only when delegation will keep your own context cleaner than doing the work directly.',
+      '`message_subagent` — Send a short instruction or status request to an active helper agent.',
+    )
+  }
   if (props.hasLoadSkillTool) {
     lines.push('`load_skill` — Load a predefined skill module into the current session. Skills are curated sets of instructions and capabilities that can be activated on demand. Check the available skills list in the context for what is currently loadable.')
   }
