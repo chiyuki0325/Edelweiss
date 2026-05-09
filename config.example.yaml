@@ -89,6 +89,12 @@ chats:
       #   backgroundThresholdSec: 10               # timeout threshold above which bash runs as background task
       webSearch:
         tavilyKey: ""                              # Tavily API key for web search (required)
+    # Subagent config
+    # subagents:
+    #   enabled: true
+    #   model: primary
+    #   maxConcurrent: 2
+    #   maxSteps: 8
 
   # Per-chat overrides — uncomment and customize:
   # "751414718":                   # per-chat partial override (deep-merged with default)
