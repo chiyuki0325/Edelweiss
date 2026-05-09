@@ -86,7 +86,7 @@ export const createRunner = (config: RunnerConfig) => {
     let working: ConversationEntry[] = [...params.entries];
 
     for (let step = 1; step <= params.maxSteps; step++) {
-      if (step > 1 && params.pullExternalEntries) {
+      if (step > 0 && params.pullExternalEntries) {
         const externalEntries = await params.pullExternalEntries();
         if (externalEntries.length > 0)
           working = [...working, ...externalEntries];
