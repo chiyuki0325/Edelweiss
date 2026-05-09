@@ -9,6 +9,7 @@ export interface TurnResponseV2 {
   inputTokens: number;
   outputTokens: number;
   modelName: string;
+  agentId?: string;
 }
 
 export interface ProbeResponseV2 {

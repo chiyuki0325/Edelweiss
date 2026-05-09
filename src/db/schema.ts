@@ -109,13 +109,44 @@ export const turnResponses = sqliteTable('turn_responses', {
 export const turnResponsesV2 = sqliteTable('turn_responses_v2', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   chatId: text('chat_id').notNull(),
+  agentId: text('agent_id').notNull().default('main'),
   requestedAt: integer('requested_at').notNull(),
   entries: text('entries').notNull(),
   inputTokens: integer('input_tokens').notNull(),
   outputTokens: integer('output_tokens').notNull(),
   modelName: text('model_name').notNull().default(''),
 }, table => [
+  index('turn_responses_v2_chat_agent_requested_idx').on(table.chatId, table.agentId, table.requestedAt),
   index('turn_responses_v2_chat_requested_idx').on(table.chatId, table.requestedAt),
+]);
+
+export const subagents = sqliteTable('subagents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: text('chat_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  task: text('task').notNull(),
+  status: text('status').notNull(),
+  modelName: text('model_name').notNull().default(''),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+  finalMessage: text('final_message'),
+}, table => [
+  uniqueIndex('subagents_chat_agent_idx').on(table.chatId, table.agentId),
+  index('subagents_chat_status_idx').on(table.chatId, table.status),
+]);
+
+export const subagentMessages = sqliteTable('subagent_messages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: text('chat_id').notNull(),
+  fromAgentId: text('from_agent_id').notNull(),
+  toAgentId: text('to_agent_id').notNull(),
+  type: text('type').notNull(),
+  content: text('content').notNull(),
+  final: integer('final', { mode: 'boolean' }).notNull().default(false),
+  createdAtMs: integer('created_at_ms').notNull(),
+  deliveredAtMs: integer('delivered_at_ms'),
+}, table => [
+  index('subagent_messages_chat_to_idx').on(table.chatId, table.toAgentId),
 ]);
 
 export const probeResponsesV2 = sqliteTable('probe_responses_v2', {

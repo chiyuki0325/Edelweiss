@@ -44,6 +44,12 @@ const ChatConfigSchema = v.object({
     enabled: v.optional(v.boolean(), false),
     model: v.optional(v.string(), ''),
   }), {}),
+  subagents: v.optional(v.object({
+    enabled: v.optional(v.boolean(), true),
+    model: v.optional(v.string(), ''),
+    maxConcurrent: v.optional(v.number(), 2),
+    maxSteps: v.optional(v.number(), 8),
+  }), {}),
   imageToText: v.optional(v.object({
     enabled: v.optional(v.boolean(), false),
     model: v.optional(v.string(), ''),
@@ -99,6 +105,12 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
   probe: v.partial(v.object({
     enabled: v.boolean(),
     model: v.string(),
+  })),
+  subagents: v.partial(v.object({
+    enabled: v.boolean(),
+    model: v.string(),
+    maxConcurrent: v.number(),
+    maxSteps: v.number(),
   })),
   imageToText: v.partial(v.object({
     enabled: v.boolean(),
@@ -194,6 +206,13 @@ export interface ResolvedChatConfig {
   systemFiles: { filename: string; content: string }[];
   compaction: CompactionConfig;
   probe: { enabled: boolean; model: LlmEndpoint };
+  subagents: {
+    enabled: boolean;
+    model: LlmEndpoint;
+    apiFormat: ProviderFormat;
+    maxConcurrent: number;
+    maxSteps: number;
+  };
   imageToText: { enabled: boolean; model?: string; compress: boolean; pixelBudget: number };
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
@@ -255,6 +274,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
 
   const primaryModel = resolveModel(config, merged.model);
   const primaryApiFormat: ProviderFormat = primaryModel.apiFormat ?? 'openai-chat';
+  const subagentModel = merged.subagents.model ? resolveModel(config, merged.subagents.model) : primaryModel;
 
   const systemFiles = merged.systemFiles.map(filePath => ({
     filename: basename(filePath),
@@ -273,6 +293,13 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     probe: {
       enabled: merged.probe.enabled,
       model: merged.probe.model ? resolveModel(config, merged.probe.model) : primaryModel,
+    },
+    subagents: {
+      enabled: merged.subagents.enabled,
+      model: subagentModel,
+      apiFormat: subagentModel.apiFormat ?? 'openai-chat',
+      maxConcurrent: merged.subagents.maxConcurrent,
+      maxSteps: merged.subagents.maxSteps,
     },
     imageToText: {
       enabled: merged.imageToText.enabled,

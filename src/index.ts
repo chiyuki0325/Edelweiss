@@ -7,7 +7,7 @@ import { shellTaskFactory } from './background-task/shell';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
-import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
 import { createOneBotPlatformAdapter, createOneBotServer } from './onebot';
@@ -72,6 +72,7 @@ const main = async () => {
   const db = createDatabase(config.database.path, logger);
   runMigrations(db, logger);
   await migrateV1ToV2(db, logger);
+  markStaleSubagentsFailed(db);
 
   // Build a semaphore per description model key so resolvers sharing the same endpoint
   // share the same concurrency limit. If the model sets parallel=false, enforce serial execution.
@@ -417,7 +418,7 @@ const main = async () => {
     chatIds,
     resolveChatConfig: id => resolveChatConfig(config, id),
   }, {
-    loadTurnResponses: (chatId, afterMs) => loadTurnResponses(db, chatId, afterMs),
+    loadTurnResponses: (chatId, afterMs, agentId) => loadTurnResponses(db, chatId, afterMs, agentId),
     persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, tr),
     persistProbeResponse: (chatId, probe) => persistProbeResponse(db, chatId, probe),
     sendMessage: hasTelegram ? async (chatId, text, replyToMessageId, attachments) => {

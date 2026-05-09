@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { backgroundTasks, compactions, events, imageAltTexts, messages, probeResponsesV2, turnResponsesV2, users } from './schema';
+import { backgroundTasks, compactions, events, imageAltTexts, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalAttachment,
@@ -11,6 +11,7 @@ import type {
   CanonicalMessageEvent,
   CanonicalServiceEvent,
 } from '../adaptation/types';
+import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
 import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../driver/types';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
@@ -310,6 +311,7 @@ export const persistTurnResponse = async (db: DB, chatId: string, tr: TurnRespon
   db.insert(turnResponsesV2).values({
     chatId,
     requestedAt: tr.requestedAtMs,
+    agentId: tr.agentId ?? 'main',
     entries: entriesJson,
     inputTokens: tr.inputTokens,
     outputTokens: tr.outputTokens,
@@ -327,18 +329,91 @@ const reconstructTurnResponseV2 = async (row: TurnResponseV2Row): Promise<TurnRe
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
     modelName: row.modelName,
+    agentId: row.agentId,
   };
 };
 
-export const loadTurnResponses = async (db: DB, chatId: string, afterMs?: number): Promise<TurnResponseV2[]> => {
+export const loadTurnResponses = async (db: DB, chatId: string, afterMs?: number, agentId = 'main'): Promise<TurnResponseV2[]> => {
+  const baseCond = and(eq(turnResponsesV2.chatId, chatId), eq(turnResponsesV2.agentId, agentId));
   const query = afterMs != null
     ? db.select().from(turnResponsesV2)
-        .where(and(eq(turnResponsesV2.chatId, chatId), gte(turnResponsesV2.requestedAt, afterMs)))
+        .where(and(baseCond, gte(turnResponsesV2.requestedAt, afterMs)))
     : db.select().from(turnResponsesV2)
-        .where(eq(turnResponsesV2.chatId, chatId));
+        .where(baseCond);
 
   const rows = query.orderBy(turnResponsesV2.requestedAt, turnResponsesV2.id).all();
   return await Promise.all(rows.map(reconstructTurnResponseV2));
+};
+
+export const markStaleSubagentsFailed = (db: DB): void => {
+  const now = Date.now();
+  db.update(subagents)
+    .set({ status: 'failed', updatedAtMs: now, finalMessage: 'Process restarted before subagent finalized.' })
+    .where(inArray(subagents.status, ['running', 'idle']))
+    .run();
+};
+
+export const persistSubagent = (db: DB, record: {
+  chatId: string;
+  agentId: string;
+  task: string;
+  status: SubagentStatus;
+  modelName: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  finalMessage?: string;
+}): void => {
+  db.insert(subagents)
+    .values({
+      chatId: record.chatId,
+      agentId: record.agentId,
+      task: record.task,
+      status: record.status,
+      modelName: record.modelName,
+      createdAtMs: record.createdAtMs,
+      updatedAtMs: record.updatedAtMs,
+      finalMessage: record.finalMessage ?? null,
+    })
+    .onConflictDoUpdate({
+      target: [subagents.chatId, subagents.agentId],
+      set: {
+        status: record.status,
+        updatedAtMs: record.updatedAtMs,
+        finalMessage: record.finalMessage ?? null,
+      },
+    })
+    .run();
+};
+
+export const persistSubagentMessage = (db: DB, chatId: string, msg: AgentMessage): void => {
+  db.insert(subagentMessages)
+    .values({
+      chatId,
+      fromAgentId: msg.fromAgentId,
+      toAgentId: msg.toAgentId,
+      type: msg.type,
+      content: msg.content,
+      final: msg.final,
+      createdAtMs: msg.createdAtMs,
+      deliveredAtMs: null,
+    })
+    .run();
+};
+
+export const loadSubagentMessages = (db: DB, chatId: string, toAgentId: string): AgentMessage[] => {
+  const rows = db.select().from(subagentMessages)
+    .where(and(eq(subagentMessages.chatId, chatId), eq(subagentMessages.toAgentId, toAgentId)))
+    .orderBy(subagentMessages.createdAtMs, subagentMessages.id)
+    .all();
+  return rows.map(row => ({
+    id: row.id,
+    fromAgentId: row.fromAgentId as AgentMessage['fromAgentId'],
+    toAgentId: row.toAgentId as AgentMessage['toAgentId'],
+    type: row.type as AgentMessageType,
+    content: row.content,
+    final: row.final,
+    createdAtMs: row.createdAtMs,
+  }));
 };
 
 // --- Compaction storage (append-only) ---

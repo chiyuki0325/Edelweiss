@@ -4,10 +4,12 @@ import { computed, effect, signal } from 'alien-signals';
 import { callLlm, type ToolSchema } from './call-llm';
 import { runCompaction } from './compaction';
 import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, latestExternalEventMs, wasToolLoopInterrupted } from './context';
-import { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
+import { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { loadSkillsFromFolder } from './skills';
+import { createAgentMailbox } from './subagents/mailbox';
+import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
@@ -30,7 +32,7 @@ const localTimeNow = (): string => {
 };
 
 export { mergeContext } from './merge';
-export { renderLateBindingPrompt, renderSystemPrompt } from './prompt';
+export { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 export type { DriverConfig, ProviderFormat } from './types';
 export type { TurnResponseV2, ProbeResponseV2 } from './types';
 
@@ -43,7 +45,7 @@ const toToolSchema = (t: CahciuaTool): ToolSchema => ({
 });
 
 export const createDriver = (config: DriverConfig, deps: {
-  loadTurnResponses: (chatId: string, afterMs?: number) => Promise<TurnResponseV2[]>;
+  loadTurnResponses: (chatId: string, afterMs?: number, agentId?: string) => Promise<TurnResponseV2[]>;
   persistTurnResponse: (chatId: string, tr: TurnResponseV2) => Promise<void>;
   persistProbeResponse: (chatId: string, probe: ProbeResponseV2) => Promise<void>;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number, attachments?: SendMessageAttachment[]) => Promise<{ messageId: number; date: number }>;
@@ -88,8 +90,8 @@ export const createDriver = (config: DriverConfig, deps: {
     return runner;
   };
 
-  const loadTRs = (chatId: string, afterMs?: number): Promise<TurnResponseV2[]> =>
-    deps.loadTurnResponses(chatId, afterMs);
+  const loadTRs = (chatId: string, afterMs?: number, agentId = 'main'): Promise<TurnResponseV2[]> =>
+    deps.loadTurnResponses(chatId, afterMs, agentId);
 
   const getLastProcessedTime = async (chatId: string): Promise<number> => {
     const trs = await deps.loadTurnResponses(chatId);
@@ -113,6 +115,7 @@ export const createDriver = (config: DriverConfig, deps: {
     const chatConfig = config.resolveChatConfig(chatId);
 
     const rc = signal<RenderedContext>([]);
+    const mailbox = createAgentMailbox();
     const offline = signal(false);
     const lastProcessedMs = signal(0);
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
@@ -178,6 +181,122 @@ export const createDriver = (config: DriverConfig, deps: {
       if (maxDelayTimer) { clearTimeout(maxDelayTimer); maxDelayTimer = undefined; }
     };
 
+    const wakeMain = () => {
+      if (running()) return;
+      executeLlmCall();
+    };
+
+    const createSharedTools = (includeSendMessage: boolean): CahciuaTool[] => {
+      const platform = deps.getPlatformAdapter?.(chatId);
+      const tools: CahciuaTool[] = [];
+      if (includeSendMessage) {
+        tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
+          log.withFields({
+            chatId,
+            text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
+            replyTo,
+            attachments: attachments?.length ?? 0,
+          }).log('send_message tool called');
+          if (platform) {
+            const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
+            return { messageId: result.messageId };
+          }
+          const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
+          return { messageId: String(sent.messageId) };
+        }));
+        tools.push(createDismissMessageTool());
+      }
+
+      const downloadAttachment = createAttachmentDownloader({
+        chatId,
+        loadMessageAttachments: deps.loadMessageAttachments,
+        downloadFile: deps.downloadFile,
+        downloadMessageMedia: deps.downloadMessageMedia,
+        platformAdapter: platform,
+      });
+
+      tools.push(createBashTool(deps.runtimeConfig, {
+        startTask: deps.backgroundTask.startTask,
+        sessionId: chatId,
+        backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
+      }));
+      tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
+      tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));
+
+      const readFileCmd = deps.runtimeConfig.readFile;
+      const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
+        ? async (buffer: Buffer, detail: 'low' | 'high') => {
+          const maxEdge = detail === 'high' ? 1024 : 512;
+          const { default: sharp } = await import('sharp');
+          const resized = await sharp(buffer)
+            .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+            .png()
+            .toBuffer();
+          const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
+          const system = await renderImageToTextSystemPrompt({ caption: '', detail });
+          const model = deps.resolveModel(chatConfig.imageToText.model!);
+          const result = await callDescriptionLlm({
+            model, system,
+            userText: 'Describe this image.',
+            images: [{ url: imageUrl }],
+            log, label: 'read-image',
+          });
+          return result.text.trim();
+        }
+        : undefined;
+
+      tools.push(createReadImageTool({
+        downloadAttachment,
+        readFile: async path => {
+          const { execFile } = await import('node:child_process');
+          return await new Promise<Buffer>((resolve, reject) => {
+            const child = execFile(
+              readFileCmd[0]!,
+              [...readFileCmd.slice(1), path],
+              { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
+              (error, stdout) => {
+                if (error) reject(new Error(`Failed to read file: ${error.message}`));
+                else resolve(stdout as unknown as Buffer);
+              },
+            );
+            child.stdin?.end();
+          });
+        },
+        resolveImageToText,
+      }));
+      tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
+      tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
+      tools.push(createSleepTool());
+      return tools;
+    };
+
+    const subagentManager = createSubagentManager({
+      chatId,
+      mailbox,
+      model: chatConfig.subagents.model,
+      maxConcurrent: chatConfig.subagents.maxConcurrent,
+      maxSteps: chatConfig.subagents.maxSteps,
+      renderSystemPrompt: state => renderSubagentSystemPrompt({
+        modelName: chatConfig.subagents.model.model,
+        task: state.task,
+        context: state.context,
+        expectedOutput: state.expectedOutput,
+      }),
+      createTools: () => createSharedTools(false),
+      persistStep: async (agentId, stepEntries, usage, requestedAtMs) => {
+        await deps.persistTurnResponse(chatId, {
+          requestedAtMs,
+          entries: stepEntries,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          modelName: chatConfig.subagents.model.model,
+          agentId,
+        });
+      },
+      wakeMain,
+      log,
+    });
+
     // Called from timer callbacks to start the async LLM work.
     const executeLlmCall = () => {
       if (running()) return;
@@ -206,88 +325,9 @@ export const createDriver = (config: DriverConfig, deps: {
             estimatedTokens: ctx.estimatedTokens,
           }).log('Triggering LLM call');
 
-          const platform = deps.getPlatformAdapter?.(chatId);
-
-          const sendMessageTool = createSendMessageTool(async (text, replyTo, attachments) => {
-            log.withFields({
-              chatId,
-              text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
-              replyTo,
-              attachments: attachments?.length ?? 0,
-            }).log('send_message tool called');
-            if (platform) {
-              const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
-              return { messageId: result.messageId };
-            }
-            const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
-            return { messageId: String(sent.messageId) };
-          });
-
-          const downloadAttachment = createAttachmentDownloader({
-            chatId,
-            loadMessageAttachments: deps.loadMessageAttachments,
-            downloadFile: deps.downloadFile,
-            downloadMessageMedia: deps.downloadMessageMedia,
-            platformAdapter: platform,
-          });
-
-          const tools: CahciuaTool[] = [sendMessageTool, createDismissMessageTool()];
-          tools.push(createBashTool(deps.runtimeConfig, {
-            startTask: deps.backgroundTask.startTask,
-            sessionId: chatId,
-            backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
-          }));
-          tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
-          tools.push(createDownloadFileTool({
-            downloadAttachment,
-            runtime: deps.runtimeConfig,
-          }));
-          {
-            const readFileCmd = deps.runtimeConfig.readFile;
-            const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
-              ? async (buffer: Buffer, detail: 'low' | 'high') => {
-                const maxEdge = detail === 'high' ? 1024 : 512;
-                const { default: sharp } = await import('sharp');
-                const resized = await sharp(buffer)
-                  .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
-                  .png()
-                  .toBuffer();
-                const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
-                const system = await renderImageToTextSystemPrompt({ caption: '', detail });
-                const model = deps.resolveModel(chatConfig.imageToText.model!);
-                const result = await callDescriptionLlm({
-                  model, system,
-                  userText: 'Describe this image.',
-                  images: [{ url: imageUrl }],
-                  log, label: 'read-image',
-                });
-                return result.text.trim();
-              }
-              : undefined;
-
-            tools.push(createReadImageTool({
-              downloadAttachment,
-              readFile: async path => {
-                const { execFile } = await import('node:child_process');
-                return await new Promise<Buffer>((resolve, reject) => {
-                  const child = execFile(
-                    readFileCmd[0]!,
-                    [...readFileCmd.slice(1), path],
-                    { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
-                    (error, stdout) => {
-                      if (error) reject(new Error(`Failed to read file: ${error.message}`));
-                      else resolve(stdout as unknown as Buffer);
-                    },
-                  );
-                  child.stdin?.end();
-                });
-              },
-              resolveImageToText,
-            }));
-          }
-          tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
-          tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
-          tools.push(createSleepTool());
+          const tools: CahciuaTool[] = createSharedTools(true);
+          if (chatConfig.subagents.enabled)
+            tools.push(...subagentManager.mainTools());
           if (allSkills.size > 0) {
             tools.push(createLoadSkillTool(
               () => new Map([...allSkills].filter(([k]) => !loadedSkillNames().has(k))),
@@ -404,6 +444,7 @@ export const createDriver = (config: DriverConfig, deps: {
               if (rc() === rcAtStart) return false;
               return latestExternalEventMs(rc(), lastProcessedMs()) != null;
             },
+            pullExternalEntries: () => mailbox.flush('main'),
             log,
           });
         } catch (err) {

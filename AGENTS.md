@@ -6,7 +6,7 @@ Reference for contributors working on the Cahciua codebase. Improve code when yo
 
 ## What Is Cahciua
 
-Cahciua is a Telegram group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture. DCP constructs LLM context through a three-layer pure-function pipeline:
+Cahciua is a Telegram / QQ group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture. DCP constructs LLM context through a three-layer pure-function pipeline:
 
 1. **Adaptation**: Platform Event → CanonicalIMEvent (anti-corruption layer).
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
@@ -21,17 +21,19 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, compactions, probe_responses, image_alt_texts tables; 22 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), format conversion (openai-chat ↔ responses) at API boundaries, typing-aware debounce scheduling, offline/online reply gating via /offline /online commands |
+| Driver | Done | Dual-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch), manual tool execution, per-step TR persistence, mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, format conversion (openai-chat ↔ responses) at API boundaries, typing-aware debounce scheduling, offline/online reply gating via /offline /online commands |
 
 ## Tech Stack
 
 - **Runtime**: Node.js (>=22), TypeScript, tsx (dev), tsdown (build).
 - **Telegram Bot API**: grammY — primary message handling, sending replies, commands.
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
+- **OneBot 11**: reverse WebSocket over `ws` — QQ ingress/egress via array message segments, with optional bearer access token.
 - **LLM**: Two API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`) and OpenAI Responses API (via direct `fetch` with SSE streaming). `composeContext()` builds an intermediate `Message[]`: user content parts use Responses-style `input_text` / `input_image`, while assistant/tool entries stay TR-shaped. Final conversion to provider wire format happens only at the last send boundary (`prepareChatMessagesForSend` / `prepareResponsesInputForSend`) so probe, compaction, and step loops share the same normalization and image-limit enforcement. SSE streaming helpers in `src/driver/streaming.ts` (chat) and `src/driver/streaming-responses.ts` (responses) parse chunks and log deltas in real time.
 - **Image processing**: sharp — thumbnails, GIF frame extraction, image resizing.
 - **Animation processing**: ffmpeg-static + ffprobe-static (bundled binaries via npm) — MP4/WEBM frame extraction; lottie-frame (native rlottie + libpng addon) — TGS/Lottie frame rendering. System deps: `libpng-dev`, `librlottie-dev`.
@@ -86,14 +88,24 @@ src/
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages) each check individually toggleable via `humanLikeness` config; used by late-binding
 │   ├── system-prompt.test.ts # System prompt tests
-│   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, background-task helpers
+│   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, subagent communication, background-task helpers
 │   ├── tools.test.ts       # Tool capability tests (read_image mode gating, etc.)
+│   ├── subagents/          # Subagent runtime: isolated helper manager, mailbox, lifecycle/types, communication/finalize tools
 │   └── index.ts            # createDriver() — reactive orchestration (alien-signals)
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
 │   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, compactions, probeResponses, imageAltTexts tables
 │   ├── persistence.ts      # CRUD: persistEvent, persistMessage, persistTurnResponse, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponses, loadCompaction, etc.
 │   └── index.ts            # Barrel exports
+├── onebot/
+│   ├── index.ts             # OneBot exports + PlatformAdapter factory for Driver send/download hooks
+│   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client
+│   ├── types.ts             # OneBot 11 event/API/message-segment types
+│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion
+│   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
+│   ├── image-to-text.ts     # OneBot image download + thumbnail generation via shared image-to-text resolver
+│   ├── face-config.ts       # QQ face ID → description lookup
+│   └── face-config.json     # QQ face metadata table
 └── telegram/
     ├── index.ts             # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
     ├── bot.ts               # grammY Bot API client; registerCommand() for external command registration before on('message')
@@ -126,6 +138,7 @@ src/
 Top-level directories:
 - `prompts/` — all LLM prompt templates (velin `.velin.md` files), rendered at runtime via `@velin-dev/core`
   - `primary-system.velin.md` — main system prompt for chat LLM calls
+  - `subagent-system.velin.md` — internal helper-agent prompt; intentionally contains no group-chat/platform/end-user concepts
   - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state, recent send_message human-likeness feedback)
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)

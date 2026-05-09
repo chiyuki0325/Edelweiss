@@ -14,7 +14,7 @@ ensureDumpDir();
 
 export interface RunnerConfig extends LlmCallConfig {}
 
-interface StepLoopParams {
+export interface StepLoopParams {
   chatId: string;
   entries: ConversationEntry[];
   system: string;
@@ -27,6 +27,8 @@ interface StepLoopParams {
     requestedAtMs: number,
   ) => void | Promise<void>;
   checkInterrupt: () => boolean;
+  pullExternalEntries?: () => ConversationEntry[] | Promise<ConversationEntry[]>;
+  shouldStop?: () => boolean;
   log: Logger;
 }
 
@@ -84,6 +86,13 @@ export const createRunner = (config: RunnerConfig) => {
     let working: ConversationEntry[] = [...params.entries];
 
     for (let step = 1; step <= params.maxSteps; step++) {
+      if (step > 1 && params.pullExternalEntries) {
+        const externalEntries = await params.pullExternalEntries();
+        if (externalEntries.length > 0)
+          working = [...working, ...externalEntries];
+      }
+      if (params.shouldStop?.()) break;
+
       const { stepEntries, usage, requestedAtMs, hasToolCalls } =
         await runOneStep(working, params, step);
 

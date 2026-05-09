@@ -24,6 +24,7 @@ const cleanVelinOutput = (raw: string): string =>
     .trim();
 
 const systemPromptTemplate = readFileSync(resolve(__dirname, '../../prompts/primary-system.velin.md'), 'utf-8');
+const subagentSystemTemplate = readFileSync(resolve(__dirname, '../../prompts/subagent-system.velin.md'), 'utf-8');
 const lateBindingTemplate = readFileSync(resolve(__dirname, '../../prompts/primary-late-binding.velin.md'), 'utf-8');
 const compactionSystemTemplate = readFileSync(resolve(__dirname, '../../prompts/compaction-system.velin.md'), 'utf-8');
 const compactionUserTemplate = readFileSync(resolve(__dirname, '../../prompts/compaction-late-binding.velin.md'), 'utf-8');
@@ -36,6 +37,17 @@ export const renderSystemPrompt = async (params: {
   hasLoadSkillTool?: boolean;
 }) => {
   const { rendered } = await renderMarkdownString(systemPromptTemplate, params, basePath);
+  return cleanVelinOutput(rendered);
+};
+
+export const renderSubagentSystemPrompt = async (params: {
+  language?: string;
+  modelName: string;
+  task: string;
+  context?: string;
+  expectedOutput?: string;
+}) => {
+  const { rendered } = await renderMarkdownString(subagentSystemTemplate, params, basePath);
   return cleanVelinOutput(rendered);
 };
 
