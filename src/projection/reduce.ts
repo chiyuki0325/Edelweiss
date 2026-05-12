@@ -29,8 +29,15 @@ const findMessageIndex = (nodes: readonly { type: string; messageId?: string }[]
 
 const REPLY_PREVIEW_MAX = 100;
 
-const truncate = (text: string, max: number): string =>
-  text.length <= max ? text : `${text.slice(0, max)}…`;
+const truncate = (text: string, max: number): string => {
+  if (text.length <= max) return text;
+  let sliced = text.slice(0, max);
+  // Don't split a surrogate pair — step back if the char before cutAt is a high surrogate. (#1)
+  if (sliced.length > 0 && (sliced.charCodeAt(sliced.length - 1) & 0xFC00) === 0xD800) {
+    sliced = sliced.slice(0, -1);
+  }
+  return `${sliced}…`;
+}
 
 const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent) => {
   // Dedup: skip if a message with the same ID already exists (bypass + userbot race).
@@ -78,6 +85,9 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     if (targetIdx !== -1) {
       const target = draft.nodes[targetIdx] as ICMessage;
       message.replyToSender = target.sender;
+      if (event.replyQuoteText != null) {
+        message.replyQuoteText = truncate(event.replyQuoteText, REPLY_PREVIEW_MAX);
+      }
       const plain = contentToPlainText(target.content);
       if (plain) message.replyToPreview = truncate(plain, REPLY_PREVIEW_MAX);
       if (target.content.length > 0) message.replyToContent = target.content;
@@ -137,35 +147,35 @@ const reduceService = (draft: IntermediateContext, event: CanonicalServiceEvent)
   const { action } = event;
 
   switch (action.action) {
-  case 'members_joined':
-    draft.nodes.push({ ...base, kind: 'members_joined', members: action.members });
-    break;
-  case 'member_left':
-    draft.nodes.push({ ...base, kind: 'member_left', member: action.member });
-    break;
-  case 'chat_renamed': {
-    const oldTitle = draft.chatTitle ?? null;
-    draft.nodes.push({ ...base, kind: 'chat_renamed', oldTitle, newTitle: action.newTitle });
-    draft.chatTitle = action.newTitle;
-    break;
-  }
-  case 'chat_photo_changed':
-    draft.nodes.push({ ...base, kind: 'chat_photo_changed' });
-    break;
-  case 'chat_photo_deleted':
-    draft.nodes.push({ ...base, kind: 'chat_photo_deleted' });
-    break;
-  case 'message_pinned': {
-    const targetIdx = findMessageIndex(draft.nodes, action.messageId);
-    let preview: string | undefined;
-    if (targetIdx !== -1) {
-      const target = draft.nodes[targetIdx] as ICMessage;
-      const plain = contentToPlainText(target.content);
-      if (plain) preview = truncate(plain, REPLY_PREVIEW_MAX);
+    case 'members_joined':
+      draft.nodes.push({ ...base, kind: 'members_joined', members: action.members });
+      break;
+    case 'member_left':
+      draft.nodes.push({ ...base, kind: 'member_left', member: action.member });
+      break;
+    case 'chat_renamed': {
+      const oldTitle = draft.chatTitle ?? null;
+      draft.nodes.push({ ...base, kind: 'chat_renamed', oldTitle, newTitle: action.newTitle });
+      draft.chatTitle = action.newTitle;
+      break;
     }
-    draft.nodes.push({ ...base, kind: 'message_pinned', messageId: action.messageId, preview });
-    break;
-  }
+    case 'chat_photo_changed':
+      draft.nodes.push({ ...base, kind: 'chat_photo_changed' });
+      break;
+    case 'chat_photo_deleted':
+      draft.nodes.push({ ...base, kind: 'chat_photo_deleted' });
+      break;
+    case 'message_pinned': {
+      const targetIdx = findMessageIndex(draft.nodes, action.messageId);
+      let preview: string | undefined;
+      if (targetIdx !== -1) {
+        const target = draft.nodes[targetIdx] as ICMessage;
+        const plain = contentToPlainText(target.content);
+        if (plain) preview = truncate(plain, REPLY_PREVIEW_MAX);
+      }
+      draft.nodes.push({ ...base, kind: 'message_pinned', messageId: action.messageId, preview });
+      break;
+    }
   }
 };
 
@@ -188,10 +198,10 @@ const reduceRuntime = (draft: IntermediateContext, event: RuntimeEvent) => {
 export const reduce = (ic: IntermediateContext, event: PipelineEvent): IntermediateContext =>
   produce(ic, draft => {
     switch (event.type) {
-    case 'message': reduceMessage(draft, event); break;
-    case 'edit': reduceEdit(draft, event); break;
-    case 'delete': reduceDelete(draft, event); break;
-    case 'service': reduceService(draft, event); break;
-    case 'runtime': reduceRuntime(draft, event); break;
+      case 'message': reduceMessage(draft, event); break;
+      case 'edit': reduceEdit(draft, event); break;
+      case 'delete': reduceDelete(draft, event); break;
+      case 'service': reduceService(draft, event); break;
+      case 'runtime': reduceRuntime(draft, event); break;
     }
   });

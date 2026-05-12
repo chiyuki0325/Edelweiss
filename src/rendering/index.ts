@@ -41,31 +41,31 @@ const formatTimestamp = (epochSec: number, utcOffsetMin: number): string => {
 
 const renderContentNode = (node: ContentNode): string => {
   switch (node.type) {
-  case 'text': return escapeXml(node.text);
-  case 'code': return `<code>${escapeXml(node.text)}</code>`;
-  case 'pre': return node.language
-    ? `<pre lang="${escapeXml(node.language)}">${escapeXml(node.text)}</pre>`
-    : `<pre>${escapeXml(node.text)}</pre>`;
-  case 'bold': return `<b>${renderContent(node.children)}</b>`;
-  case 'italic': return `<i>${renderContent(node.children)}</i>`;
-  case 'underline': return `<u>${renderContent(node.children)}</u>`;
-  case 'strikethrough': return `<s>${renderContent(node.children)}</s>`;
-  case 'spoiler': return `<spoiler>${renderContent(node.children)}</spoiler>`;
-  case 'blockquote': return `<blockquote>${renderContent(node.children)}</blockquote>`;
-  case 'link': return `<a href="${escapeXml(node.url)}">${renderContent(node.children)}</a>`;
-  case 'mention': return node.userId
-    ? `<mention uid="${escapeXml(node.userId)}">${renderContent(node.children)}</mention>`
-    : `<mention>${renderContent(node.children)}</mention>`;
-  case 'face':
-    return `<face id="${escapeXml(node.faceId)}">${escapeXml(node.text)}</face>`;
-  case 'custom_emoji':
-    if (node.altText) {
-      const packAttr = node.stickerSetName ? ` pack="${escapeXml(node.stickerSetName)}"` : '';
-      return `<custom-emoji${packAttr}>${escapeXml(node.altText)}</custom-emoji>`;
-    }
-    if (node.altTextError)
-      return `<custom-emoji error="${escapeXml(node.altTextError)}"/>`;
-    return renderContent(node.children);
+    case 'text': return escapeXml(node.text);
+    case 'code': return `<code>${escapeXml(node.text)}</code>`;
+    case 'pre': return node.language
+      ? `<pre lang="${escapeXml(node.language)}">${escapeXml(node.text)}</pre>`
+      : `<pre>${escapeXml(node.text)}</pre>`;
+    case 'bold': return `<b>${renderContent(node.children)}</b>`;
+    case 'italic': return `<i>${renderContent(node.children)}</i>`;
+    case 'underline': return `<u>${renderContent(node.children)}</u>`;
+    case 'strikethrough': return `<s>${renderContent(node.children)}</s>`;
+    case 'spoiler': return `<spoiler>${renderContent(node.children)}</spoiler>`;
+    case 'blockquote': return `<blockquote>${renderContent(node.children)}</blockquote>`;
+    case 'link': return `<a href="${escapeXml(node.url)}">${renderContent(node.children)}</a>`;
+    case 'mention': return node.userId
+      ? `<mention uid="${escapeXml(node.userId)}">${renderContent(node.children)}</mention>`
+      : `<mention>${renderContent(node.children)}</mention>`;
+    case 'face':
+      return `<face id="${escapeXml(node.faceId)}">${escapeXml(node.text)}</face>`;
+    case 'custom_emoji':
+      if (node.altText) {
+        const packAttr = node.stickerSetName ? ` pack="${escapeXml(node.stickerSetName)}"` : '';
+        return `<custom-emoji${packAttr}>${escapeXml(node.altText)}</custom-emoji>`;
+      }
+      if (node.altTextError)
+        return `<custom-emoji error="${escapeXml(node.altTextError)}"/>`;
+      return renderContent(node.children);
   }
 };
 
@@ -151,6 +151,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
   if (msg.replyToMessageId) {
     const replyAttrs = [`id="${escapeXml(msg.replyToMessageId)}"`];
     if (msg.replyToSender) replyAttrs.push(`sender="${escapeXml(formatSender(msg.replyToSender, params.contactNames))}"`);
+    if (msg.replyQuoteText != null) replyAttrs.push(`quote="${escapeXml(msg.replyQuoteText)}"`);
     const preview = msg.replyToContent
       ? truncateXml(renderContent(msg.replyToContent), REPLY_PREVIEW_MAX_CHARS)
       : (msg.replyToPreview ? escapeXml(msg.replyToPreview) : '');
@@ -181,39 +182,39 @@ const renderSystemEvent = (event: ICSystemEvent, contactNames?: Map<string, stri
   const actorAttr = 'actor' in event && event.actor ? ` actor="${escapeXml(formatSender(event.actor, contactNames))}"` : '';
 
   switch (event.kind) {
-  case 'user_renamed':
-    return `<event type="name_change" t="${t}" from_name="${escapeXml(formatSender(event.oldUser, contactNames))}" to_name="${escapeXml(formatSender(event.newUser, contactNames))}"/>`;
+    case 'user_renamed':
+      return `<event type="name_change" t="${t}" from_name="${escapeXml(formatSender(event.oldUser, contactNames))}" to_name="${escapeXml(formatSender(event.newUser, contactNames))}"/>`;
 
-  case 'members_joined': {
-    const members = event.members.map(m => formatSender(m, contactNames)).join(', ');
-    return `<event type="members_joined" t="${t}"${actorAttr} members="${escapeXml(members)}"/>`;
-  }
+    case 'members_joined': {
+      const members = event.members.map(m => formatSender(m, contactNames)).join(', ');
+      return `<event type="members_joined" t="${t}"${actorAttr} members="${escapeXml(members)}"/>`;
+    }
 
-  case 'member_left':
-    return `<event type="member_left" t="${t}"${actorAttr} member="${escapeXml(formatSender(event.member, contactNames))}"/>`;
+    case 'member_left':
+      return `<event type="member_left" t="${t}"${actorAttr} member="${escapeXml(formatSender(event.member, contactNames))}"/>`;
 
-  case 'chat_renamed': {
-    const fromAttr = event.oldTitle != null ? ` from="${escapeXml(event.oldTitle)}"` : '';
-    return `<event type="chat_renamed" t="${t}"${actorAttr}${fromAttr} to="${escapeXml(event.newTitle)}"/>`;
-  }
+    case 'chat_renamed': {
+      const fromAttr = event.oldTitle != null ? ` from="${escapeXml(event.oldTitle)}"` : '';
+      return `<event type="chat_renamed" t="${t}"${actorAttr}${fromAttr} to="${escapeXml(event.newTitle)}"/>`;
+    }
 
-  case 'chat_photo_changed':
-    return `<event type="chat_photo_changed" t="${t}"${actorAttr}/>`;
+    case 'chat_photo_changed':
+      return `<event type="chat_photo_changed" t="${t}"${actorAttr}/>`;
 
-  case 'chat_photo_deleted':
-    return `<event type="chat_photo_deleted" t="${t}"${actorAttr}/>`;
+    case 'chat_photo_deleted':
+      return `<event type="chat_photo_deleted" t="${t}"${actorAttr}/>`;
 
-  case 'message_pinned': {
-    const preview = event.preview ? escapeXml(event.preview) : '';
-    if (preview)
-      return `<event type="message_pinned" t="${t}"${actorAttr} message_id="${escapeXml(event.messageId)}">${preview}</event>`;
-    return `<event type="message_pinned" t="${t}"${actorAttr} message_id="${escapeXml(event.messageId)}"/>`;
-  }
+    case 'message_pinned': {
+      const preview = event.preview ? escapeXml(event.preview) : '';
+      if (preview)
+        return `<event type="message_pinned" t="${t}"${actorAttr} message_id="${escapeXml(event.messageId)}">${preview}</event>`;
+      return `<event type="message_pinned" t="${t}"${actorAttr} message_id="${escapeXml(event.messageId)}"/>`;
+    }
 
-  default: {
-    event satisfies never;
-    return '';
-  }
+    default: {
+      event satisfies never;
+      return '';
+    }
   }
 };
 
