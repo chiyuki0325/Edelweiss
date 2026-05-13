@@ -147,20 +147,22 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
 
 export const adaptOneBotNotice = (event: OneBotNoticeEvent): CanonicalIMEvent | null => {
   switch (event.notice_type) {
-    case 'recall': {
-      const chatId = event.group_id != null
-        ? String(event.group_id)
-        : `private:${event.user_id!}`;
-      const now = Date.now();
-      return {
-        type: 'delete',
-        chatId,
-        messageIds: event.message_id != null ? [String(event.message_id)] : [],
-        receivedAtMs: now,
-        timestampSec: Math.floor(now / 1000),
-        utcOffsetMin: captureUtcOffset(),
-      };
-    }
+    case 'recall':
+    case 'group_recall':
+      {
+        const chatId = event.group_id != null
+          ? String(event.group_id)
+          : `private:${event.user_id!}`;
+        const now = Date.now();
+        return {
+          type: 'delete',
+          chatId,
+          messageIds: event.message_id != null ? [String(event.message_id)] : [],
+          receivedAtMs: now,
+          timestampSec: Math.floor(now / 1000),
+          utcOffsetMin: captureUtcOffset(),
+        };
+      }
 
     case 'group_increase': {
       const senderId = event.user_id;
