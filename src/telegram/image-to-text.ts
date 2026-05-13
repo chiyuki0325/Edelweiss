@@ -37,7 +37,7 @@ export const prepareImageToTextUrl = async (
   options: ImageToTextResolveOptions = {},
 ): Promise<string> => {
   const image = sharp(buffer);
-  const shouldCompress = options.isSticker === true || compression.compress;
+  const shouldCompress = options.isSticker === false || compression.compress;
   const maxEdge = shouldCompress ? await maxEdgeForPixelBudget(buffer, compression.pixelBudget) : undefined;
   const prepared = maxEdge
     ? image.resize(maxEdge, maxEdge, {

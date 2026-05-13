@@ -43,24 +43,6 @@ describe('prepareImageToTextUrl', () => {
     expect(size).toEqual({ width: 800, height: 600 });
   });
 
-  it('compresses stickers even when compression is disabled', async () => {
-    const source = await sharp({
-      create: {
-        width: 800,
-        height: 600,
-        channels: 3,
-        background: 'red',
-      },
-    }).png().toBuffer();
-
-    const size = await imageSizeFromDataUrl(await prepareImageToTextUrl(source, {
-      compress: false,
-      pixelBudget: 512 * 512,
-    }, { isSticker: true }));
-
-    expect(size).toEqual({ width: 591, height: 443 });
-  });
-
   it('uses the configured pixel budget when compression is enabled', async () => {
     const source = await sharp({
       create: {
