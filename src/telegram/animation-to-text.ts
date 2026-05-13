@@ -27,7 +27,7 @@ export const createAnimationToTextResolver = (params: {
   lookupByHash: (hash: string) => ImageAltTextRecord | null;
   persist: (record: ImageAltTextRecord) => void;
 }): AnimationToTextResolver => {
-  const log = params.logger.withContext('telegram:animation-to-text');
+  const log = params.logger.withContext('animation-to-text');
   const semaphore = params.semaphore ?? createSemaphore(3);
   const inflightByHash = new Map<string, Promise<ImageAltTextRecord>>();
 

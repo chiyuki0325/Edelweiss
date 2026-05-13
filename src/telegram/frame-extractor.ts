@@ -203,7 +203,7 @@ const extractTgsFrames = async (buffer: Buffer, maxFrames: number): Promise<{ fr
 /** Extract equidistant frames from an animation buffer. */
 export const extractFrames = async (
   buffer: Buffer,
-  att: Attachment,
+  att: { mimeType?: string },
   maxFrames = DEFAULT_MAX_FRAMES,
 ): Promise<FrameExtractionResult> => {
   if (buffer.length > MAX_FILE_SIZE)

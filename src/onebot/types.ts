@@ -34,7 +34,14 @@ export interface OneBotFaceSegment {
 
 export interface OneBotImageSegment {
   type: 'image';
-  data: { file: string; url?: string; type?: string };
+  data: {
+    file: string;
+    url?: string;
+    type?: string;
+    summary?: string;
+    emoji_id?: string;
+    emoji_pack_id?: string;
+  };
 }
 
 export interface OneBotAtSegment {
@@ -59,7 +66,7 @@ export interface OneBotVideoSegment {
 
 export interface OneBotFileSegment {
   type: 'file';
-  data: { file: string; name?: string; url?: string };
+  data: { file: string; file_id: string; url?: string };
 }
 
 export type OneBotMessageSegment =
@@ -141,6 +148,14 @@ export interface OneBotSendMessageParams {
 
 export interface OneBotSendMessageResult {
   message_id: number;
+}
+
+export interface OneBotGetFileResult {
+  file?: string;
+  url?: string;
+  file_size?: string;  // 实则上是数字，但协议里是字符串
+  file_name?: string;
+  base64?: string;
 }
 
 // --- Config ---

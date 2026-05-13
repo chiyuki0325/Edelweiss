@@ -399,7 +399,7 @@ const main = async () => {
                 if (api) {
                   const caption = contentToPlainText(event.content);
                   await Promise.all(event.attachments.map(att =>
-                    resolveOneBotImageAltText(att, caption, api, imageToTextResolver)));
+                    resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver)));
                 }
               }
             }

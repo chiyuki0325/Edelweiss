@@ -3,6 +3,8 @@ import sharp from 'sharp';
 import type { OneBotApiClient } from './server';
 import type { CanonicalAttachment } from '../adaptation/types';
 import type { ImageToTextResolver } from '../telegram/image-to-text';
+import type { AnimationToTextResolver } from '../telegram/animation-to-text';
+import { extractFrames } from '../telegram/frame-extractor';
 
 const THUMBNAIL_PIXEL_BUDGET = 75_000; // pixels, ≈100 Claude tokens
 
@@ -23,6 +25,19 @@ const generateThumbnail = async (buffer: Buffer): Promise<Buffer> => {
 
 const imageExts = /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff)(\?|$)/i;
 
+const FORMAT_TO_MIME = {
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  tiff: 'image/tiff',
+  svg: 'image/svg+xml'
+} as const;
+
+type SupportedFormat = keyof typeof FORMAT_TO_MIME;
+
 export const isImageFileRef = (fileRef: string): boolean =>
   imageExts.test(fileRef) || fileRef.startsWith('base64://') || fileRef.startsWith('http');
 
@@ -31,9 +46,12 @@ export const resolveOneBotImageAltText = async (
   att: CanonicalAttachment,
   caption: string,
   api: OneBotApiClient,
-  resolver: ImageToTextResolver,
+  imageResolver: ImageToTextResolver,
+  animationResolver: AnimationToTextResolver,
 ): Promise<void> => {
+  if (!['sticker', 'photo', 'animation'].includes(att.type)) return;
   if (!att.fileRef) return;
+  if (!isImageFileRef(att.fileRef)) return;
 
   try {
     // 1. Download the image
@@ -45,9 +63,31 @@ export const resolveOneBotImageAltText = async (
 
     // 3. Resolve via shared resolver (handles cache lookup + LLM)
     try {
-      const record = await resolver.resolve(thumbnailBuffer, caption, buffer);
-      att.altText = record.altText;
-      if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+      if (att.type === 'animation') {
+        // resolve mimetype (consumed by extractFrames)
+        const format = await sharp(buffer).metadata().then(meta => meta.format ?? 'unknown');
+        let mime = 'application/octet-stream';
+        if (format && format in FORMAT_TO_MIME) {
+          mime = FORMAT_TO_MIME[format as SupportedFormat];
+        }
+
+        const extract = await extractFrames(buffer, { mimeType: mime });
+        const record = await animationResolver.resolve({
+          cacheKey: extract.cacheKey,
+          frames: extract.frames,
+          caption,
+          isSticker: true, // OneBot doesn't differentiate animated stickers, treat all as stickers for better alt text
+          duration: extract.frameTimestamps ? Math.max(...extract.frameTimestamps) : undefined,
+          frameTimestamps: extract.frameTimestamps,
+        });
+        att.altText = record.altText;
+        if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+
+      } else {
+        const record = await imageResolver.resolve(thumbnailBuffer, caption, buffer);
+        att.altText = record.altText;
+        if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+      }
     } catch {
       // LLM failure: leave altText unset, attachment still renders with thumbnail
     }

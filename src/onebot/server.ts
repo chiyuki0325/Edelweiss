@@ -11,9 +11,12 @@ import type {
   OneBotApiResponse,
   OneBotConfig,
   OneBotEvent,
+  OneBotGetFileResult,
   OneBotMessageSegment,
 } from './types';
 import type { CanonicalIMEvent } from '../adaptation/types';
+
+import fs from 'fs';
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -99,14 +102,9 @@ const createApiClient = (
     },
 
     downloadFile: async (file: string, _chatId: string): Promise<Buffer> => {
+      // 对 napcat get_file / get_image 的封装
       if (file.startsWith('base64://'))
         return Buffer.from(file.slice(9), 'base64');
-
-      if (file.startsWith('http://') || file.startsWith('https://')) {
-        const resp = await fetch(file, { signal: AbortSignal.timeout(60_000) });
-        if (!resp.ok) throw new Error(`Failed to download file: HTTP ${resp.status}`);
-        return Buffer.from(await resp.arrayBuffer());
-      }
 
       const imageExts = /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff)(\?|$)/i;
       const isImage = imageExts.test(file);
@@ -118,11 +116,11 @@ const createApiClient = (
         return Buffer.from(await resp.arrayBuffer());
       };
 
-      const result = await call<{ file?: string; url?: string }>(action, { file });
+      const result = await call<OneBotGetFileResult>(action, { file });
 
-      // url field is the HTTP download URL — prefer it
-      if (result.url)
-        return await downloadFromUrl(result.url);
+      // got file directly as base64
+      if (result.base64)
+        return Buffer.from(result.base64, 'base64');
 
       // file field may be base64://... or a local path
       if (result.file) {
@@ -130,7 +128,14 @@ const createApiClient = (
           return Buffer.from(result.file.slice(9), 'base64');
         if (result.file.startsWith('http'))
           return await downloadFromUrl(result.file);
+        // local path
+        if (fs.existsSync(result.file))
+          return await fs.promises.readFile(result.file);
       }
+
+      // file url
+      if (result.url)
+        return await downloadFromUrl(result.url);
 
       throw new Error(`Cannot download file: ${action} returned no url for "${file.slice(0, 80)}"`);
     },
@@ -184,7 +189,7 @@ export const createOneBotServer = (
       const isEvent = (msg: unknown): msg is OneBotEvent =>
         typeof msg === 'object' && msg !== null && 'post_type' in msg;
 
-      ws.on('message', (data: Buffer) => {
+      ws.on('message', async (data: Buffer) => {
         try {
           const msg = JSON.parse(data.toString());
 
@@ -195,7 +200,7 @@ export const createOneBotServer = (
 
           switch (msg.post_type) {
           case 'message': {
-            const event = adaptOneBotMessage(msg);
+            const event = await adaptOneBotMessage(msg);
             deps.onEvent(event.chatId, event);
             break;
           }
