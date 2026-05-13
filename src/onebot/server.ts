@@ -5,7 +5,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Logger } from '@guiiai/logg';
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import { adaptOneBotMessage, adaptOneBotNotice } from './adaptation';
+import { adaptOneBotMessage, adaptOneBotNotice, adaptUser } from './adaptation';
 import type {
   OneBotApiRequest,
   OneBotApiResponse,
@@ -14,7 +14,7 @@ import type {
   OneBotGetFileResult,
   OneBotMessageSegment,
 } from './types';
-import type { CanonicalIMEvent } from '../adaptation/types';
+import type { CanonicalIMEvent, CanonicalUser } from '../adaptation/types';
 
 import fs from 'fs';
 
@@ -30,6 +30,8 @@ export interface OneBotApiClient {
   sendMessage(chatId: string, segments: OneBotMessageSegment[], replyTo?: string): Promise<{ messageId: string }>;
   /** Download a file. For OneBot, `file` is typically a file identifier or URL from a message segment. */
   downloadFile(file: string, chatId: string): Promise<Buffer>;
+  /** Get group member info, used for resolving mention info in group messages. */
+  getGroupMemberInfo(groupId: string, userId: string): Promise<CanonicalUser>;
 }
 
 const createApiClient = (
@@ -70,6 +72,8 @@ const createApiClient = (
     }
     pendingCalls.clear();
   });
+
+  const resolvedGroupMember: Record<string, CanonicalUser> = {};
 
   const call = <T>(action: string, params: Record<string, unknown>): Promise<T> =>
     new Promise<T>((resolve, reject) => {
@@ -139,6 +143,20 @@ const createApiClient = (
 
       throw new Error(`Cannot download file: ${action} returned no url for "${file.slice(0, 80)}"`);
     },
+
+    getGroupMemberInfo: async (groupId: string, userId: string): Promise<CanonicalUser> => {
+      const key = `${groupId}:${userId}`;
+      if (resolvedGroupMember[key]) return resolvedGroupMember[key];
+
+      const result = await call<{ nickname: string; card: string }>('get_group_member_info', {
+        group_id: parseInt(groupId, 10),
+        user_id: parseInt(userId, 10),
+      });
+
+      const user = adaptUser(parseInt(userId, 10), result.nickname, result.card);
+      resolvedGroupMember[key] = user;
+      return user;
+    }
   };
 };
 
@@ -200,7 +218,7 @@ export const createOneBotServer = (
 
           switch (msg.post_type) {
           case 'message': {
-            const event = await adaptOneBotMessage(msg);
+            const event = await adaptOneBotMessage(api!!, msg);  // 必须连上了才会有消息被上报，所以这里直接断言 api 不为 null
             deps.onEvent(event.chatId, event);
             break;
           }

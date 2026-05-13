@@ -13,8 +13,9 @@ import type {
   ContentNode,
 } from '../adaptation/types';
 import sharp from 'sharp';
+import type { OneBotApiClient } from './server';
 
-const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
+export const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
   id: String(user_id),
   displayName: card && card !== '' ? card : nickname,
   isBot: false,
@@ -29,6 +30,8 @@ const extractFileName = (file: string): string | undefined => {
 const STICKER_REGEX = /^\[.*\]$/;
 
 const adaptSegment = async (
+  api: OneBotApiClient,
+  chatId: string,
   seg: OneBotMessageSegment,
   attachments: CanonicalAttachment[],
 ): Promise<ContentNode | null> => {
@@ -42,7 +45,9 @@ const adaptSegment = async (
     }
 
     case 'at':
-      return { type: 'mention', userId: String(seg.data.qq), children: [{ type: 'text', text: `@${seg.data.name ?? seg.data.qq}` }] };
+      // napcat 上报的 mention 事件不带 name，所以需要自己拉
+      const userMentioned = await api.getGroupMemberInfo(chatId, seg.data.qq);
+      return { type: 'mention', userId: String(seg.data.qq), children: [{ type: 'text', text: `@${userMentioned.displayName}` }] };
 
     case 'image': {
       const response = await fetch(seg.data.url!, { signal: AbortSignal.timeout(60_000) });
@@ -107,7 +112,8 @@ const adaptSegment = async (
   }
 };
 
-export const adaptOneBotMessage = async (event: OneBotMessageEvent): Promise<CanonicalMessageEvent> => {
+// OneBotApiClient 传入用于某些消息（如 mention 的副作用）
+export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent): Promise<CanonicalMessageEvent> => {
   const chatId = event.message_type === 'group'
     ? String(event.group_id!)
     : `private:${event.user_id}`;
@@ -121,7 +127,7 @@ export const adaptOneBotMessage = async (event: OneBotMessageEvent): Promise<Can
       replyToMessageId = String(seg.data.id);
       continue;
     }
-    const node = await adaptSegment(seg, attachments);
+    const node = await adaptSegment(api, chatId, seg, attachments);
     if (node) content.push(node);
   }
 
