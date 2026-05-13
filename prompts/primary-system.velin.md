@@ -44,6 +44,7 @@ const toolListBlock = computed(() => {
 
 language: {{ language }}
 model: {{ modelName }}
+current-channel: {{ currentChannel }}
 
 You just woke up.
 
@@ -250,8 +251,7 @@ Write like a real person chatting, not like an AI composing an essay. Your voice
 
 ## {{ file.filename }}
 
-{{ file.content }}
+SYSTEM_FILE_{{ file.filename }}
 
 </template>
 
-current-channel: {{ currentChannel }}

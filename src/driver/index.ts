@@ -339,7 +339,7 @@ export const createDriver = (config: DriverConfig, deps: {
           const probeTools: CahciuaTool[] = [...sharedTools, ...skillTools];
 
           const system = await renderSystemPrompt({
-            currentChannel: 'telegram',
+            currentChannel: chatConfig.platform,
             modelName: chatConfig.primaryModel.model,
             systemFiles: chatConfig.systemFiles,
             hasLoadSkillTool: allSkills.size > 0,

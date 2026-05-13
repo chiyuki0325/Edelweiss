@@ -37,8 +37,28 @@ export const renderSystemPrompt = async (params: {
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
 }) => {
-  const { rendered } = await renderMarkdownString(systemPromptTemplate, params, basePath);
-  return cleanVelinOutput(rendered);
+  let publicParams = {
+    language: params.language,
+    modelName: params.modelName,
+    currentChannel: params.currentChannel,
+    hasLoadSkillTool: params.hasLoadSkillTool,
+    hasSubagentTools: params.hasSubagentTools,
+  }
+  let systemFiles = params.systemFiles ?? [];
+  for (let f of systemFiles) {
+    if (f.filename.endsWith('.velin.md')) {
+      f.filename = f.filename.replace('.velin.md', '.md');
+      f.content = await renderMarkdownString(f.content, publicParams, basePath).then(r => cleanVelinOutput(r.rendered));
+    }
+  }
+  let { rendered } = await renderMarkdownString(systemPromptTemplate, { ...publicParams, systemFiles }, basePath);
+  rendered = cleanVelinOutput(rendered);
+  // dirty hack workaround for velin wiping newlines inside templates
+  for (const f of systemFiles) {
+    const placeholder = `SYSTEM_FILE_${f.filename}`;
+    rendered = rendered.replaceAll(placeholder, f.content);
+  }
+  return rendered;
 };
 
 export const renderSubagentSystemPrompt = async (params: {
