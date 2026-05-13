@@ -10,7 +10,7 @@ import { loadContacts } from './contacts';
 import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
-import { createOneBotPlatformAdapter, createOneBotServer } from './onebot';
+import { adaptOneBotMessage, createOneBotPlatformAdapter, createOneBotServer } from './onebot';
 import { resolveOneBotImageAltText } from './onebot/image-to-text';
 import { createPipeline } from './pipeline';
 import type { PipelineEvent } from './pipeline';
@@ -26,6 +26,7 @@ import { renderMarkdownToTelegramHTML } from './telegram/markdown';
 import type { Attachment } from './telegram/message/types';
 import { normalizeStickerSetMetadata } from './telegram/pack-title';
 import { loadSession } from './telegram/session';
+import { getLastMessageId } from './db/persistence';
 
 setupLogger();
 
@@ -298,14 +299,14 @@ const main = async () => {
       fileName,
     };
     switch (type) {
-    case 'photo': return await tg.sendPhoto(chatId, buffer, opts);
-    case 'video': return await tg.sendVideo(chatId, buffer, opts);
-    case 'audio': return await tg.sendAudio(chatId, buffer, opts);
-    case 'voice': return await tg.sendVoice(chatId, buffer, opts);
-    case 'animation': return await tg.sendAnimation(chatId, buffer, opts);
-    case 'video_note': return await tg.sendVideoNote(chatId, buffer, opts);
-    case 'document':
-    default: return await tg.sendDocument(chatId, buffer, { ...opts, fileName });
+      case 'photo': return await tg.sendPhoto(chatId, buffer, opts);
+      case 'video': return await tg.sendVideo(chatId, buffer, opts);
+      case 'audio': return await tg.sendAudio(chatId, buffer, opts);
+      case 'voice': return await tg.sendVoice(chatId, buffer, opts);
+      case 'animation': return await tg.sendAnimation(chatId, buffer, opts);
+      case 'video_note': return await tg.sendVideoNote(chatId, buffer, opts);
+      case 'document':
+      default: return await tg.sendDocument(chatId, buffer, { ...opts, fileName });
     }
   };
 
@@ -418,6 +419,69 @@ const main = async () => {
 
     await oneBotServer.start();
 
+    // Wait until client connected
+    logger.log('Waiting for OneBot WS client to connect...');
+    while (!oneBotServer.api) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Post-startup: Pull chat history
+
+    const onebotGroupChats = onebotChatIds.filter(id => !id.startsWith('private:'));
+
+    for (const chatId of onebotGroupChats) {
+      const pulledMessages = []
+      let lastMessageId = getLastMessageId(db, chatId);
+
+      while (true) {
+        try {
+          let messages = await oneBotServer.api!.fetchMessages(chatId, lastMessageId ?? undefined);
+          // 其中，第一条为 lastMessageId，后续为新消息
+          // 只能拉到一条代表拉完了
+          if (messages.length <= 1) break;
+          pulledMessages.push(...messages.slice(1));
+          if (messages.length > 0) {
+            const lastMessage = messages[messages.length - 1]!;
+            lastMessageId = String(lastMessage.message_id);
+            logger.withFields({ chatId, pulled: messages.length - 1 }).log('Pulled messages from OneBot');
+          }
+        } catch (err) {
+          logger.withError(err).error(`Failed to fetch messages for chat ${chatId}`);
+          break;
+        }
+      }
+
+      if (pulledMessages.length == 0) continue;
+
+      const events = await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(oneBotServer!.api!, msg)));
+
+      if (imageToTextChatIds.has(chatId)) {
+        const api = oneBotServer?.api;
+        if (api) {
+          for (const event of events) {
+            if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
+              const caption = contentToPlainText(event.content);
+              await Promise.all(event.attachments.map(att =>
+                resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver)));
+            }
+          }
+        }
+      }
+
+      for (const event of events) {
+        persistEvent(db, event);
+        hydrateAltTextFromCache(event);
+      }
+
+      const compaction = loadCompaction(db, chatId);
+      const allEvents = loadEvents(db, chatId, compaction?.newCursorMs);
+      pipeline.replayChat(chatId, allEvents);
+
+      const rc = pipeline.getRC(chatId);
+      logger.withFields({ chatId, events: events.length }).log('Replayed pulled messages into pipeline');
+
+      if (rc) driverRef.handleEvent?.(chatId, rc);
+    }
   }
 
   // --- Driver ---

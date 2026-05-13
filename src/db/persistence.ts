@@ -193,6 +193,16 @@ export const loadLatestMessageContent = (db: DB, chatId: string, messageId: stri
     .limit(1)
     .get();
 
+export const getLastMessageId = (db: DB, chatId: string): string | null => {
+  const row = db.select({ messageId: events.messageId })
+    .from(events)
+    .where(and(eq(events.chatId, chatId), eq(events.type, 'message')))
+    .orderBy(desc(events.id))
+    .limit(1)
+    .get();
+  return row?.messageId ?? null;
+};
+
 const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
   const event: CanonicalMessageEvent = {
     type: 'message',

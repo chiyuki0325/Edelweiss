@@ -12,6 +12,7 @@ import type {
   OneBotConfig,
   OneBotEvent,
   OneBotGetFileResult,
+  OneBotMessageEvent,
   OneBotMessageSegment,
 } from './types';
 import type { CanonicalIMEvent, CanonicalUser } from '../adaptation/types';
@@ -32,6 +33,8 @@ export interface OneBotApiClient {
   downloadFile(file: string, chatId: string): Promise<Buffer>;
   /** Get group member info, used for resolving mention info in group messages. */
   getGroupMemberInfo(groupId: string, userId: string): Promise<CanonicalUser>;
+  /** Get 20 messages from the specified chat */
+  fetchMessages(chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]>;
 }
 
 const createApiClient = (
@@ -156,6 +159,22 @@ const createApiClient = (
       const user = adaptUser(parseInt(userId, 10), result.nickname, result.card);
       resolvedGroupMember[key] = user;
       return user;
+    },
+
+    fetchMessages: async (chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]> => {
+      const isGroup = !chatId.startsWith('private:');
+
+      if (isGroup) {
+        const groupId = parseInt(chatId, 10);
+        const result = await call<{ messages: OneBotMessageEvent[] }>('get_group_msg_history', {
+          group_id: groupId,
+          message_seq: fromMessageId ? parseInt(fromMessageId, 10) : undefined,
+        });
+        return result.messages;
+      } else {
+        // not supported
+        return [];
+      }
     }
   };
 };
