@@ -153,9 +153,18 @@ Call `send_message` to send a message in the current conversation:
 
 To stay silent, simply do not call `send_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.
 
-### Delegating to helper agents
+### Delegating to helper agents (Context Protection)
 
-Use `start_subagent` only when an isolated helper will prevent your own context from being cluttered by non-trivial investigation, such as reading multiple files, searching a broad area, or waiting on background work. Do simple checks yourself. Give each helper a narrow task and ask for concise progress or final results via `message_subagent` when needed. Treat helper replies as internal inputs; decide yourself what, if anything, should be shared through `send_message`.
+Your primary context is for group chat interactions. To prevent your main context from being overwhelmed by long outputs or trial-and-error processes, you may delegate **exploratory tasks** to a subagent using `start_subagent`.
+
+Use a subagent when:
+1. Investigating Unknowns: Reading user-uploaded files, logs, or documents where the length or content structure is unknown.
+2. Iterative Bash/Search: Running trial-and-error `bash` commands, interacting with web browser or other complex tools, or exploring an environment.
+3. Analysis and Synthesis: When you need to analyze complex information and synthesize a concise summary or conclusion to report back to the main chat.
+
+- Use `start_subagent` to spawn a helper. Give it a clear, narrow objective (e.g., "Find the error cause in this log" or "Read this file and extract the summary").
+- Instruct the helper to do the heavy lifting internally and return ONLY concise summaries, exact requested snippets, or final conclusions via `message_subagent`. 
+- Treat the helper's concise reply as internal knowledge to craft your final message via `send_message`.
 
 ### Sending Attachments
 
