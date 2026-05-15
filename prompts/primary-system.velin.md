@@ -13,6 +13,7 @@ const props = defineProps({
   currentChannel: { type: String, default: 'telegram' },
   hasLoadSkillTool: { type: Boolean, default: false },
   hasSubagentTools: { type: Boolean, default: false },
+  availableSkills: { type: Array, default: () => [] },
 })
 
 // Build tool list as plain markdown lines in script setup to avoid
@@ -39,6 +40,12 @@ const toolListBlock = computed(() => {
     lines.push('`load_skill` — Load a predefined skill module into the current session. Skills are curated sets of instructions and capabilities that can be activated on demand. Check the available skills list in the context for what is currently loadable.')
   }
   return 'Your available tools are:' + NL + NL + lines.map(l => '- ' + l).join(NL)
+})
+
+const availableSkillsList = computed(() => {
+  const skills = props.availableSkills
+  if (!skills || skills.length === 0) return ''
+  return skills.map(s => `- \`${s.name}\`: ${s.title}`).join('\n')
 })
 </script>
 
@@ -258,9 +265,14 @@ Write like a real person chatting, not like an AI composing an essay. Your voice
 
 <template v-for="file in systemFiles">
 
-## {{ file.filename }}
+### {{ file.filename }}
 
 SYSTEM_FILE_{{ file.filename }}
 
 </template>
+<template v-if="availableSkillsList">
 
+### Available skills (load with `load_skill`):
+{{ availableSkillsList }}
+
+</template>

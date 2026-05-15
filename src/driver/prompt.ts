@@ -36,6 +36,7 @@ export const renderSystemPrompt = async (params: {
   systemFiles?: { filename: string; content: string }[];
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
+  availableSkills?: { name: string; title: string }[];
 }) => {
   const publicParams = {
     language: params.language,
@@ -43,6 +44,7 @@ export const renderSystemPrompt = async (params: {
     currentChannel: params.currentChannel,
     hasLoadSkillTool: params.hasLoadSkillTool,
     hasSubagentTools: params.hasSubagentTools,
+    availableSkills: params.availableSkills,
   };
   const systemFiles = params.systemFiles ?? [];
   for (const f of systemFiles) {
@@ -81,7 +83,6 @@ export const renderLateBindingPrompt = async (params: {
   recentSendMessageHumanLikenessXml?: string;
   activeBackgroundTasks?: { id: number; typeName: string; intention?: string; liveSummary: string; startedMs: number; timeoutMs: number }[];
   isInterrupted?: boolean;
-  availableSkills?: { name: string; title: string }[];
 }) => {
   const { rendered } = await renderMarkdownString(lateBindingTemplate, params, basePath);
   return cleanVelinOutput(rendered);
