@@ -37,15 +37,15 @@ export const renderSystemPrompt = async (params: {
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
 }) => {
-  let publicParams = {
+  const publicParams = {
     language: params.language,
     modelName: params.modelName,
     currentChannel: params.currentChannel,
     hasLoadSkillTool: params.hasLoadSkillTool,
     hasSubagentTools: params.hasSubagentTools,
-  }
-  let systemFiles = params.systemFiles ?? [];
-  for (let f of systemFiles) {
+  };
+  const systemFiles = params.systemFiles ?? [];
+  for (const f of systemFiles) {
     if (f.filename.endsWith('.velin.md')) {
       f.filename = f.filename.replace('.velin.md', '.md');
       f.content = await renderMarkdownString(f.content, publicParams, basePath).then(r => cleanVelinOutput(r.rendered));

@@ -8,6 +8,7 @@ import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, reso
 import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
 import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
+import { getLastMessageId } from './db/persistence';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
 import { adaptOneBotMessage, createOneBotPlatformAdapter, createOneBotServer } from './onebot';
@@ -26,7 +27,6 @@ import { renderMarkdownToTelegramHTML } from './telegram/markdown';
 import type { Attachment } from './telegram/message/types';
 import { normalizeStickerSetMetadata } from './telegram/pack-title';
 import { loadSession } from './telegram/session';
-import { getLastMessageId } from './db/persistence';
 
 setupLogger();
 
@@ -299,14 +299,14 @@ const main = async () => {
       fileName,
     };
     switch (type) {
-      case 'photo': return await tg.sendPhoto(chatId, buffer, opts);
-      case 'video': return await tg.sendVideo(chatId, buffer, opts);
-      case 'audio': return await tg.sendAudio(chatId, buffer, opts);
-      case 'voice': return await tg.sendVoice(chatId, buffer, opts);
-      case 'animation': return await tg.sendAnimation(chatId, buffer, opts);
-      case 'video_note': return await tg.sendVideoNote(chatId, buffer, opts);
-      case 'document':
-      default: return await tg.sendDocument(chatId, buffer, { ...opts, fileName });
+    case 'photo': return await tg.sendPhoto(chatId, buffer, opts);
+    case 'video': return await tg.sendVideo(chatId, buffer, opts);
+    case 'audio': return await tg.sendAudio(chatId, buffer, opts);
+    case 'voice': return await tg.sendVoice(chatId, buffer, opts);
+    case 'animation': return await tg.sendAnimation(chatId, buffer, opts);
+    case 'video_note': return await tg.sendVideoNote(chatId, buffer, opts);
+    case 'document':
+    default: return await tg.sendDocument(chatId, buffer, { ...opts, fileName });
     }
   };
 
@@ -430,12 +430,12 @@ const main = async () => {
     const onebotGroupChats = onebotChatIds.filter(id => !id.startsWith('private:'));
 
     for (const chatId of onebotGroupChats) {
-      const pulledMessages = []
+      const pulledMessages = [];
       let lastMessageId = getLastMessageId(db, chatId);
 
       while (true) {
         try {
-          let messages = await oneBotServer.api!.fetchMessages(chatId, lastMessageId ?? undefined);
+          const messages = await oneBotServer.api!.fetchMessages(chatId, lastMessageId ?? undefined);
           // 其中，第一条为 lastMessageId，后续为新消息
           // 只能拉到一条代表拉完了
           if (messages.length <= 1) break;

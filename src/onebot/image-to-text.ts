@@ -2,9 +2,9 @@ import sharp from 'sharp';
 
 import type { OneBotApiClient } from './server';
 import type { CanonicalAttachment } from '../adaptation/types';
-import type { ImageToTextResolver } from '../telegram/image-to-text';
 import type { AnimationToTextResolver } from '../telegram/animation-to-text';
 import { extractFrames } from '../telegram/frame-extractor';
+import type { ImageToTextResolver } from '../telegram/image-to-text';
 
 const THUMBNAIL_PIXEL_BUDGET = 75_000; // pixels, ≈100 Claude tokens
 
@@ -33,7 +33,7 @@ const FORMAT_TO_MIME = {
   webp: 'image/webp',
   avif: 'image/avif',
   tiff: 'image/tiff',
-  svg: 'image/svg+xml'
+  svg: 'image/svg+xml',
 } as const;
 
 type SupportedFormat = keyof typeof FORMAT_TO_MIME;

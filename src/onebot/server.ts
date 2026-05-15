@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
@@ -16,8 +17,6 @@ import type {
   OneBotMessageSegment,
 } from './types';
 import type { CanonicalIMEvent, CanonicalUser } from '../adaptation/types';
-
-import fs from 'fs';
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -175,7 +174,7 @@ const createApiClient = (
         // not supported
         return [];
       }
-    }
+    },
   };
 };
 
