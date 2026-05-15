@@ -126,12 +126,10 @@ export const createDriver = (config: DriverConfig, deps: {
     const failedRc = signal<RenderedContext | null>(null);
 
     // --- Skills state ---
-    // Loaded synchronously at scope creation. loadedSkillNames tracks which
-    // skills have been injected in the current epoch; reset on compaction.
+    // Always all skills are available to preserve prefix consistency across epochs.
     const allSkills = chatConfig.skills?.folder
       ? loadSkillsFromFolder(chatConfig.skills.folder)
       : new Map();
-    const loadedSkillNames = signal<Set<string>>(new Set());
 
     // --- Compaction state as signal ---
     // Initialized from DB on scope creation (cold start). Updated by the
@@ -334,8 +332,8 @@ export const createDriver = (config: DriverConfig, deps: {
           const skillTools: CahciuaTool[] = [];
           if (allSkills.size > 0) {
             skillTools.push(createLoadSkillTool(
-              () => new Map([...allSkills].filter(([k]) => !loadedSkillNames().has(k))),
-              name => loadedSkillNames(new Set([...loadedSkillNames(), name])),
+              () => allSkills,
+              () => {},
             ));
           }
           const tools: CahciuaTool[] = [...sharedTools, ...subagentTools, ...skillTools];
@@ -349,7 +347,6 @@ export const createDriver = (config: DriverConfig, deps: {
             hasLoadSkillTool: allSkills.size > 0,
             hasSubagentTools: chatConfig.subagents.enabled,
             availableSkills: [...allSkills.values()]
-            .filter(s => !loaded.has(s.name))
             .map(s => ({ name: s.name, title: s.title })),
           });
 
@@ -364,7 +361,6 @@ export const createDriver = (config: DriverConfig, deps: {
             collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
           );
 
-          const loaded = loadedSkillNames();
           const lateBindingParams = {
             timeNow: localTimeNow(),
             isMentioned, isReplied,
@@ -599,8 +595,6 @@ export const createDriver = (config: DriverConfig, deps: {
             }).log('Compaction complete');
 
             compactionMeta(newMeta);
-            // Reset loaded skills so they become available again in the new epoch.
-            loadedSkillNames(new Set());
           } catch (err) {
             log.withError(err).error('Compaction failed');
           } finally {
