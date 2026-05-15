@@ -75,7 +75,7 @@ export const createDriver = (config: DriverConfig, deps: {
   // Runner cache: keyed by "apiBaseUrl::model" to reuse runners across chats
   // sharing the same endpoint.
   const runners = new Map<string, ReturnType<typeof createRunner>>();
-  const getOrCreateRunner = (endpoint: { apiBaseUrl: string; apiKey: string; model: string; apiFormat?: ProviderFormat; timeoutSec?: number }) => {
+  const getOrCreateRunner = (endpoint: { apiBaseUrl: string; apiKey: string; model: string; apiFormat?: ProviderFormat; timeoutSec?: number; reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh' }) => {
     const key = `${endpoint.apiBaseUrl}::${endpoint.model}`;
     let runner = runners.get(key);
     if (!runner) {
@@ -85,6 +85,7 @@ export const createDriver = (config: DriverConfig, deps: {
         model: endpoint.model,
         apiFormat: endpoint.apiFormat ?? 'openai-chat',
         timeoutSec: endpoint.timeoutSec,
+        reasoningEffort: endpoint.reasoningEffort,
       });
       runners.set(key, runner);
     }
@@ -347,6 +348,9 @@ export const createDriver = (config: DriverConfig, deps: {
             systemFiles: chatConfig.systemFiles,
             hasLoadSkillTool: allSkills.size > 0,
             hasSubagentTools: chatConfig.subagents.enabled,
+            availableSkills: [...allSkills.values()]
+            .filter(s => !loaded.has(s.name))
+            .map(s => ({ name: s.name, title: s.title })),
           });
 
           // --- Compute mention/reply/interrupt state from RC + TRs ---
@@ -367,9 +371,6 @@ export const createDriver = (config: DriverConfig, deps: {
             recentSendMessageHumanLikenessXml,
             isInterrupted,
             activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
-            availableSkills: [...allSkills.values()]
-              .filter(s => !loaded.has(s.name))
-              .map(s => ({ name: s.name, title: s.title })),
           };
 
           // --- Probe gate ---
@@ -578,6 +579,7 @@ export const createDriver = (config: DriverConfig, deps: {
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
               timeoutSec: compactEndpoint.timeoutSec,
+              reasoningEffort: compactEndpoint.reasoningEffort,
               chatId,
               rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
               trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),

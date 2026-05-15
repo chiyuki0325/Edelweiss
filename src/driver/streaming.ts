@@ -42,6 +42,8 @@ export interface StreamingChatParams {
   system?: string;
   tools?: ToolSchema[];
   timeoutSec?: number;
+  /** DeepSeek reasoning effort. When set, sent as `thinking: { type: "enabled", reasoning_effort }`. */
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
   log: Logger;
   label: string; // log prefix, e.g. "step" or "compact"
 }
@@ -68,6 +70,7 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
         ...params.messages,
       ],
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      ...(params.reasoningEffort ? { thinking: { type: 'enabled', reasoning_effort: params.reasoningEffort } } : {}),
       stream: true,
       stream_options: { include_usage: true },
     });

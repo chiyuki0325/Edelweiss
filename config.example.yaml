@@ -6,6 +6,7 @@ models:
     # apiFormat: "responses"        # optional: 'openai-chat' (default), 'responses', or 'anthropic-messages'
     # timeoutSec: 120                # optional: abort requests that stream for too long
     # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
+    # reasoningEffort: "xhigh"
   probe:
     apiBaseUrl: ""
     apiKey: ""

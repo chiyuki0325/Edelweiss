@@ -15,6 +15,7 @@ const llmEndpointEntries = {
   maxImagesAllowed: v.optional(v.number()),
   timeoutSec: v.optional(v.number()),
   descriptionConcurrency: v.optional(v.number()),
+  reasoningEffort: v.optional(v.picklist(['low', 'medium', 'high', 'max', 'xhigh'])),
 };
 
 // --- Runtime config schema (top-level, global) ---

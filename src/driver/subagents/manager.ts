@@ -28,6 +28,7 @@ const toRunnerConfig = (endpoint: LlmEndpoint): RunnerConfig => ({
   model: endpoint.model,
   apiFormat: endpoint.apiFormat ?? 'openai-chat',
   timeoutSec: endpoint.timeoutSec,
+  reasoningEffort: endpoint.reasoningEffort,
 });
 
 export const createSubagentManager = (deps: SubagentManagerDeps) => {

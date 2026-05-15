@@ -25,6 +25,8 @@ export interface StreamingMessagesParams {
   tools?: AnthropicTool[];
   maxTokens?: number;
   timeoutSec?: number;
+  /** Anthropic output_config effort level. When set, sent as `output_config: { effort }`. */
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
   log: Logger;
   label: string;
 }
@@ -74,6 +76,7 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
       ...(params.system ? { system: params.system } : {}),
       messages: params.messages,
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      ...(params.reasoningEffort ? { output_config: { effort: params.reasoningEffort } } : {}),
       stream: true,
     });
 

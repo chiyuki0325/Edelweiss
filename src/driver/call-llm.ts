@@ -27,6 +27,7 @@ export interface LlmCallConfig {
   model: string;
   apiFormat?: ProviderFormat;
   timeoutSec?: number;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 }
 
 export interface ToolSchema {
@@ -148,6 +149,7 @@ export const callLlm = async (
     const response = await streamingMessages({
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
       system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
+      reasoningEffort: config.reasoningEffort,
       log: log!, label, timeoutSec: config.timeoutSec,
     });
     dump(options?.dumpId, 'response', response);
@@ -171,6 +173,7 @@ export const callLlm = async (
   const response = await streamingChat({
     baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
     messages: chatMessages, system, ...(wireTools ? { tools: wireTools } : {}),
+    reasoningEffort: config.reasoningEffort,
     log: log!, label, timeoutSec: config.timeoutSec,
   });
   dump(options?.dumpId, 'response', response);
