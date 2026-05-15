@@ -302,7 +302,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: subagentModel,
       apiFormat: subagentModel.apiFormat ?? 'openai-chat',
       maxConcurrent: merged.subagents.maxConcurrent,
-      maxSteps: merged.subagents.maxSteps,
+      maxSteps: merged.subagents.maxSteps === 0 ? Infinity : merged.subagents.maxSteps,
     },
     imageToText: {
       enabled: merged.imageToText.enabled,
