@@ -567,6 +567,15 @@ const main = async () => {
       }
       return undefined;
     },
+    onDebounceStateChange: hasTelegram
+      ? (chatId, isDebouncing) => {
+          if (isDebouncing) {
+            telegram!.startTypingPolling(chatId);
+          } else {
+            telegram!.stopTypingPolling(chatId);
+          }
+        }
+      : undefined,
     resolveModel: name => resolveModel(config, name),
     backgroundTask: {
       startTask: (typeName, sessionId, params, intention, timeoutMs) =>

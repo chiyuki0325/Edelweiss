@@ -65,6 +65,7 @@ export const createDriver = (config: DriverConfig, deps: {
     readTaskOutput: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>;
   };
   getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
+  onDebounceStateChange?: (chatId: string, isDebouncing: boolean) => void;
   logger: Logger;
 }) => {
   const { logger } = deps;
@@ -104,6 +105,7 @@ export const createDriver = (config: DriverConfig, deps: {
     rc: ReturnType<typeof signal<RenderedContext>>;
     offline: ReturnType<typeof signal<boolean>>;
     extendDebounce: () => void;
+    notifyTyping: () => void;
     cleanup: () => void;
   }>();
 
@@ -301,6 +303,7 @@ export const createDriver = (config: DriverConfig, deps: {
     const executeLlmCall = () => {
       if (running()) return;
       clearDebounceTimers();
+      if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
       debounceWaiting = false;
 
       // Capture offline state: if this call was triggered in offline mode
@@ -466,11 +469,31 @@ export const createDriver = (config: DriverConfig, deps: {
       })();
     };
 
+    let lastTypingAtMs = 0;
+
+    const TYPING_VALIDITY_MS = 6000;
+
+    // Checked at debounce timer expiry: if typing occurred within the validity
+    // window, extend instead of firing. maxDelayTimer bypasses this check.
+    const debounceTimerCallback = () => {
+      if (debounceWaiting && Date.now() - lastTypingAtMs < TYPING_VALIDITY_MS) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
+        return;
+      }
+      executeLlmCall();
+    };
+
     // Exposed to handleTyping — extends the debounce window if waiting.
     const extendDebounce = () => {
       if (!debounceWaiting || running()) return;
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(executeLlmCall, typingExtendMs);
+      debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
+    };
+
+    const notifyTyping = () => {
+      lastTypingAtMs = Date.now();
+      extendDebounce();
     };
 
     // The effect reads rc() directly (not just needsReply) so that it re-runs
@@ -481,12 +504,14 @@ export const createDriver = (config: DriverConfig, deps: {
       const isRunning = running();
 
       if (isRunning) {
+        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
         return;
       }
 
       if (!needsReply()) {
+        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
         return;
@@ -496,14 +521,15 @@ export const createDriver = (config: DriverConfig, deps: {
       if (!debounceWaiting) {
         // First trigger — start debounce with initialDelayMs + hard cap.
         debounceWaiting = true;
-        debounceTimer = setTimeout(executeLlmCall, initialDelayMs);
+        deps.onDebounceStateChange?.(chatId, true);
+        debounceTimer = setTimeout(debounceTimerCallback, initialDelayMs);
         maxDelayTimer = setTimeout(executeLlmCall, maxDelayMs);
         log.withFields({ chatId, initialDelayMs, maxDelayMs }).log('Debounce started');
       } else {
         // RC changed while waiting (new message) — extend debounce timer,
         // maxDelayTimer stays unchanged as the hard cap.
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(executeLlmCall, typingExtendMs);
+        debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
       }
     });
 
@@ -583,6 +609,7 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const cleanup = () => {
+      if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
       clearDebounceTimers();
       if (compactionTimer) clearTimeout(compactionTimer);
       disposeCursorEffect();
@@ -590,7 +617,7 @@ export const createDriver = (config: DriverConfig, deps: {
       disposeCompactionEffect();
     };
 
-    const entry = { rc, offline, extendDebounce, cleanup };
+    const entry = { rc, offline, extendDebounce, notifyTyping, cleanup };
     chatScopes.set(chatId, entry);
     return entry;
   };
@@ -601,7 +628,7 @@ export const createDriver = (config: DriverConfig, deps: {
   };
 
   const handleTyping = (chatId: string) => {
-    chatScopes.get(chatId)?.extendDebounce();
+    chatScopes.get(chatId)?.notifyTyping();
   };
 
   const setOfflineMode = (chatId: string, isOffline: boolean) => {

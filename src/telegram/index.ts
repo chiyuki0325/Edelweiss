@@ -12,6 +12,8 @@ import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attac
 import { normalizeStickerSetMetadata } from './pack-title';
 import { createSessionIngressQueue } from './session-ingress-queue';
 import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
+import type { TypingPollManager } from './typing-poll';
+import { createTypingPollManager } from './typing-poll';
 import type { FetchOptions, TypingEvent, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
 
@@ -60,6 +62,8 @@ export interface TelegramManager {
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
+  startTypingPolling(chatId: string): void;
+  stopTypingPolling(chatId: string): void;
   resolvePackTitle(setName: string): Promise<string>;
   botUserId: string;
   bot: BotClient;
@@ -271,6 +275,11 @@ export const createTelegramManager = (
     dispatchMessage(msg);
   });
 
+  const handleTypingEvent = (event: TypingEvent) => {
+    if (!botChats.has(event.chatId)) return;
+    typingBus.emit(event);
+  };
+
   if (userbot) {
     userbot.onMessage(msg => {
       if (!botChats.has(msg.chatId)) return;
@@ -296,11 +305,22 @@ export const createTelegramManager = (
       });
     });
 
-    userbot.onTyping(event => {
-      if (!botChats.has(event.chatId)) return;
-      typingBus.emit(event);
-    });
+    userbot.onTyping(handleTypingEvent);
   }
+
+  let typingPollManager: TypingPollManager | undefined;
+  if (userbot) {
+    typingPollManager = createTypingPollManager(userbot.raw(), handleTypingEvent, logger);
+  }
+
+  const startTypingPolling = (chatId: string) => {
+    if (!typingPollManager) return;
+    void typingPollManager.startPolling(chatId);
+  };
+
+  const stopTypingPolling = (chatId: string) => {
+    typingPollManager?.stopPolling(chatId);
+  };
 
   const start = async () => {
     await Promise.all([
@@ -319,6 +339,7 @@ export const createTelegramManager = (
   };
 
   const stop = async () => {
+    typingPollManager?.stopAll();
     await Promise.all([
       bot.stop(),
       userbot?.stop(),
@@ -347,5 +368,7 @@ export const createTelegramManager = (
     botUserId: bot.botUserId(),
     bot,
     userbot,
+    startTypingPolling,
+    stopTypingPolling,
   };
 };
