@@ -84,6 +84,73 @@ const main = async () => {
   const { isChannel, rawId } = parseChatId(chatIdArg);
   log.withFields({ chatId: chatIdArg, isChannel, rawId: rawId.toString() }).log('Watching typing events');
 
+  // The server only sends typing updates to clients it considers "online."
+  // Android Telegram maintains online status via account.updateStatus(offline=false) every ~55s.
+  // A one-shot markAsRead is not enough — the server's "client is active" state decays.
+  // We replicate the Android client's behavior:
+  //   1. account.updateStatus(offline=false) — periodic heartbeat (every 50s)
+  //   2. markAsRead — signal interest in this specific chat
+  //   3. For supergroups: updates.getChannelDifference — periodic poll (server-provided timeout)
+  const peer = await client.getInputEntity(chatIdArg);
+
+  // (1) Online status heartbeat — the single most critical signal.
+  const sendOnlineHeartbeat = async () => {
+    try {
+      await client.invoke(new Api.account.UpdateStatus({ offline: false }));
+    } catch (err) {
+      log.withError(err).warn('Failed to send online heartbeat');
+    }
+  };
+  await sendOnlineHeartbeat();
+  const heartbeatInterval = setInterval(() => { void sendOnlineHeartbeat(); }, 50_000);
+  log.log('Online heartbeat started (every 50s)');
+
+  // (2) Read history — marks the chat as "being viewed."
+  await client.markAsRead(peer);
+  log.log('Primed chat activity (markAsRead)');
+
+  // (3) For supergroups: periodic getChannelDifference poll.
+  // The server includes typing events in the response and provides a `timeout` for re-poll.
+  let channelDiffTimeout: ReturnType<typeof setTimeout> | null = null;
+  if (isChannel) {
+    let channelPts = 1;
+    const pollChannelDifference = async () => {
+      try {
+        const inputChannel = peer as Api.InputPeerChannel;
+        const result = await client.invoke(new Api.updates.GetChannelDifference({
+          channel: new Api.InputChannel({ channelId: inputChannel.channelId, accessHash: inputChannel.accessHash }),
+          filter: new Api.ChannelMessagesFilterEmpty(),
+          pts: channelPts,
+          limit: 100,
+          force: false,
+        }));
+        // Server tells us when to re-poll via the timeout field.
+        const nextSec = 'timeout' in result && typeof result.timeout === 'number' ? result.timeout : 30;
+        // Update pts for next call if available.
+        if ('pts' in result && typeof result.pts === 'number') {
+          channelPts = result.pts;
+        }
+        channelDiffTimeout = setTimeout(() => { void pollChannelDifference(); }, nextSec * 1000);
+      } catch (err) {
+        log.withError(err).warn('getChannelDifference failed, retrying in 30s');
+        channelDiffTimeout = setTimeout(() => { void pollChannelDifference(); }, 30_000);
+      }
+    };
+    // Seed pts from getFullChannel or just start polling.
+    try {
+      const inputChannel = peer as Api.InputPeerChannel;
+      const full = await client.invoke(new Api.channels.GetFullChannel({
+        channel: new Api.InputChannel({ channelId: inputChannel.channelId, accessHash: inputChannel.accessHash }),
+      }));
+      channelPts = (full.fullChat as Api.ChannelFull).pts ?? 1;
+      log.withFields({ pts: channelPts }).log('Seeded channel pts');
+    } catch (err) {
+      log.withError(err).warn('Failed to seed channel pts, starting from 1');
+    }
+    void pollChannelDifference();
+    log.log('Channel difference polling started');
+  }
+
   const nameCache = new Map<string, string>();
 
   const resolveUserName = async (peer: Api.TypePeer): Promise<string> => {
@@ -140,6 +207,10 @@ const main = async () => {
 
   const shutdown = async () => {
     log.log('Shutting down...');
+    clearInterval(heartbeatInterval);
+    if (channelDiffTimeout) clearTimeout(channelDiffTimeout);
+    // Send offline status before disconnecting.
+    try { await client.invoke(new Api.account.UpdateStatus({ offline: true })); } catch {}
     await client.disconnect();
     process.exit(0);
   };
