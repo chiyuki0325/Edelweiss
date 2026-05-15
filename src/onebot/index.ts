@@ -27,7 +27,7 @@ export const createOneBotPlatformAdapter = (
         file_name: a.file_name,
       })),
     });
-    return await api.sendMessage(chatId, segments, options?.replyTo);
+    return await api.sendMessage(chatId, segments);
   },
   downloadFile: async (identifier, chatId) =>
     await api.downloadFile(identifier, chatId),
