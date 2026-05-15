@@ -758,6 +758,7 @@ const main = async () => {
   if (hasTelegram && animationToTextChatIds.size > 0) {
     const backfillLog = logger.withContext('animation-backfill');
     for (const chatId of animationToTextChatIds) {
+      if (resolveChatConfig(config, chatId).platform !== 'telegram') continue;
       const compaction = loadCompaction(db, chatId);
       const eventsWithId = loadEventsWithId(db, chatId, compaction?.newCursorMs);
       const tasks: Promise<void>[] = [];
