@@ -22,6 +22,7 @@ import { createAnimationToTextResolver } from './telegram/animation-to-text';
 import { createCustomEmojiToTextResolver, emojiCacheKey } from './telegram/custom-emoji-to-text';
 import { canExtractFrames, extractFrames } from './telegram/frame-extractor';
 import { computeThumbnailHash, createImageToTextResolver } from './telegram/image-to-text';
+import type { ImageToTextCompressionConfig } from './telegram/image-to-text';
 import { createSemaphore } from './telegram/llm-description';
 import { renderMarkdownToTelegramHTML } from './telegram/markdown';
 import type { Attachment } from './telegram/message/types';
@@ -92,18 +93,20 @@ const main = async () => {
   };
 
   // Image-to-text resolver — shared between cold-start replay and live ingress.
+  // Compression settings are per-chat; passed at resolve time, not at factory time.
   const imageToTextResolver = createImageToTextResolver({
     enabled: imageToTextChatIds.size > 0,
     model: defaultChatConfig.imageToText.model ? resolveModel(config, defaultChatConfig.imageToText.model) : undefined,
     semaphore: getDescriptionSemaphore(defaultChatConfig.imageToText.model),
-    compression: {
-      compress: defaultChatConfig.imageToText.compress,
-      pixelBudget: defaultChatConfig.imageToText.pixelBudget,
-    },
     logger,
     lookupByHash: imageHash => loadImageAltTextByHash(db, imageHash),
     persist: record => persistImageAltText(db, record),
   });
+
+  const getImageToTextCompression = (chatId: string): ImageToTextCompressionConfig => {
+    const cfg = resolveChatConfig(config, chatId).imageToText;
+    return { compress: cfg.compress, pixelBudget: cfg.pixelBudget };
+  };
 
   // Animation-to-text resolver — same pattern, for GIF/animated sticker descriptions.
   const animationToTextResolver = createAnimationToTextResolver({
@@ -167,6 +170,7 @@ const main = async () => {
       resolveChatId: messageIds => lookupChatId(db, messageIds),
       imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
       imageToTextChatIds,
+      getImageToTextCompression,
       animationToText: animationToTextChatIds.size > 0 ? animationToTextResolver : undefined,
       animationToTextChatIds,
       animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
@@ -251,7 +255,7 @@ const main = async () => {
       for (const event of events) {
         if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
           const caption = contentToPlainText(event.content);
-          tasks.push(imageToTextResolver.hydrateCanonicalAttachments(event.attachments, caption));
+          tasks.push(imageToTextResolver.hydrateCanonicalAttachments(event.attachments, caption, getImageToTextCompression(chatId)));
         }
       }
       if (tasks.length > 0) await Promise.all(tasks);
@@ -399,8 +403,9 @@ const main = async () => {
                 const api = oneBotServer?.api;
                 if (api) {
                   const caption = contentToPlainText(event.content);
+                  const compression = getImageToTextCompression(chatId);
                   await Promise.all(event.attachments.map(att =>
-                    resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver)));
+                    resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver, compression)));
                 }
               }
             }
@@ -461,8 +466,9 @@ const main = async () => {
           for (const event of events) {
             if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
               const caption = contentToPlainText(event.content);
+              const compression = getImageToTextCompression(chatId);
               await Promise.all(event.attachments.map(att =>
-                resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver)));
+                resolveOneBotImageAltText(att, caption, api, imageToTextResolver, animationToTextResolver, compression)));
             }
           }
         }

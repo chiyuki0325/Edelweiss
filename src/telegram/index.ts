@@ -6,7 +6,7 @@ import { createBotClient } from './bot';
 import type { CustomEmojiToTextResolver } from './custom-emoji-to-text';
 import { createEventBus } from './event-bus';
 import { canExtractFrames, extractFrames } from './frame-extractor';
-import type { ImageToTextResolver } from './image-to-text';
+import type { ImageToTextCompressionConfig, ImageToTextResolver } from './image-to-text';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attachment, MessageEntity } from './message';
 import { normalizeStickerSetMetadata } from './pack-title';
@@ -24,6 +24,7 @@ export interface TelegramManagerOptions {
   resolveChatId?: (messageIds: number[]) => string | undefined;
   imageToText?: ImageToTextResolver;
   imageToTextChatIds?: Set<string>;
+  getImageToTextCompression?: (chatId: string) => ImageToTextCompressionConfig;
   animationToText?: AnimationToTextResolver;
   animationToTextChatIds?: Set<string>;
   animationMaxFrames?: number;
@@ -101,6 +102,7 @@ export const createTelegramManager = (
 
   const imageToText = options.imageToText;
   const imageToTextChatIds = options.imageToTextChatIds;
+  const getImageToTextCompression = options.getImageToTextCompression;
   const animationToText = options.animationToText;
   const animationToTextChatIds = options.animationToTextChatIds;
   const animationMaxFrames = options.animationMaxFrames;
@@ -166,7 +168,10 @@ export const createTelegramManager = (
           if (!att.thumbnailWebp) return;
           const thumbnailBuffer = Buffer.from(att.thumbnailWebp, 'base64');
           const highResBuffer = originalBuffers.get(att);
-          await imageToText.resolve(thumbnailBuffer, text, highResBuffer, { isSticker: att.type === 'sticker' });
+          await imageToText.resolve(thumbnailBuffer, text, highResBuffer, {
+            isSticker: att.type === 'sticker',
+            compression: getImageToTextCompression?.(chatId),
+          });
         }));
       }
 
