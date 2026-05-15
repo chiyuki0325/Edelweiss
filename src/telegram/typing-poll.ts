@@ -49,9 +49,14 @@ export const createTypingPollManager = (
   };
 
   const resolveChannelPeer = async (chatId: string) => {
-    const entity = await client.getInputEntity(chatId);
-    if (!(entity instanceof Api.InputPeerChannel)) return null;
-    return entity;
+    try {
+      const entity = await client.getInputEntity(chatId);
+      if (!(entity instanceof Api.InputPeerChannel)) return null;
+      return entity;
+    } catch (err) {
+      log.withError(err).withFields({ chatId }).warn('Failed to resolve channel peer for typing poll');
+      return null;
+    }
   };
 
   const pollLoop = async (state: PollState) => {
