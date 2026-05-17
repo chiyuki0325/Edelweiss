@@ -53,6 +53,9 @@ importers:
       markdown-it:
         specifier: ^14.1.1
         version: 14.1.1
+      pangu:
+        specifier: ^7.2.1
+        version: 7.2.1
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -2669,6 +2672,11 @@ packages:
 
   pako@2.1.0:
     resolution: {integrity: sha512-w+eufiZ1WuJYgPXbV/PO3NCMEc3xqylkKHzp8bxp1uW4qaSNQUkwmLLEc3kKsfz8lpV1F8Ht3U1Cm+9Srog2ug==}
+
+  pangu@7.2.1:
+    resolution: {integrity: sha512-HEWJHmYcJhGz5wGebMaKblzu709wUjzsnJzwdjaowAKQzHIHQDmWGpCbWWPx19Exnv/RaQ3UhUg4LkttWZsbCw==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
 
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
@@ -6035,6 +6043,8 @@ snapshots:
   p-map@7.0.4: {}
 
   pako@2.1.0: {}
+
+  pangu@7.2.1: {}
 
   parent-module@1.0.1:
     dependencies:
