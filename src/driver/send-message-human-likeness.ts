@@ -5,6 +5,7 @@ export const RECENT_SEND_MESSAGE_WINDOW = 5;
 const SHORT_MESSAGE_CHAR_LIMIT = 32;
 const DENSE_CLAUSE_PUNCTUATION_THRESHOLD = 2;
 const QUESHI_OVERUSE_RATIO = 0.5;
+const NOT_ERSHI_OVERUSE_RATIO = 0.5;
 
 export interface HumanLikenessToggles {
   trailingPeriod: boolean;
@@ -14,6 +15,7 @@ export interface HumanLikenessToggles {
   markdownHeader: boolean;
   newline: boolean;
   queshi: boolean;
+  notErshi: boolean;
 }
 
 const ALL_ENABLED: HumanLikenessToggles = {
@@ -24,6 +26,7 @@ const ALL_ENABLED: HumanLikenessToggles = {
   markdownHeader: true,
   newline: true,
   queshi: true,
+  notErshi: true,
 };
 
 export const potentiallyNotHumanFeatureDefinitions = [
@@ -54,6 +57,10 @@ export const potentiallyNotHumanFeatureDefinitions = [
   {
     name: 'queshi',
     description: "Used '确实' (indeed) — excessive verbal agreement.",
+  },
+  {
+    name: 'not-ershi',
+    description: "Used '不是…而是…' (it's not…but…) — a rigid rhetorical pattern.",
   },
 ] as const;
 
@@ -121,6 +128,8 @@ export const assessSendMessageHumanLikeness = (
     features.push('newline');
   if (toggles.queshi && text.includes('确实'))
     features.push('queshi');
+  if (toggles.notErshi && /不是(.{0,20})而是/.test(text))
+    features.push('not-ershi');
   return features;
 };
 
@@ -176,6 +185,7 @@ export const renderRecentSendMessageHumanLikenessXml = (
     .filter(feature => {
       if (feature.count === 0) return false;
       if (feature.name === 'queshi' && feature.count / recentMessages.length <= QUESHI_OVERUSE_RATIO) return false;
+      if (feature.name === 'not-ershi' && feature.count / recentMessages.length <= NOT_ERSHI_OVERUSE_RATIO) return false;
       return true;
     });
 
@@ -190,7 +200,11 @@ export const renderRecentSendMessageHumanLikenessXml = (
     lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
 
   const hasQueshi = featureCounts.some(f => f.name === 'queshi');
+  const hasNotErshi = featureCounts.some(f => f.name === 'not-ershi');
   const guidanceParts = ['If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.'];
+  if (hasNotErshi) {
+    guidanceParts.push('Avoid rigid "不是…而是…" rhetorical patterns. Express contrast naturally instead.');
+  }
   if (hasQueshi) {
     guidanceParts.push('Stop echoing or verbally agreeing with others. Do not use phrases like "确实" to signal agreement.');
   }

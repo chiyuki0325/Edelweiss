@@ -54,6 +54,7 @@ describe('send-message-human-likeness', () => {
     markdownHeader: true,
     newline: true,
     queshi: true,
+    notErshi: true,
   } as const;
 
   it('detects trailing periods but not ellipses', () => {
@@ -78,6 +79,16 @@ describe('send-message-human-likeness', () => {
       'markdown-header',
       'newline',
     ]);
+  });
+
+  it('detects not-ershi pattern', () => {
+    expect(assessSendMessageHumanLikeness('这不是A而是B')).toEqual(['not-ershi']);
+    expect(assessSendMessageHumanLikeness('不是技术问题而是心态问题')).toEqual(['not-ershi']);
+    expect(assessSendMessageHumanLikeness('不是我不愿意而是真的做不到')).toEqual(['not-ershi']);
+  });
+
+  it('does not flag not-ershi with too many chars between', () => {
+    expect(assessSendMessageHumanLikeness('不是这个AAAAAAAAAAAAAAAAAAAAAAA而是那个')).toEqual([]);
   });
 
   it('collects only successful send_message calls and keeps the latest five', () => {
