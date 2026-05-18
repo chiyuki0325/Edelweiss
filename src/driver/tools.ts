@@ -2,6 +2,10 @@ import { execFile } from 'node:child_process';
 
 import { Validator } from '@cfworker/json-schema';
 import type { Logger } from '@guiiai/logg';
+// @ts-ignore
+import markdownParser from 'prettier/esm/parser-markdown.mjs';
+// @ts-ignore
+import prettier from 'prettier/esm/standalone.mjs';
 import sharp from 'sharp';
 
 import type { SkillInfo } from './skills';
@@ -116,7 +120,8 @@ export const createSendMessageTool = (
         await_response?: boolean;
         attachments?: SendMessageAttachment[];
       };
-      const result = await send(text, reply_to, attachments);
+      const formattedText = prettier.format(text, { parser: 'markdown', plugins: [markdownParser], embeddedLanguageFormatting: 'auto' });
+      const result = await send(formattedText, reply_to, attachments);
       return {
         content: JSON.stringify({ ok: true, message_id: result.messageId }),
         requiresFollowUp: await_response ?? false,
