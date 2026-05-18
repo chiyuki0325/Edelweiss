@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 
 import { Validator } from '@cfworker/json-schema';
-import pangu from 'pangu';
 import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
@@ -117,7 +116,7 @@ export const createSendMessageTool = (
         await_response?: boolean;
         attachments?: SendMessageAttachment[];
       };
-      const result = await send(pangu.spacingText(text), reply_to, attachments);
+      const result = await send(text, reply_to, attachments);
       return {
         content: JSON.stringify({ ok: true, message_id: result.messageId }),
         requiresFollowUp: await_response ?? false,
