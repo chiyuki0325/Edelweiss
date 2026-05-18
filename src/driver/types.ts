@@ -33,6 +33,8 @@ export interface LlmEndpoint {
   descriptionConcurrency?: number;
   /** DeepSeek reasoning effort level ('low'/'medium' map to 'high', 'xhigh' maps to 'max'). Only for openai-chat provider. */
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  /** Force tool call. true = always call a tool */
+  forceToolCall?: boolean;
 }
 
 export interface DriverConfig {

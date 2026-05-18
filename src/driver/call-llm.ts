@@ -27,6 +27,7 @@ export interface LlmCallConfig {
   model: string;
   apiFormat?: ProviderFormat;
   timeoutSec?: number;
+  forceToolCall?: boolean;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 }
 
@@ -93,6 +94,7 @@ export const callLlm = async (
 
     const response = await streamingResponses({
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
+      forceToolCall: config.forceToolCall,
       input, instructions: system, ...(wireTools ? { tools: wireTools } : {}),
       log: log!, label, timeoutSec: config.timeoutSec,
     });
@@ -148,6 +150,7 @@ export const callLlm = async (
 
     const response = await streamingMessages({
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
+      forceToolCall: config.forceToolCall,
       system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
       reasoningEffort: config.reasoningEffort,
       log: log!, label, timeoutSec: config.timeoutSec,
@@ -172,6 +175,7 @@ export const callLlm = async (
 
   const response = await streamingChat({
     baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
+    forceToolCall: config.forceToolCall,
     messages: chatMessages, system, ...(wireTools ? { tools: wireTools } : {}),
     reasoningEffort: config.reasoningEffort,
     log: log!, label, timeoutSec: config.timeoutSec,

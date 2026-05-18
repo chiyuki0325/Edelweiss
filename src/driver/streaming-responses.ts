@@ -17,6 +17,7 @@ export interface StreamingResponsesParams {
   input: unknown[];
   instructions?: string;
   tools?: ResponseTool[];
+  forceToolCall?: boolean;
   timeoutSec?: number;
   log: Logger;
   label: string;
@@ -43,6 +44,7 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
       input: params.input,
       ...(params.instructions ? { instructions: params.instructions } : {}),
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
+      ...(params.forceToolCall ? { tool_choice: 'required' } : {}),
       stream: true,
     });
 

@@ -7,6 +7,7 @@ models:
     # timeoutSec: 120                # optional: abort requests that stream for too long
     # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
     # reasoningEffort: "xhigh"
+    # forceToolCall: false             # force the model to always call a tool
   probe:
     apiBaseUrl: ""
     apiKey: ""

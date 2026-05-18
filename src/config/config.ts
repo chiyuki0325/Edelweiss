@@ -16,6 +16,7 @@ const llmEndpointEntries = {
   timeoutSec: v.optional(v.number()),
   descriptionConcurrency: v.optional(v.number()),
   reasoningEffort: v.optional(v.picklist(['low', 'medium', 'high', 'max', 'xhigh'])),
+  forceToolCall: v.optional(v.boolean()),
 };
 
 // --- Runtime config schema (top-level, global) ---
