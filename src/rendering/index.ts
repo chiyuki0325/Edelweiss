@@ -66,6 +66,7 @@ const renderContentNode = (node: ContentNode): string => {
     if (node.altTextError)
       return `<custom-emoji error="${escapeXml(node.altTextError)}"/>`;
     return renderContent(node.children);
+  case 'rich': return `<rich>${node.text}</rich>`;
   }
 };
 

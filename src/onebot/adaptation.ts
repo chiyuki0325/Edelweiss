@@ -107,6 +107,41 @@ const adaptSegment = async (
     return null;
   }
 
+  case 'json': {
+    const card = JSON.parse(seg.data.data);
+    const strip = (obj: any): any => {
+      if (obj === null || typeof obj !== 'object') return;
+
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+
+        // 判断是否需要删除当前字段
+        if (
+          value === null ||
+            value === undefined ||
+            value === '' ||
+            (Array.isArray(value) && value.length === 0)
+        ) {
+          delete obj[key];
+        } else if (typeof value === 'object') {
+          // 递归
+          strip(value);
+        }
+      }
+    };
+    strip(card);
+
+    const keysToDelete = ['ver', 'config', 'app', 'view'];
+    for (const key of keysToDelete) {
+      delete card[key];
+    }
+
+    return {
+      type: 'rich',
+      text: JSON.stringify(card),
+    };
+  }
+
   // Unsupported segments: render as plain text description
   default:
     return null;

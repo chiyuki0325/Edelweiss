@@ -69,6 +69,11 @@ export interface OneBotFileSegment {
   data: { file: string; file_id: string; url?: string };
 }
 
+export interface OneBotJsonSegment {
+  type: 'json';
+  data: { data: string };
+}
+
 export type OneBotMessageSegment =
   | OneBotTextSegment
   | OneBotFaceSegment
@@ -77,7 +82,8 @@ export type OneBotMessageSegment =
   | OneBotReplySegment
   | OneBotRecordSegment
   | OneBotVideoSegment
-  | OneBotFileSegment;
+  | OneBotFileSegment
+  | OneBotJsonSegment;
 
 // --- Sender ---
 

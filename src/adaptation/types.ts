@@ -37,7 +37,8 @@ export type ContentNode =
   | { type: 'link'; url: string; children: ContentNode[] }
   | { type: 'mention'; userId?: string; children: ContentNode[] }
   | { type: 'custom_emoji'; customEmojiId: string; children: ContentNode[]; altText?: string; altTextError?: string; stickerSetName?: string }
-  | { type: 'face'; faceId: string; text: string };
+  | { type: 'face'; faceId: string; text: string }  // OneBot face
+  | { type: 'rich'; text: string }; // for unsupported content, preserve original encoding as text
 
 export interface CanonicalForwardInfo {
   fromUserId?: string;
