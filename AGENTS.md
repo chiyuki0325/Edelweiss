@@ -79,6 +79,7 @@ src/
 │   ├── chat-types.ts       # OpenAI Chat Completions wire types
 │   ├── responses-types.ts  # OpenAI Responses API wire types
 │   ├── anthropic-types.ts  # Anthropic Messages API wire types
+│   ├── anthropic.test.ts   # Anthropic Messages codec round-trip tests
 │   ├── codec.ts            # createCodec() — bidirectional provider ↔ IR converters
 │   ├── codec.test.ts       # Codec round-trip tests
 │   ├── from-chat-output.ts    # Chat Completions output → IR
@@ -106,6 +107,7 @@ src/
 │   ├── streaming.ts        # SSE streaming chat: parses OpenAI-compat SSE → ChatCompletion → IR
 │   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE → IR
 │   ├── streaming-messages.ts  # SSE streaming messages: parses Anthropic Messages SSE → IR
+│   ├── responses-types.ts   # OpenAI Responses API type definitions (shared with unified-api)
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files from skills/ folder → SkillInfo map
@@ -182,20 +184,24 @@ src/
 
 Top-level directories:
 - `prompts/` — all LLM prompt templates (velin `.velin.md` files), rendered at runtime via `@velin-dev/core`
-  - `primary-system.velin.md` — main system prompt for chat LLM calls
+  - `primary-system.velin.md` — main system prompt for chat LLM calls; **bot tone/style is hardcoded here**
   - `subagent-system.velin.md` — internal helper-agent prompt; intentionally contains no group-chat/platform/end-user concepts
   - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state, recent send_message human-likeness feedback, background task status)
-  - `IDENTITY.velin.md` — bot identity / personality definition (loaded by prompt renderer)
+  - `IDENTITY.velin.md` — bot identity / personality definition (loaded by prompt renderer); **bot persona is hardcoded here**
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)
   - `image-to-text-system.velin.md` — blocking image description prompt used before events enter the pipeline
   - `animation-to-text-system.velin.md` — blocking GIF/animation description prompt (multi-frame)
   - `sticker-animation-to-text-system.velin.md` — blocking animated sticker description prompt (multi-frame)
   - `custom-emoji-to-text-system.velin.md` — blocking static custom emoji description prompt
-  - `custom-emoji-animated-to-text-system.velin.md` — blocking animated custom emoji description prompt (multi-frame)
-- `skills/` — user-facing skill definitions (markdown files), loaded at runtime by `src/driver/skills.ts`
+- `skills/` — optional user-created skill definitions (markdown files), loaded at runtime by `src/driver/skills.ts`
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
+  - `content-aware-frame-selection.md` — MSE-based frame selection findings and rationale
+  - `humanize.md` — human-likeness design notes
+  - `subagent-system.md` — subagent system design
+  - `telegram-typing-events.md` — Telegram typing event research
+  - `unified-api-integration.md` — unified API integration design
 - `dcp-updates.md` — implementation deltas from the original RFC
 
 ### Type Ownership
