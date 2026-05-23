@@ -154,11 +154,13 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
         description: `Timeout in seconds. Commands with timeout > ${backgroundTask.backgroundThresholdSec}s run as background tasks and return immediately with a task ID. Short commands (e.g. ls, cat) typically need 5-10s; builds or tests may need 60-300s.`,
       },
       intention: { type: 'string', description: 'Brief description of what this command does (shown in background task status).' },
+      compact: { type: 'boolean', description: 'Set false to skip compaction and show full output (still truncated to 4 KB).' },
     },
     required: ['command', 'timeout_seconds'],
   },
   execute: async input => {
-    const { command, timeout_seconds, intention } = input as { command: string; timeout_seconds: number; intention?: string };
+    const { command, timeout_seconds, intention, compact } = input as { command: string; timeout_seconds: number; intention?: string; compact?: boolean };
+    const shouldCompact = compact ?? backgroundTask.compactOutput;
     const timeoutSec = timeout_seconds;
 
     // Background task path
@@ -166,7 +168,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
       const taskId = backgroundTask.startTask(
         'shell_execute',
         backgroundTask.sessionId,
-        { command, shell: runtime.shell, compactOutput: backgroundTask.compactOutput },
+        { command, shell: runtime.shell, compactOutput: shouldCompact },
         intention,
         timeoutSec * 1000,
       );
@@ -190,7 +192,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
             : 0;
 
           let compaction: { rawChars: number; reducedChars: number; ratio: number } | undefined;
-          if (backgroundTask.compactOutput && output.length > 0) {
+          if (shouldCompact && output.length > 0) {
             try {
               const result = await reduceExecution({
                 toolName: 'bash',
