@@ -220,6 +220,7 @@ export const createDriver = (config: DriverConfig, deps: {
         startTask: deps.backgroundTask.startTask,
         sessionId: chatId,
         backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
+        compactOutput: chatConfig.tools.bash.compactOutput,
       }));
       tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
       tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));

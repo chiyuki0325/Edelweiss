@@ -89,6 +89,7 @@ const ChatConfigSchema = v.object({
   tools: v.object({
     bash: v.optional(v.object({
       backgroundThresholdSec: v.optional(v.number(), 10),
+      compactOutput: v.optional(v.boolean(), false),
     }), {}),
     webSearch: v.object({
       tavilyKey: v.pipe(v.string(), v.minLength(1)),
@@ -153,6 +154,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
   tools: v.partial(v.object({
     bash: v.partial(v.object({
       backgroundThresholdSec: v.number(),
+      compactOutput: v.boolean(),
     })),
     webSearch: v.partial(v.object({
       tavilyKey: v.string(),
@@ -239,7 +241,7 @@ export interface ResolvedChatConfig {
   };
   skills?: { folder: string };
   tools: {
-    bash: { backgroundThresholdSec: number };
+    bash: { backgroundThresholdSec: number; compactOutput: boolean };
     webSearch: { tavilyKey: string };
   };
 }
@@ -329,7 +331,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     debounce: merged.debounce,
     humanLikeness: merged.humanLikeness,
     tools: {
-      bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec },
+      bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec, compactOutput: merged.tools.bash.compactOutput },
       webSearch: { tavilyKey: merged.tools.webSearch.tavilyKey },
     },
   };

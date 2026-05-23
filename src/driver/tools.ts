@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 
 import { Validator } from '@cfworker/json-schema';
 import type { Logger } from '@guiiai/logg';
+import { useGlobalLogger } from '@guiiai/logg';
 // @ts-ignore
 import markdownParser from 'prettier/esm/parser-markdown.mjs';
 // @ts-ignore
@@ -133,73 +134,130 @@ export const createSendMessageTool = (
 const BASH_MAX_OUTPUT = 4096;
 const BASH_TIMEOUT_MS = 30_000;
 
+const RTK_NATIVE_COMMANDS = new Set([
+  'ls', 'tree', 'read', 'find', 'grep', 'wc', 'wget', 'diff',
+  'git', 'gh', 'glab',
+  'cargo', 'dotnet', 'npm', 'npx', 'pnpm',
+  'jest', 'vitest', 'pytest', 'tsc', 'next', 'lint', 'prettier', 'format', 'ruff', 'mypy', 'playwright',
+  'rubocop', 'rspec', 'rake', 'golangci-lint', 'gradlew',
+  'aws', 'docker', 'kubectl', 'prisma', 'psql',
+  'smart', 'summary', 'err', 'test', 'json', 'deps', 'env', 'log',
+  'curl', 'go', 'gt', 'pip',
+]);
+
+const extractArgv0 = (command: string): string | null =>
+  command.trimStart().match(/^[^\s]+/)?.[0] ?? null;
+
 export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
   startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
   sessionId: string;
   backgroundThresholdSec: number;
-}): CahciuaTool => createTool({
-  name: 'bash',
-  description:
+  compactOutput: boolean;
+}): CahciuaTool => {
+  let rtkAvailable: boolean | null = null;
+  const checkRtk = (): boolean => {
+    if (rtkAvailable !== null) return rtkAvailable;
+    const result = spawnSync('which', ['rtk'], { stdio: 'pipe' });
+    rtkAvailable = result.status === 0;
+    if (!rtkAvailable && backgroundTask.compactOutput) {
+      useGlobalLogger('bash').warn('rtk not found in PATH, compactOutput will have no effect');
+    }
+    return rtkAvailable;
+  };
+
+  return createTool({
+    name: 'bash',
+    description:
     'Execute a shell command. Output (stdout+stderr combined) is truncated to 4 KB. '
     + 'For large outputs, redirect to a file and read specific ranges. '
     + `Set timeout_seconds > ${backgroundTask.backgroundThresholdSec} for long-running commands — they run as background tasks and return immediately with a task ID.`,
-  parameters: {
-    type: 'object',
-    properties: {
-      command: { type: 'string', description: 'The shell command to execute.' },
-      timeout_seconds: {
-        type: 'number',
-        description: `Timeout in seconds. Commands with timeout > ${backgroundTask.backgroundThresholdSec}s run as background tasks and return immediately with a task ID. Short commands (e.g. ls, cat) typically need 5-10s; builds or tests may need 60-300s.`,
-      },
-      intention: { type: 'string', description: 'Brief description of what this command does (shown in background task status).' },
-    },
-    required: ['command', 'timeout_seconds'],
-  },
-  execute: async input => {
-    const { command, timeout_seconds, intention } = input as { command: string; timeout_seconds: number; intention?: string };
-    const timeoutSec = timeout_seconds;
-
-    // Background task path
-    if (timeoutSec > backgroundTask.backgroundThresholdSec) {
-      const taskId = backgroundTask.startTask(
-        'shell_execute',
-        backgroundTask.sessionId,
-        { command, shell: runtime.shell },
-        intention,
-        timeoutSec * 1000,
-      );
-      return {
-        content: JSON.stringify({ background_task_id: taskId, message: `Background task started (id: ${taskId}). You will be notified when it completes. Use kill_task to cancel or read_task_output to view results.` }),
-        requiresFollowUp: true,
-      };
-    }
-
-    // Synchronous execution path
-    return await new Promise<ToolResult>(resolve => {
-      const child = execFile(
-        runtime.shell[0]!,
-        [...runtime.shell.slice(1), command],
-        { timeout: Math.min(timeoutSec * 1000, BASH_TIMEOUT_MS), maxBuffer: BASH_MAX_OUTPUT * 2 },
-        (error, stdout, stderr) => {
-          let output = stdout + stderr;
-          let truncated = false;
-          if (output.length > BASH_MAX_OUTPUT) {
-            output = output.slice(0, BASH_MAX_OUTPUT);
-            truncated = true;
-          }
-          const exitCode = error ? (error as NodeJS.ErrnoException & { code?: string | number }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
-            ? 'truncated'
-            : (child.exitCode ?? 1)
-            : 0;
-          resolve({
-            content: JSON.stringify({ exit_code: exitCode, output, truncated }),
-            requiresFollowUp: true,
-          });
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The shell command to execute.' },
+        timeout_seconds: {
+          type: 'number',
+          description: `Timeout in seconds. Commands with timeout > ${backgroundTask.backgroundThresholdSec}s run as background tasks and return immediately with a task ID. Short commands (e.g. ls, cat) typically need 5-10s; builds or tests may need 60-300s.`,
         },
-      );
-    });
-  },
-});
+        intention: { type: 'string', description: 'Brief description of what this command does (shown in background task status).' },
+      },
+      required: ['command', 'timeout_seconds'],
+    },
+    execute: async input => {
+      const { command, timeout_seconds, intention } = input as { command: string; timeout_seconds: number; intention?: string };
+      const timeoutSec = timeout_seconds;
+
+      // Background task path
+      if (timeoutSec > backgroundTask.backgroundThresholdSec) {
+        const taskId = backgroundTask.startTask(
+          'shell_execute',
+          backgroundTask.sessionId,
+          { command, shell: runtime.shell },
+          intention,
+          timeoutSec * 1000,
+        );
+        return {
+          content: JSON.stringify({ background_task_id: taskId, message: `Background task started (id: ${taskId}). You will be notified when it completes. Use kill_task to cancel or read_task_output to view results.` }),
+          requiresFollowUp: true,
+        };
+      }
+
+      // Synchronous execution path
+      return await new Promise<ToolResult>(resolve => {
+        const argv0 = extractArgv0(command);
+        const rtkAvailable = checkRtk();
+        const useRtkNative = backgroundTask.compactOutput && rtkAvailable && argv0 !== null && RTK_NATIVE_COMMANDS.has(argv0);
+        const useRtkPipe = backgroundTask.compactOutput && rtkAvailable && !useRtkNative;
+        const effectiveCommand = useRtkNative ? `rtk ${command}` : command;
+
+        const child = execFile(
+          runtime.shell[0]!,
+          [...runtime.shell.slice(1), effectiveCommand],
+          { timeout: Math.min(timeoutSec * 1000, BASH_TIMEOUT_MS), maxBuffer: BASH_MAX_OUTPUT * 2 },
+          (error, stdout, stderr) => {
+            const rawOutput = stdout + stderr;
+            const finish = (output: string, wasTruncated: boolean) => {
+              let final = output;
+              let truncated = wasTruncated;
+              if (final.length > BASH_MAX_OUTPUT) {
+                final = final.slice(0, BASH_MAX_OUTPUT);
+                truncated = true;
+              }
+              const exitCode = error ? (error as NodeJS.ErrnoException & { code?: string | number }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+                ? 'truncated'
+                : (child.exitCode ?? 1)
+                : 0;
+              resolve({
+                content: JSON.stringify({ exit_code: exitCode, output: final, truncated }),
+                requiresFollowUp: true,
+              });
+            };
+
+            if (useRtkPipe && rawOutput.length > 0) {
+              const rtkChild = spawn('rtk', ['pipe'], { stdio: ['pipe', 'pipe', 'pipe'] });
+              let rtkOutput = '';
+              rtkChild.stdout.on('data', (chunk: Buffer) => { rtkOutput += chunk.toString(); });
+              rtkChild.on('close', code => {
+                if (code === 0 && rtkOutput) {
+                  finish(rtkOutput, false);
+                } else {
+                  finish(rawOutput, rawOutput.length > BASH_MAX_OUTPUT);
+                }
+              });
+              rtkChild.on('error', () => {
+                finish(rawOutput, rawOutput.length > BASH_MAX_OUTPUT);
+              });
+              rtkChild.stdin.write(rawOutput);
+              rtkChild.stdin.end();
+            } else {
+              finish(rawOutput, false);
+            }
+          },
+        );
+      });
+    },
+  });
+};
 
 const WEB_SEARCH_TIMEOUT_MS = 15_000;
 

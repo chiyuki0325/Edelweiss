@@ -91,6 +91,7 @@ chats:
     tools:
       # bash:
       #   backgroundThresholdSec: 10               # timeout threshold above which bash runs as background task
+      #   compactOutput: false                     # pipe output through rtk for token savings (requires rtk in PATH)
       webSearch:
         tavilyKey: ""                              # Tavily API key for web search (required)
     # Subagent config

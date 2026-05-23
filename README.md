@@ -42,6 +42,7 @@
 - 为 Telegram 平台设计防抖功能，监听「正在输入」事件，在用户发送多条消息或群里正在激烈讨论时，不触发 LLM 调用，防止 Bot 不合时宜地插嘴
 - 初步支持技能文件，用户可以引导 Bot 把成形的工作流记录为技能文件，供以后参考
 - 初步支持 subagent，Bot 可以把消耗上下文的任务（如复杂的探索任务）委派给 subagent，防止多余 TR 干扰对话方向
+- 可选的 rtk 集成（`tools.bash.compactOutput`），通过 [rtk](https://github.com/rtk-ai/rtk) 压缩 bash 工具输出，节省 LLM 上下文 token
 
 ## 开始使用
 
