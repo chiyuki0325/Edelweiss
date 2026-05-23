@@ -134,6 +134,22 @@ export const createSendMessageTool = (
 const BASH_MAX_OUTPUT = 4096;
 const BASH_TIMEOUT_MS = 30_000;
 
+const DATA_RETRIEVAL_COMMANDS = new Set([
+  // tokenjuice FILE_CONTENT_INSPECTION_COMMANDS
+  'cat', 'sed', 'head', 'tail', 'nl', 'bat', 'batcat', 'jq', 'yq',
+  // tokenjuice REPO_INVENTORY_COMMANDS + INSPECTION_ONLY
+  'find', 'fd', 'fdfind', 'ls', 'tree',
+  // additional data-viewing commands
+  'grep', 'rg', 'awk', 'cut', 'sort', 'uniq', 'wc', 'file', 'stat',
+  'du', 'df', 'xxd', 'hexdump', 'od', 'less', 'more',
+  'zcat', 'bzcat', 'xzcat',
+]);
+
+const isDataRetrievalCommand = (command: string): boolean => {
+  const argv0 = command.trim().split(/\s+/)[0]?.split('/').pop() ?? '';
+  return DATA_RETRIEVAL_COMMANDS.has(argv0);
+};
+
 export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
   startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
   sessionId: string;
@@ -168,7 +184,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
       const taskId = backgroundTask.startTask(
         'shell_execute',
         backgroundTask.sessionId,
-        { command, shell: runtime.shell, compactOutput: shouldCompact },
+        { command, shell: runtime.shell, compactOutput: shouldCompact && !isDataRetrievalCommand(command) },
         intention,
         timeoutSec * 1000,
       );
@@ -192,7 +208,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
             : 0;
 
           let compaction: { rawChars: number; reducedChars: number; ratio: number } | undefined;
-          if (shouldCompact && output.length > 0) {
+          if (shouldCompact && output.length > 0 && !isDataRetrievalCommand(command)) {
             try {
               const result = await reduceExecution({
                 toolName: 'bash',
