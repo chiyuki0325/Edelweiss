@@ -91,6 +91,7 @@ chats:
     tools:
       # bash:
       #   backgroundThresholdSec: 10               # timeout threshold above which bash runs as background task
+      #   compactOutput: true                       # compact output with tokenjuice before truncation
       webSearch:
         tavilyKey: ""                              # Tavily API key for web search (required)
     # Subagent config

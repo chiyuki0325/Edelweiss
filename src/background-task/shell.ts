@@ -1,15 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { signal } from 'alien-signals';
+import { reduceExecution } from 'tokenjuice';
 
 import type { BackgroundTask, BackgroundTaskFactory, TaskContext } from './types';
 
 export interface ShellParams {
   command: string;
   shell: string[];
+  compactOutput: boolean;
 }
 
 export interface ShellCheckpoint {
@@ -91,10 +94,29 @@ export const shellTaskFactory: BackgroundTaskFactory<ShellParams, ShellCheckpoin
         : killReason === 'tool_call'
           ? 'Killed by user'
           : `Exited with code ${exitCode}`;
-      const meta = `${reason}. ${lines} lines, ${bytes} bytes output.`;
-      const output = buildOutputSummary(head, tail, bytes);
-      const summary = output ? `${meta}\n\n${output}` : meta;
-      outStream.end(() => {
+      outStream.end(async () => {
+        let summary: string;
+        if (params.compactOutput) {
+          try {
+            const fullOutput = await readFile(tmpFile, 'utf-8');
+            const result = await reduceExecution({
+              toolName: 'bash',
+              command: params.command,
+              combinedText: fullOutput,
+              exitCode: exitCode ?? undefined,
+            });
+            const meta = `${reason}. ${lines} lines, ${bytes} bytes raw → ${result.stats.reducedChars} chars compacted (${Math.round(result.stats.ratio * 100)}%).`;
+            summary = `${meta}\n\n${result.inlineText}`;
+          } catch {
+            const meta = `${reason}. ${lines} lines, ${bytes} bytes output.`;
+            const output = buildOutputSummary(head, tail, bytes);
+            summary = output ? `${meta}\n\n${output}` : meta;
+          }
+        } else {
+          const meta = `${reason}. ${lines} lines, ${bytes} bytes output.`;
+          const output = buildOutputSummary(head, tail, bytes);
+          summary = output ? `${meta}\n\n${output}` : meta;
+        }
         _finalSummary(summary);
         _completed(true);
       });

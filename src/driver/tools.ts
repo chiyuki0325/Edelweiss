@@ -7,6 +7,7 @@ import markdownParser from 'prettier/esm/parser-markdown.mjs';
 // @ts-ignore
 import prettier from 'prettier/esm/standalone.mjs';
 import sharp from 'sharp';
+import { reduceExecution } from 'tokenjuice';
 
 import type { SkillInfo } from './skills';
 import type { PlatformAdapter } from './types';
@@ -137,6 +138,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
   startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
   sessionId: string;
   backgroundThresholdSec: number;
+  compactOutput: boolean;
 }): CahciuaTool => createTool({
   name: 'bash',
   description:
@@ -164,7 +166,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
       const taskId = backgroundTask.startTask(
         'shell_execute',
         backgroundTask.sessionId,
-        { command, shell: runtime.shell },
+        { command, shell: runtime.shell, compactOutput: backgroundTask.compactOutput },
         intention,
         timeoutSec * 1000,
       );
@@ -180,19 +182,34 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
         runtime.shell[0]!,
         [...runtime.shell.slice(1), command],
         { timeout: Math.min(timeoutSec * 1000, BASH_TIMEOUT_MS), maxBuffer: BASH_MAX_OUTPUT * 2 },
-        (error, stdout, stderr) => {
+        async (error, stdout, stderr) => {
           let output = stdout + stderr;
+          const exitCode = error ? (error as NodeJS.ErrnoException & { code?: string | number }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+            ? 'truncated'
+            : (child.exitCode ?? 1)
+            : 0;
+
+          let compaction: { rawChars: number; reducedChars: number; ratio: number } | undefined;
+          if (backgroundTask.compactOutput && output.length > 0) {
+            try {
+              const result = await reduceExecution({
+                toolName: 'bash',
+                command,
+                combinedText: output,
+                exitCode: typeof exitCode === 'number' ? exitCode : undefined,
+              });
+              compaction = { rawChars: result.stats.rawChars, reducedChars: result.stats.reducedChars, ratio: result.stats.ratio };
+              output = result.inlineText;
+            } catch { /* fall through to truncation with raw output */ }
+          }
+
           let truncated = false;
           if (output.length > BASH_MAX_OUTPUT) {
             output = output.slice(0, BASH_MAX_OUTPUT);
             truncated = true;
           }
-          const exitCode = error ? (error as NodeJS.ErrnoException & { code?: string | number }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
-            ? 'truncated'
-            : (child.exitCode ?? 1)
-            : 0;
           resolve({
-            content: JSON.stringify({ exit_code: exitCode, output, truncated }),
+            content: JSON.stringify({ exit_code: exitCode, output, truncated, ...(compaction ? { compaction } : {}) }),
             requiresFollowUp: true,
           });
         },
