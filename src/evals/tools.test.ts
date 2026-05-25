@@ -27,4 +27,34 @@ describe('createEvalTools', () => {
     const { tools } = createEvalTools();
     expect(tools.map(t => t.function.name)).toEqual(['send_message', 'dismiss_message']);
   });
+
+  it('prevents duplicate load_skill calls during one eval run', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const skillsFolder = mkdtempSync(join(tmpdir(), 'cahciua-eval-skills-'));
+    writeFileSync(join(skillsFolder, 'debug.md'), '# Debug Skill\n\nUse for debugging.');
+
+    const { tools, trace } = createEvalTools({ skillsFolder });
+    const first = await executeToolCall(
+      'tc1',
+      'load_skill',
+      JSON.stringify({ skill_name: 'debug' }),
+      tools,
+      log,
+    );
+    const second = await executeToolCall(
+      'tc2',
+      'load_skill',
+      JSON.stringify({ skill_name: 'debug' }),
+      tools,
+      log,
+    );
+
+    expect(first.payload).toContain('# Debug Skill');
+    expect(JSON.parse(second.payload as string)).toEqual({
+      error: 'Skill "debug" is already loaded in the current context window.',
+    });
+    expect(trace.loadedSkills).toEqual(['debug']);
+  });
 });

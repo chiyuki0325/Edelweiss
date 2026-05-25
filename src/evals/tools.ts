@@ -47,9 +47,14 @@ export const createEvalTools = (options: EvalToolsOptions = {}): EvalTools => {
 
   if (enabledTools.has('load_skill') && options.skillsFolder) {
     const skills = loadSkillsFromFolder(options.skillsFolder);
+    const loadedSkills = new Set<string>();
     tools.push(createLoadSkillTool(
       () => skills,
-      name => { trace.loadedSkills.push(name); },
+      name => {
+        loadedSkills.add(name);
+        trace.loadedSkills.push(name);
+      },
+      name => loadedSkills.has(name),
     ));
   }
 

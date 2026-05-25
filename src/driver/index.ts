@@ -10,7 +10,7 @@ import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, render
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -332,9 +332,11 @@ export const createDriver = (config: DriverConfig, deps: {
           const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
           const skillTools: CahciuaTool[] = [];
           if (allSkills.size > 0) {
+            const loadedSkills = extractLoadedSkillNames(ctx.entries);
             skillTools.push(createLoadSkillTool(
               () => allSkills,
-              () => {},
+              name => { loadedSkills.add(name); },
+              name => loadedSkills.has(name),
             ));
           }
           const tools: CahciuaTool[] = [...sharedTools, ...subagentTools, ...skillTools];

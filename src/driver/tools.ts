@@ -461,6 +461,7 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buf
 export const createLoadSkillTool = (
   availableSkills: () => Map<string, SkillInfo>,
   onSkillLoaded: (name: string) => void,
+  isSkillLoaded: (name: string) => boolean = () => false,
 ): CahciuaTool => createTool({
   name: 'load_skill',
   description: 'Load a predefined skill module into the current session. If the available skills list contains a skill that clearly matches the user request or next action, load it before giving a substantive answer or using other task-specific tools.',
@@ -475,7 +476,9 @@ export const createLoadSkillTool = (
     const { skill_name } = input as { skill_name: string };
     const skill = availableSkills().get(skill_name);
     if (!skill)
-      return { content: JSON.stringify({ error: `Skill "${skill_name}" not found or already loaded.` }), requiresFollowUp: true };
+      return { content: JSON.stringify({ error: `Skill "${skill_name}" not found.` }), requiresFollowUp: true };
+    if (isSkillLoaded(skill_name))
+      return { content: JSON.stringify({ error: `Skill "${skill_name}" is already loaded in the current context window.` }), requiresFollowUp: true };
     onSkillLoaded(skill_name);
     return { content: `# ${skill.title}\n\n${skill.content}`, requiresFollowUp: true };
   },
@@ -594,6 +597,37 @@ export const extractToolCalls = (entries: ConversationEntry[]): ToolCallPart[] =
     }
   }
   return calls;
+};
+
+export const extractLoadedSkillNames = (entries: ConversationEntry[]): Set<string> => {
+  const result = new Set<string>();
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry?.kind !== 'message' || entry.role !== 'assistant') continue;
+
+    for (const part of entry.parts) {
+      if (part.kind !== 'toolCall' || part.name !== 'load_skill') continue;
+
+      let skillName: string | undefined;
+      try {
+        const args = JSON.parse(part.args) as { skill_name?: unknown };
+        if (typeof args.skill_name === 'string') skillName = args.skill_name;
+      } catch {
+        continue;
+      }
+      if (!skillName) continue;
+
+      const isMatchingToolResult = (e: ConversationEntry): e is IRToolResult =>
+        e.kind === 'toolResult' && e.callId === part.callId;
+      const toolResult = entries.slice(i + 1).find(isMatchingToolResult);
+      if (!toolResult || Array.isArray(toolResult.payload)) continue;
+      if (toolResult.payload.startsWith('{')) continue;
+      result.add(skillName);
+    }
+  }
+
+  return result;
 };
 
 const toolError = (id: string, message: string): IRToolResult => ({

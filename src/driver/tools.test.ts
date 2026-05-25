@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createReadImageTool, createTool, executeToolCall } from './tools';
+import { createLoadSkillTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import type { ConversationEntry } from '../unified-api/types';
 
 const createTinyPng = async (): Promise<Buffer> => {
   const { default: sharp } = await import('sharp');
@@ -61,6 +62,101 @@ describe('createReadImageTool', () => {
       requiresFollowUp: true,
       content: [{ kind: 'image', detail: 'low' }],
     });
+  });
+});
+
+describe('createLoadSkillTool', () => {
+  const skills = new Map([
+    ['debug', { name: 'debug', title: 'Debug Skill', content: 'Find the failing path.' }],
+  ]);
+
+  it('rejects skills already loaded in the current context window', async () => {
+    const loaded = new Set(['debug']);
+    const tool = createLoadSkillTool(
+      () => skills,
+      name => { loaded.add(name); },
+      name => loaded.has(name),
+    );
+
+    const result = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc1' });
+
+    expect(result).toEqual({
+      content: JSON.stringify({ error: 'Skill "debug" is already loaded in the current context window.' }),
+      requiresFollowUp: true,
+    });
+  });
+
+  it('marks a skill loaded after successful execution', async () => {
+    const loaded = new Set<string>();
+    const tool = createLoadSkillTool(
+      () => skills,
+      name => { loaded.add(name); },
+      name => loaded.has(name),
+    );
+
+    const first = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc1' });
+    const second = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc2' });
+
+    expect(first.content).toContain('# Debug Skill');
+    expect(loaded.has('debug')).toBe(true);
+    expect(second).toEqual({
+      content: JSON.stringify({ error: 'Skill "debug" is already loaded in the current context window.' }),
+      requiresFollowUp: true,
+    });
+  });
+});
+
+describe('extractLoadedSkillNames', () => {
+  it('extracts successful load_skill calls from current context entries', () => {
+    const entries: ConversationEntry[] = [
+      {
+        kind: 'message',
+        role: 'assistant',
+        reasoning: undefined,
+        parts: [
+          {
+            kind: 'toolCall',
+            callId: 'tc1',
+            name: 'load_skill',
+            args: JSON.stringify({ skill_name: 'debug' }),
+          },
+        ],
+      },
+      {
+        kind: 'toolResult',
+        callId: 'tc1',
+        payload: '# Debug Skill\n\nInstructions',
+        requiresFollowUp: true,
+      },
+    ];
+
+    expect([...extractLoadedSkillNames(entries)]).toEqual(['debug']);
+  });
+
+  it('ignores failed load_skill results', () => {
+    const entries: ConversationEntry[] = [
+      {
+        kind: 'message',
+        role: 'assistant',
+        reasoning: undefined,
+        parts: [
+          {
+            kind: 'toolCall',
+            callId: 'tc1',
+            name: 'load_skill',
+            args: JSON.stringify({ skill_name: 'debug' }),
+          },
+        ],
+      },
+      {
+        kind: 'toolResult',
+        callId: 'tc1',
+        payload: JSON.stringify({ error: 'Skill "debug" is already loaded in the current context window.' }),
+        requiresFollowUp: true,
+      },
+    ];
+
+    expect([...extractLoadedSkillNames(entries)]).toEqual([]);
   });
 });
 
