@@ -458,7 +458,7 @@ Toggles are per-chat (deep-merged with `default` like all other config). Defined
 
 ### Skills System
 
-`src/driver/skills.ts` loads user-facing skill/tool definitions from markdown files in a configurable `skills/` folder. Each skill file becomes a `SkillInfo` with `name` (filename stem), `title` (first `# heading`), and `content` (full markdown body). A `load_skill` tool lets the LLM fetch skill content at runtime, injected into the system prompt as an available-tools catalog. This decouples skill authoring from code changes — adding a skill is just creating a `.md` file.
+`src/driver/skills.ts` loads user-facing skill/tool definitions from markdown files in a configurable `skills/` folder. Each skill file becomes a `SkillInfo` with `name` (filename stem), `title` (first `# heading`), and `content` (full markdown body). A `load_skill` tool lets the LLM fetch skill content at runtime, injected into the system prompt as an available-tools catalog. When skills are available, `primary-system.velin.md` includes Skill Activation guidance: before answering or using other task-specific tools, the LLM must check the listed skills and load a clearly matching skill by exact name. This decouples skill authoring from code changes — adding a skill is just creating a `.md` file.
 
 ### Background Tasks
 

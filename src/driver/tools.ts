@@ -463,7 +463,7 @@ export const createLoadSkillTool = (
   onSkillLoaded: (name: string) => void,
 ): CahciuaTool => createTool({
   name: 'load_skill',
-  description: 'Load a predefined skill module into the current session. Skills are curated sets of instructions and capabilities for specific tasks. Check the available skills list in the context for what is currently loadable.',
+  description: 'Load a predefined skill module into the current session. If the available skills list contains a skill that clearly matches the user request or next action, load it before giving a substantive answer or using other task-specific tools.',
   parameters: {
     type: 'object',
     properties: {
