@@ -206,6 +206,8 @@ Top-level directories:
 - `skills/` — optional user-created skill definitions (markdown files), loaded at runtime by `src/driver/skills.ts`
 - `evals/` — optional user-authored LLM eval suites, IC fixtures, prompt variants, and evaluator modules. These are run manually with `pnpm eval <suite.ts>` and are not part of ordinary Vitest unit tests.
   - `evals/skill-activation/` — compares the pre/post Skill Activation system prompts with fake skills and reports `load_skill` / correct-skill call rates.
+- `scripts/diagnose-custom-emoji.sh` — read-only production diagnostic for Telegram custom emoji ID/cache mismatches; joins persisted event fallback text with `image_alt_texts` cache rows and validates IDs through Bot API `getCustomEmojiStickers` without printing the token.
+- `scripts/dump-custom-emoji.ts` — fetches one Telegram custom emoji through the same Bot API download and frame/static-PNG preparation path used by custom-emoji-to-text, writing the raw source and model-visible PNGs under `data/custom-emoji-dumps/`; with `DESCRIBE=1`, calls the configured customEmojiToText model without writing DB cache.
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
   - `content-aware-frame-selection.md` — MSE-based frame selection findings and rationale
@@ -634,6 +636,7 @@ Optional blocking ingress transform that resolves custom emoji (inline `MessageE
   - **Animated/Video**: frame extraction via `extractFrames` (same as animation-to-text) → LLM description via `custom-emoji-animated-to-text-system.velin.md` prompt.
 - Cache key is `emoji:${customEmojiId}` — stored in the same `image_alt_texts` table. The `customEmojiId` is a document ID, globally unique and stable.
 - Alt text is set transiently on `ContentNode.altText` (type `custom_emoji`) during sync hydration, never stored in the events table.
+- PNGs sent to vision models are flattened onto a white background before base64 encoding. Some providers mishandle transparent PNG alpha and otherwise see black glyph stickers/custom emoji as solid black squares.
 
 **Rendering**: When `altText` is present on a `custom_emoji` ContentNode, Rendering emits `<custom-emoji pack="PackName">description</custom-emoji>` (with `pack` attribute when `stickerSetName` is available). Without alt text, the fallback emoji character is rendered directly.
 
