@@ -52,24 +52,43 @@ export const createRunner = (config: RunnerConfig) => {
     const stepRequestedAt = Date.now();
     const toolSchemas = params.tools.map(toToolSchema);
 
-    const result = await callLlm(config, workingEntries, params.system, toolSchemas, {
-      log: params.log,
-      label: `step:${step}`,
-      dumpId: params.chatId,
-      maxImagesAllowed: params.maxImagesAllowed,
-    });
+    const MAX_FORCE_TOOL_RETRIES = 3;
 
-    const usage = {
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      cacheCreationTokens: result.usage.cacheCreationTokens,
-      cacheReadTokens: result.usage.cacheReadTokens,
-    };
+    let result!: Awaited<ReturnType<typeof callLlm>>;
+    let usage: Usage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: -1, cacheReadTokens: -1 };
 
-    if (result.entries.length === 0)
+    for (let attempt = 0; attempt < (config.forceToolCall ? MAX_FORCE_TOOL_RETRIES + 1 : 1); attempt++) {
+      result = await callLlm(config, workingEntries, params.system, toolSchemas, {
+        log: params.log,
+        label: `step:${step}`,
+        dumpId: params.chatId,
+        maxImagesAllowed: params.maxImagesAllowed,
+      });
+
+      const add = (a: number, b: number) => (a === -1 || b === -1) ? -1 : a + b;
+      usage = {
+        inputTokens: usage.inputTokens + result.usage.inputTokens,
+        outputTokens: usage.outputTokens + result.usage.outputTokens,
+        cacheCreationTokens: add(usage.cacheCreationTokens, result.usage.cacheCreationTokens),
+        cacheReadTokens: add(usage.cacheReadTokens, result.usage.cacheReadTokens),
+      };
+
+      if (!config.forceToolCall) break;
+
+      const hasTools = result.entries.length > 0 && extractToolCalls(result.entries).length > 0;
+      if (hasTools) break;
+
+      if (attempt < MAX_FORCE_TOOL_RETRIES) {
+        params.log.withFields({
+          chatId: params.chatId, step, attempt: attempt + 1, maxRetries: MAX_FORCE_TOOL_RETRIES,
+        }).log('forceToolCall: model returned no tool calls, retrying');
+      }
+    }
+
+    if (result!.entries.length === 0)
       return { stepEntries: [], usage, requestedAtMs: stepRequestedAt, hasToolCalls: false };
 
-    const toolCalls = extractToolCalls(result.entries);
+    const toolCalls = extractToolCalls(result!.entries);
     const toolResults: ToolResult[] = [];
     for (const tc of toolCalls)
       toolResults.push(await executeToolCall(tc.callId, tc.name, tc.args, params.tools, params.log));
