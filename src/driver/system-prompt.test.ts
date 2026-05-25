@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { renderMarkdownString } from '@velin-dev/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { renderPromptTemplate } from '../prompt-template';
+
 // basePath must be a file (not directory) so createRequire resolves pnpm's node_modules
 const basePath = resolve(__dirname, '../../package.json');
 
@@ -35,7 +37,7 @@ const assertNoVueSyntaxLeak = (rendered: string) => {
 
 const systemTemplate = loadTemplate('primary-system.velin.md');
 const renderSystem = (data: Record<string, unknown> = {}) =>
-  renderMarkdownString(systemTemplate, data, basePath).then(r => r.rendered);
+  renderPromptTemplate(systemTemplate, data, basePath);
 
 describe('primary-system.velin.md', () => {
   it('renders with minimal props', async () => {
