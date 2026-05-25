@@ -634,6 +634,7 @@ Optional blocking ingress transform that resolves custom emoji (inline `MessageE
   - **Animated/Video**: frame extraction via `extractFrames` (same as animation-to-text) → LLM description via `custom-emoji-animated-to-text-system.velin.md` prompt.
 - Cache key is `emoji:${customEmojiId}` — stored in the same `image_alt_texts` table. The `customEmojiId` is a document ID, globally unique and stable.
 - Alt text is set transiently on `ContentNode.altText` (type `custom_emoji`) during sync hydration, never stored in the events table.
+- PNGs sent to vision models are flattened onto a white background before base64 encoding. Some providers mishandle transparent PNG alpha and otherwise see black glyph stickers/custom emoji as solid black squares.
 
 **Rendering**: When `altText` is present on a `custom_emoji` ContentNode, Rendering emits `<custom-emoji pack="PackName">description</custom-emoji>` (with `pack` attribute when `stickerSetName` is available). Without alt text, the fallback emoji character is rendered directly.
 
