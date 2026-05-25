@@ -27,6 +27,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
 | Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (with supergroup typing poll), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
 
@@ -55,6 +56,7 @@ src/
 ├── startup.ts              # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
 ├── startup.test.ts         # Startup chat selection tests
 ├── pipeline.ts             # Per-chat IC/RC state manager (reduce → render → log → dump)
+├── prompt-template.ts      # Shared Velin template rendering cleanup used by production prompts and evals
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── contacts.ts             # Contact list loader (contacts.json → Map<id, displayName>)
 ├── runtime-event.ts        # RuntimeEvent types for Driver-generated synthetic events (e.g. background task completion)
@@ -129,6 +131,12 @@ src/
 │   ├── manager.ts          # BackgroundTaskManager: lifecycle, pause/resume, timeout, checkpoint persistence
 │   ├── shell.ts            # Shell command BackgroundTask implementation
 │   └── index.ts            # Barrel exports
+├── evals/                  # Offline LLM eval harness
+│   ├── types.ts            # EvalSuite / EvalScenario / EvalRunResult / evaluator type definitions
+│   ├── runner.ts           # Suite runner: IC → RC → context → model/tool loop → evaluator
+│   ├── tools.ts            # Side-effect-free eval tools (send_message capture, dismiss, load_skill trace)
+│   ├── report.ts           # runs.jsonl / summary.json / summary.md reporting and probability stats
+│   └── index.ts            # Public eval harness exports
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
 │   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, probeResponses, probeResponsesV2, imageAltTexts, subagents, subagentMessages, backgroundTasks tables
@@ -195,6 +203,7 @@ Top-level directories:
   - `sticker-animation-to-text-system.velin.md` — blocking animated sticker description prompt (multi-frame)
   - `custom-emoji-to-text-system.velin.md` — blocking static custom emoji description prompt
 - `skills/` — optional user-created skill definitions (markdown files), loaded at runtime by `src/driver/skills.ts`
+- `evals/` — optional user-authored LLM eval suites, IC fixtures, prompt variants, and evaluator modules. These are run manually with `pnpm eval <suite.ts>` and are not part of ordinary Vitest unit tests.
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
   - `content-aware-frame-selection.md` — MSE-based frame selection findings and rationale
@@ -227,6 +236,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm lint` uses `tsconfig.eslint.json` so `scripts/**/*.ts` can be linted without expanding the build/typecheck project.
 - `pnpm lint` / `pnpm lint:fix` — ESLint.
 - `pnpm test` / `pnpm test:run` — Vitest.
+- `pnpm eval <suite.ts>` — run an offline LLM eval suite. Loads models from `config.yaml`, calls real model endpoints, writes `runs.jsonl`, `summary.json`, and `summary.md` under `eval-results/<suite>/<timestamp>/` unless the suite overrides `outputDir`.
 - `pnpm login` — interactive MTProto session login.
 - `pnpm db:generate` — generate Drizzle migration from schema changes.
 
