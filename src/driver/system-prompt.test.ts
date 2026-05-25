@@ -79,6 +79,31 @@ describe('primary-system.velin.md', () => {
     expect(rendered).toContain('runtime-event');
     expect(rendered).toContain('task-completed');
   });
+
+  it('renders load_skill activation guidance when skills are available', async () => {
+    const rendered = await renderSystem({
+      modelName: 'gpt-4o',
+      hasLoadSkillTool: true,
+      availableSkills: [
+        { name: 'debug', title: 'Debug failing tests' },
+        { name: 'review', title: 'Review code changes' },
+      ],
+    });
+
+    expect(rendered).toContain('`load_skill`');
+    expect(rendered).toContain('### Skill Activation');
+    expect(rendered).toContain('call `load_skill` with that exact skill name before giving a substantive answer');
+    expect(rendered).toContain('Do not guess skill names that are not listed');
+    expect(rendered).toContain('- `debug`: Debug failing tests');
+    expect(rendered).toContain('- `review`: Review code changes');
+    assertNoVueSyntaxLeak(rendered);
+  });
+
+  it('omits load_skill activation guidance when no skills are available', async () => {
+    const rendered = await renderSystem({ modelName: 'gpt-4o' });
+    expect(rendered).not.toContain('### Skill Activation');
+    expect(rendered).not.toContain('Available skills (load with `load_skill`)');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
