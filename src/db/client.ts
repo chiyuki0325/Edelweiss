@@ -11,21 +11,27 @@ import * as schema from './schema';
 
 export type DB = ReturnType<typeof createDatabase>;
 
-export const createDatabase = (dbPath: string, logger: Logger) => {
+const openDatabase = (dbPath: string, logger: Logger, readonly: boolean) => {
   const log = logger.withContext('db');
 
-  const dir = path.dirname(dbPath);
-  fs.mkdirSync(dir, { recursive: true });
-
-  const sqlite = new Database(dbPath);
-  sqlite.pragma('journal_mode = WAL');
-
+  const sqlite = new Database(dbPath, readonly ? { readonly: true, fileMustExist: true } : undefined);
+  if (!readonly) sqlite.pragma('journal_mode = WAL');
   const db = drizzle(sqlite, { schema });
 
-  log.withFields({ path: dbPath }).log('Database opened');
+  log.withFields({ path: dbPath, readonly }).log('Database opened');
 
   return db;
 };
+
+export const createDatabase = (dbPath: string, logger: Logger) => {
+  const dir = path.dirname(dbPath);
+  fs.mkdirSync(dir, { recursive: true });
+
+  return openDatabase(dbPath, logger, false);
+};
+
+export const createReadonlyDatabase = (dbPath: string, logger: Logger) =>
+  openDatabase(dbPath, logger, true);
 
 export const runMigrations = (db: DB, logger: Logger) => {
   const log = logger.withContext('db');

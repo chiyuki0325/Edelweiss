@@ -1,7 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { CahciuaTool } from '../driver/tools';
-import type { LlmEndpoint, Usage } from '../driver/types';
+import type { LlmEndpoint, TurnResponseV2, Usage } from '../driver/types';
 import type { IntermediateContext } from '../projection/types';
 import type { RenderParams } from '../rendering/types';
 import type { ConversationEntry, ToolCallPart } from '../unified-api/types';
@@ -11,10 +11,14 @@ export type EvalToolName = 'send_message' | 'dismiss_message' | 'load_skill';
 export type EvalIcSource =
   | string
   | IntermediateContext
-  | {
-    name: string;
-    ic: IntermediateContext;
-  };
+  | EvalFixture;
+
+export interface EvalFixture {
+  name?: string;
+  ic: IntermediateContext;
+  turnResponses?: TurnResponseV2[];
+  compactSummary?: string;
+}
 
 export type EvalSystemFileSource =
   | string

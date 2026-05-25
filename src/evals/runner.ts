@@ -8,6 +8,7 @@ import { writeEvalReport } from './report';
 import { createEvalTools } from './tools';
 import type {
   EvalEvaluator,
+  EvalFixture,
   EvalIcSource,
   EvalPromptVariant,
   EvalRun,
@@ -22,7 +23,7 @@ import { createRunner } from '../driver/runner';
 import { loadSkillsFromFolder } from '../driver/skills';
 import { extractToolCalls } from '../driver/tools';
 import type { CahciuaTool } from '../driver/tools';
-import type { LlmEndpoint, Usage } from '../driver/types';
+import type { LlmEndpoint, TurnResponseV2, Usage } from '../driver/types';
 import type { IntermediateContext } from '../projection/types';
 import { renderPromptTemplate } from '../prompt-template';
 import { render } from '../rendering';
@@ -52,9 +53,34 @@ const loadEvaluator = async (source: string | EvalEvaluator, baseDir: string): P
     ? source
     : await loadDefaultExport<EvalEvaluator>(resolveFrom(baseDir, source));
 
+interface LoadedEvalFixture {
+  name: string;
+  ic: IntermediateContext;
+  turnResponses?: TurnResponseV2[];
+  compactSummary?: string;
+}
+
+const isEvalFixture = (value: unknown): value is EvalFixture =>
+  typeof value === 'object' && value !== null && 'ic' in value;
+
+const toLoadedFixture = (
+  value: IntermediateContext | EvalFixture,
+  fallbackName: string,
+): LoadedEvalFixture => {
+  if (isEvalFixture(value)) {
+    return {
+      name: value.name ?? fallbackName,
+      ic: value.ic,
+      turnResponses: value.turnResponses,
+      compactSummary: value.compactSummary,
+    };
+  }
+  return { name: fallbackName, ic: value };
+};
+
 const loadIcModule = async (
   filePath: string,
-): Promise<IntermediateContext | IntermediateContext[] | { name: string; ic: IntermediateContext }[]> => {
+): Promise<IntermediateContext | EvalFixture | (IntermediateContext | EvalFixture)[]> => {
   const mod = await import(pathToFileURL(filePath).href) as {
     default?: unknown;
     ic?: unknown;
@@ -62,32 +88,32 @@ const loadIcModule = async (
   };
   const value = mod.default ?? mod.ic ?? mod.contexts;
   if (!value) throw new Error(`IC fixture ${filePath} must export default, ic, or contexts`);
-  return value as IntermediateContext | IntermediateContext[] | { name: string; ic: IntermediateContext }[];
+  return value as IntermediateContext | EvalFixture | (IntermediateContext | EvalFixture)[];
 };
 
 const loadIcSources = async (
   source: EvalIcSource | EvalIcSource[],
   baseDir: string,
-): Promise<{ name: string; ic: IntermediateContext }[]> => {
+): Promise<LoadedEvalFixture[]> => {
   const sources = Array.isArray(source) ? source : [source];
-  const result: { name: string; ic: IntermediateContext }[] = [];
+  const result: LoadedEvalFixture[] = [];
 
   for (const item of sources) {
     if (typeof item === 'string') {
       const filePath = resolveFrom(baseDir, item);
       const loaded = await loadIcModule(filePath);
+      const fallbackName = basename(filePath).replace(/\.[^.]+$/, '');
       if (Array.isArray(loaded)) {
-        for (const ctx of loaded) {
-          if ('ic' in ctx) result.push(ctx);
-          else result.push({ name: ctx.sessionId, ic: ctx });
-        }
+        for (const ctx of loaded)
+          result.push(toLoadedFixture(ctx, isEvalFixture(ctx) ? (ctx.name ?? fallbackName) : ctx.sessionId));
       } else {
-        result.push({ name: basename(filePath).replace(/\.[^.]+$/, ''), ic: loaded });
+        result.push(toLoadedFixture(loaded, isEvalFixture(loaded) ? (loaded.name ?? fallbackName) : fallbackName));
       }
-    } else if ('ic' in item) {
-      result.push(item);
     } else {
-      result.push({ name: item.sessionId, ic: item });
+      if (isEvalFixture(item))
+        result.push(toLoadedFixture(item, item.name ?? item.ic.sessionId));
+      else
+        result.push(toLoadedFixture(item, item.sessionId));
     }
   }
 
@@ -130,14 +156,14 @@ const loadPrompt = async (
 };
 
 const buildEntries = async (
-  ic: IntermediateContext,
+  fixture: LoadedEvalFixture,
   endpoint: LlmEndpoint,
   scenario: EvalScenario,
   suite: EvalSuite,
 ): Promise<ConversationEntry[]> => {
-  const rc = render(ic, scenario.renderParams ?? {});
+  const rc = render(fixture.ic, scenario.renderParams ?? {});
   const maxTokens = scenario.maxContextEstTokens ?? suite.maxContextEstTokens ?? 200_000;
-  const context = composeContext(rc, [], maxTokens, endpoint.model);
+  const context = composeContext(rc, fixture.turnResponses ?? [], maxTokens, endpoint.model, fixture.compactSummary);
   const entries = context?.entries ? [...context.entries] : [];
 
   if (scenario.lateBinding !== false) {
@@ -178,7 +204,7 @@ const runOne = async (params: {
   scenario: EvalScenario;
   prompt: EvalPromptVariant;
   icName: string;
-  ic: IntermediateContext;
+  fixture: LoadedEvalFixture;
   repeatIndex: number;
   endpoint: LlmEndpoint;
   evaluator: EvalEvaluator;
@@ -186,7 +212,7 @@ const runOne = async (params: {
   log: Logger;
 }): Promise<EvalRunResult> => {
   const requestedAtMs = Date.now();
-  const entries = await buildEntries(params.ic, params.endpoint, params.scenario, params.suite);
+  const entries = await buildEntries(params.fixture, params.endpoint, params.scenario, params.suite);
   const system = await loadPrompt(params.prompt, params.endpoint, params.scenario, params.baseDir);
   const evalTools = createEvalTools({
     skillsFolder: params.scenario.skillsFolder ? resolveFrom(params.baseDir, params.scenario.skillsFolder) : undefined,
@@ -302,7 +328,7 @@ export const runEvalSuite = async (params: {
             scenario,
             prompt,
             icName: ic.name,
-            ic: ic.ic,
+            fixture: ic,
             repeatIndex,
             endpoint,
             evaluator,
