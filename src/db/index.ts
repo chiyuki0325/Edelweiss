@@ -1,4 +1,4 @@
-export { createDatabase, runMigrations } from './client';
+export { createDatabase, createReadonlyDatabase, runMigrations } from './client';
 export type { DB } from './client';
 export { codec } from './codec';
 export { migrateV1ToV2 } from './migrate-v2';

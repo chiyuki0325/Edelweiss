@@ -136,6 +136,7 @@ src/
 │   ├── runner.ts           # Suite runner: IC → RC → context → model/tool loop → evaluator
 │   ├── tools.ts            # Side-effect-free eval tools (send_message capture, dismiss, load_skill trace)
 │   ├── report.ts           # runs.jsonl / summary.json / summary.md reporting and probability stats
+│   ├── fixture-export.ts   # Export real chat windows from persisted events into eval fixtures, optionally with TR v2
 │   └── index.ts            # Public eval harness exports
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
@@ -237,6 +238,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm lint` / `pnpm lint:fix` — ESLint.
 - `pnpm test` / `pnpm test:run` — Vitest.
 - `pnpm eval <suite.ts>` — run an offline LLM eval suite. Loads models from `config.yaml`, calls real model endpoints, writes `runs.jsonl`, `summary.json`, and `summary.md` under `eval-results/<suite>/<timestamp>/` unless the suite overrides `outputDir`.
+- `pnpm eval:fixture --chat <chatId> --from-message <id> --to-message <id> --out <file>` — export a real chat slice from persisted canonical `events` into a TypeScript eval fixture. Also supports `--messages <id,id,...>`, `--from-ms/--to-ms`, `--include-replies`, `--context-before`, `--context-after`, `--include-trs`, and `--preview-xml <file>`.
 - `pnpm login` — interactive MTProto session login.
 - `pnpm db:generate` — generate Drizzle migration from schema changes.
 
