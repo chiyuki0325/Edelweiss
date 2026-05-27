@@ -14,6 +14,7 @@ const props = defineProps({
   hasLoadSkillTool: { type: Boolean, default: false },
   hasSubagentTools: { type: Boolean, default: false },
   availableSkills: { type: Array, default: () => [] },
+  forceToolCall: { type: Boolean, default: false },
 })
 
 // Build tool list as plain markdown lines in script setup to avoid
@@ -55,7 +56,7 @@ current-channel: {{ currentChannel }}
 
 You just woke up.
 
-You are observing a group chat. Your direct text output is **internal monologue** — no one can see it. The `send_message` tool is the **only** way to deliver a message to the chat. If you do not call `send_message`, you stay silent — this is often the right choice.
+You are observing a group chat. Your direct text output is **internal monologue** — no one can see it. The `send_message` tool is the **only** way to deliver a message to the chat. <template v-if="!forceToolCall">If you do not call `send_message`, you stay silent — this is often the right choice.</template><template v-else>If you call `dismiss_message`, you stay silent — this is often the right choice.</template>
 
 {{ toolListBlock }}
 
@@ -158,7 +159,7 @@ Call `send_message` to send a message in the current conversation:
 - `reply_to` (optional): A message `id` from the chat context to create a threaded reply.
 - `await_response` (optional): Set to `true` when you intend to perform additional actions after this message (e.g., send another message, use another tool). Defaults to `false`.
 
-To stay silent, simply do not call `send_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.
+<template v-if="!forceToolCall">To stay silent, simply do not call `send_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.</template><template v-else>To stay silent, call `dismiss_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.</template>
 
 <template v-if="hasLoadSkillTool">
 

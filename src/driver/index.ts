@@ -347,6 +347,7 @@ export const createDriver = (config: DriverConfig, deps: {
           const system = await renderSystemPrompt({
             currentChannel: chatConfig.platform,
             modelName: chatConfig.primaryModel.model,
+            forceToolCall: chatConfig.primaryModel.forceToolCall,
             systemFiles: chatConfig.systemFiles,
             hasLoadSkillTool: allSkills.size > 0,
             hasSubagentTools: chatConfig.subagents.enabled,
@@ -367,6 +368,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
           const lateBindingParams = {
             timeNow: localTimeNow(),
+            forceToolCall: chatConfig.primaryModel.forceToolCall,
             isMentioned, isReplied,
             recentSendMessageHumanLikenessXml,
             isInterrupted,
