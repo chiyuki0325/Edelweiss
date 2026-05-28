@@ -204,7 +204,8 @@ Top-level directories:
   - `animation-to-text-system.velin.md` — blocking GIF/animation description prompt (multi-frame)
   - `sticker-animation-to-text-system.velin.md` — blocking animated sticker description prompt (multi-frame)
   - `custom-emoji-to-text-system.velin.md` — blocking static custom emoji description prompt
-- `skills/` — optional user-created skill definitions (markdown files), loaded at runtime by `src/driver/skills.ts`
+- `skills/` — repository-provided skill definitions (markdown files) that can be copied into or used as the configured skills folder
+  - `skill-authoring.md` — reusable workflow for inspecting skill runtime info and writing new skill files
 - `evals/` — optional user-authored LLM eval suites, IC fixtures, prompt variants, and evaluator modules. These are run manually with `pnpm eval <suite.ts>` and are not part of ordinary Vitest unit tests.
   - `evals/skill-activation/` — compares the pre/post Skill Activation system prompts with fake skills and reports `load_skill` / correct-skill call rates.
 - `docs/` — architecture and design documents (not prompts)
