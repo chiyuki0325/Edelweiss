@@ -81,7 +81,7 @@ describe('loadSkillsFromFolder', () => {
       description: 'Use for browser automation tasks.',
       format: 'anthropic',
       content: 'Inspect pages carefully.',
-      resourceFiles: ['README.md', 'scripts/open.ts'],
+      resourceFiles: [join(skillDir, 'README.md'), join(skillDir, 'scripts', 'open.ts')],
     });
   });
 

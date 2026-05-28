@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 
@@ -96,7 +96,7 @@ const listResourceFiles = (root: string, skillFile: string): string[] => {
       if (!entry.isFile()) continue;
       const rel = relative(root, path);
       if (rel === skillFile) continue;
-      files.push(rel);
+      files.push(resolve(path));
     }
   };
   walk(root);
