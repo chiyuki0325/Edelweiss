@@ -12,6 +12,9 @@ export interface SkillInfo {
   usage?: string;
   format: 'custom' | 'custom-v2' | 'anthropic';
   content: string;
+  skillsFolder?: string;
+  skillPath?: string;
+  mainFilePath?: string;
   resourceFiles?: string[];
 }
 
@@ -61,7 +64,7 @@ const parseFrontMatterSkill = (content: string): ParsedFrontMatter | null => {
   };
 };
 
-const loadMarkdownSkill = (path: string, id: string): SkillInfo | null => {
+const loadMarkdownSkill = (path: string, id: string, skillsFolder: string): SkillInfo | null => {
   const content = readFileSync(path, 'utf-8');
   const parsed = parseFrontMatterSkill(content);
   if (parsed) {
@@ -72,6 +75,9 @@ const loadMarkdownSkill = (path: string, id: string): SkillInfo | null => {
       ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
       format: 'custom-v2',
       content: parsed.body,
+      skillsFolder,
+      skillPath: path,
+      mainFilePath: path,
     };
   }
   if (FRONT_MATTER_RE.test(content)) return null;
@@ -81,6 +87,9 @@ const loadMarkdownSkill = (path: string, id: string): SkillInfo | null => {
     description: extractTitle(content, id),
     format: 'custom',
     content,
+    skillsFolder,
+    skillPath: path,
+    mainFilePath: path,
   };
 };
 
@@ -103,7 +112,7 @@ const listResourceFiles = (root: string, skillFile: string): string[] => {
   return files;
 };
 
-const loadAnthropicSkill = (path: string, id: string): SkillInfo | null => {
+const loadAnthropicSkill = (path: string, id: string, skillsFolder: string): SkillInfo | null => {
   const skillPath = join(path, ANTHROPIC_SKILL_FILE);
   let isFile = false;
   try {
@@ -124,15 +133,19 @@ const loadAnthropicSkill = (path: string, id: string): SkillInfo | null => {
     ...(parsed.data.usage ? { usage: parsed.data.usage } : {}),
     format: 'anthropic',
     content: parsed.body,
+    skillsFolder,
+    skillPath: path,
+    mainFilePath: skillPath,
     ...(resourceFiles.length > 0 ? { resourceFiles } : {}),
   };
 };
 
 export const loadSkillsFromFolder = (folder: string): Map<string, SkillInfo> => {
   const map = new Map<string, SkillInfo>();
+  const skillsFolder = resolve(folder);
   let entries: Dirent[];
   try {
-    entries = readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    entries = readdirSync(skillsFolder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
   } catch {
     return map;
   }
@@ -140,14 +153,14 @@ export const loadSkillsFromFolder = (folder: string): Map<string, SkillInfo> => 
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
     const id = basename(entry.name, '.md');
-    const skill = loadMarkdownSkill(join(folder, entry.name), id);
+    const skill = loadMarkdownSkill(join(skillsFolder, entry.name), id, skillsFolder);
     if (skill) map.set(id, skill);
   }
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const id = entry.name;
-    const skill = loadAnthropicSkill(join(folder, entry.name), id);
+    const skill = loadAnthropicSkill(join(skillsFolder, entry.name), id, skillsFolder);
     if (skill) map.set(id, skill);
   }
   return map;

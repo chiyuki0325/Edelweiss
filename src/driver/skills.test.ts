@@ -32,6 +32,9 @@ describe('loadSkillsFromFolder', () => {
       description: 'Debug Skill',
       format: 'custom',
       content: '# Debug Skill\n\nFind the failing path.',
+      skillsFolder: dir,
+      skillPath: join(dir, 'debug.md'),
+      mainFilePath: join(dir, 'debug.md'),
     });
   });
 
@@ -56,6 +59,9 @@ describe('loadSkillsFromFolder', () => {
       usage: 'Load before answering music requests.',
       format: 'custom-v2',
       content: 'Follow the music workflow.',
+      skillsFolder: dir,
+      skillPath: join(dir, 'music.md'),
+      mainFilePath: join(dir, 'music.md'),
     });
   });
 
@@ -81,6 +87,9 @@ describe('loadSkillsFromFolder', () => {
       description: 'Use for browser automation tasks.',
       format: 'anthropic',
       content: 'Inspect pages carefully.',
+      skillsFolder: dir,
+      skillPath: skillDir,
+      mainFilePath: join(skillDir, 'SKILL.md'),
       resourceFiles: [join(skillDir, 'README.md'), join(skillDir, 'scripts', 'open.ts')],
     });
   });

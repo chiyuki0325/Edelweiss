@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import type { Logger } from '@guiiai/logg';
 import { computed, effect, signal } from 'alien-signals';
 
@@ -222,6 +224,12 @@ export const createDriver = (config: DriverConfig, deps: {
         sessionId: chatId,
         backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
         compactOutput: chatConfig.tools.bash.compactOutput,
+        pseudoCommands: {
+          chatId,
+          currentChannel: chatConfig.platform,
+          ...(chatConfig.skills?.folder ? { skillsFolder: resolve(chatConfig.skills.folder) } : {}),
+          skills: allSkills,
+        },
       }));
       tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
       tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));

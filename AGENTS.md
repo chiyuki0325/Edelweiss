@@ -112,7 +112,8 @@ src/
 │   ├── responses-types.ts   # OpenAI Responses API type definitions (shared with unified-api)
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
-│   ├── skills.ts           # Skill loader: reads markdown files from skills/ folder → SkillInfo map
+│   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
+│   ├── pseudo-commands.ts  # Built-in bash pseudo commands: chat_info and skill_info
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (7 configurable checks)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
 │   ├── system-prompt.test.ts # System prompt tests
@@ -465,6 +466,8 @@ Toggles are per-chat (deep-merged with `default` like all other config). Defined
 - **AnthropicSkills**: directory whose name is the ID and whose main file is exactly `SKILL.md`. `SKILL.md` uses the same YAML front-matter loader as CustomSkillsV2, but the catalog omits `title` and shows only ID plus `description` / `usage`. Other files in the directory are listed as absolute resource paths when the skill is loaded, but their contents are not injected automatically.
 
 A `load_skill` tool lets the LLM fetch skill content at runtime by `skill_id`, injected into the system prompt as an available-tools catalog. When skills are available, `primary-system.velin.md` includes Skill Activation guidance: before answering or using other task-specific tools, the LLM must check the listed skills and load a clearly matching skill by exact ID. This decouples skill authoring from code changes — adding a skill is just creating a supported `.md` file or skill directory.
+
+The bash tool intercepts built-in pseudo commands before shell execution: `chat_info` returns the current chat ID, platform channel, and absolute skills folder; `skill_info <skill_id>` returns one loaded skill's metadata and absolute file/resource paths. Skills are loaded once when a chat scope is created, so changes to the skills folder require process restart or a fresh chat scope before these pseudo-command results update.
 
 ### Background Tasks
 

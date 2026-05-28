@@ -9,6 +9,7 @@ import markdownParser from 'prettier/esm/parser-markdown.mjs';
 import prettier from 'prettier/esm/standalone.mjs';
 import sharp from 'sharp';
 
+import { executePseudoCommand, type PseudoCommandContext } from './pseudo-commands';
 import type { SkillInfo } from './skills';
 import type { PlatformAdapter } from './types';
 import type { RuntimeConfig } from '../config/config';
@@ -153,6 +154,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
   sessionId: string;
   backgroundThresholdSec: number;
   compactOutput: boolean;
+  pseudoCommands?: PseudoCommandContext;
 }): CahciuaTool => {
   let rtkAvailable: boolean | null = null;
   const checkRtk = (): boolean => {
@@ -186,6 +188,15 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
     execute: async input => {
       const { command, timeout_seconds, intention } = input as { command: string; timeout_seconds: number; intention?: string };
       const timeoutSec = timeout_seconds;
+      const pseudoResult = backgroundTask.pseudoCommands
+        ? executePseudoCommand(command, backgroundTask.pseudoCommands)
+        : null;
+      if (pseudoResult) {
+        return {
+          content: JSON.stringify({ exit_code: pseudoResult.exitCode, output: pseudoResult.output, truncated: false }),
+          requiresFollowUp: true,
+        };
+      }
 
       // Background task path
       if (timeoutSec > backgroundTask.backgroundThresholdSec) {

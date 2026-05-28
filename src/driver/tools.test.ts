@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createLoadSkillTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import { createBashTool, createLoadSkillTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import type { RuntimeConfig } from '../config/config';
 import type { ConversationEntry } from '../unified-api/types';
 
 const createTinyPng = async (): Promise<Buffer> => {
@@ -14,6 +15,48 @@ const createTinyPng = async (): Promise<Buffer> => {
     },
   }).png().toBuffer();
 };
+
+const runtime: RuntimeConfig = {
+  shell: ['sh', '-c'],
+  writeFile: ['tee'],
+  readFile: ['cat'],
+  writeFileSizeLimit: 1024,
+  readFileSizeLimit: 1024,
+};
+
+describe('createBashTool', () => {
+  it('intercepts pseudo commands before background task execution', async () => {
+    const startTask = vi.fn();
+    const tool = createBashTool(runtime, {
+      startTask,
+      sessionId: 'chat-1',
+      backgroundThresholdSec: 5,
+      compactOutput: false,
+      pseudoCommands: {
+        chatId: 'chat-1',
+        currentChannel: 'telegram',
+        skillsFolder: '/repo/skills',
+        skills: new Map(),
+      },
+    });
+
+    const result = await tool.execute({
+      command: 'chat_info',
+      timeout_seconds: 60,
+    }, { toolCallId: 'tc1' });
+
+    expect(startTask).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content as string)).toEqual({
+      exit_code: 0,
+      output: `${JSON.stringify({
+        chatId: 'chat-1',
+        currentChannel: 'telegram',
+        skillsFolder: '/repo/skills',
+      }, null, 2)}\n`,
+      truncated: false,
+    });
+  });
+});
 
 describe('createReadImageTool', () => {
   it('resolves image-to-text description via attachment file_id', async () => {
