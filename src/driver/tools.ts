@@ -460,29 +460,51 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buf
 
 export const createLoadSkillTool = (
   availableSkills: () => Map<string, SkillInfo>,
-  onSkillLoaded: (name: string) => void,
-  isSkillLoaded: (name: string) => boolean = () => false,
+  onSkillLoaded: (id: string) => void,
+  isSkillLoaded: (id: string) => boolean = () => false,
 ): CahciuaTool => createTool({
   name: 'load_skill',
   description: 'Load a predefined skill module into the current session. If the available skills list contains a skill that clearly matches the user request or next action, load it before giving a substantive answer or using other task-specific tools.',
   parameters: {
     type: 'object',
     properties: {
-      skill_name: { type: 'string', description: 'The name of the skill to load (as listed in the available skills section of the context).' },
+      skill_id: { type: 'string', description: 'The id of the skill to load (as listed in the available skills section of the context).' },
     },
-    required: ['skill_name'],
+    required: ['skill_id'],
   },
   execute: input => {
-    const { skill_name } = input as { skill_name: string };
-    const skill = availableSkills().get(skill_name);
+    const { skill_id } = input as { skill_id: string };
+    const skill = availableSkills().get(skill_id);
     if (!skill)
-      return { content: JSON.stringify({ error: `Skill "${skill_name}" not found.` }), requiresFollowUp: true };
-    if (isSkillLoaded(skill_name))
-      return { content: JSON.stringify({ error: `Skill "${skill_name}" is already loaded in the current context window.` }), requiresFollowUp: true };
-    onSkillLoaded(skill_name);
-    return { content: `# ${skill.title}\n\n${skill.content}`, requiresFollowUp: true };
+      return { content: JSON.stringify({ error: `Skill "${skill_id}" not found.` }), requiresFollowUp: true };
+    if (isSkillLoaded(skill_id))
+      return { content: JSON.stringify({ error: `Skill "${skill_id}" is already loaded in the current context window.` }), requiresFollowUp: true };
+    onSkillLoaded(skill_id);
+    return { content: formatLoadedSkill(skill), requiresFollowUp: true };
   },
 });
+
+const stripDuplicateTitle = (title: string | undefined, content: string): string => {
+  const trimmed = content.trim();
+  if (!title) return trimmed;
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return trimmed.replace(new RegExp(`^#\\s+${escapedTitle}\\s*(?:\\r?\\n|$)`), '').trimStart();
+};
+
+const formatLoadedSkill = (skill: SkillInfo): string => {
+  const sections = [`# ${skill.title ?? skill.name}`];
+  if (skill.description) sections.push(`## Description\n\n${skill.description}`);
+  if (skill.usage) sections.push(`## Usage\n\n${skill.usage}`);
+
+  const body = stripDuplicateTitle(skill.title, skill.content);
+  if (body) sections.push(body);
+
+  if (skill.resourceFiles && skill.resourceFiles.length > 0) {
+    sections.push(`## Resource files\n\n${skill.resourceFiles.map(file => `- ${file}`).join('\n')}`);
+  }
+
+  return sections.join('\n\n');
+};
 
 export const createDismissMessageTool = (): CahciuaTool => createTool({
   name: 'dismiss_message',
@@ -609,21 +631,21 @@ export const extractLoadedSkillNames = (entries: ConversationEntry[]): Set<strin
     for (const part of entry.parts) {
       if (part.kind !== 'toolCall' || part.name !== 'load_skill') continue;
 
-      let skillName: string | undefined;
+      let skillId: string | undefined;
       try {
-        const args = JSON.parse(part.args) as { skill_name?: unknown };
-        if (typeof args.skill_name === 'string') skillName = args.skill_name;
+        const args = JSON.parse(part.args) as { skill_id?: unknown };
+        if (typeof args.skill_id === 'string') skillId = args.skill_id;
       } catch {
         continue;
       }
-      if (!skillName) continue;
+      if (!skillId) continue;
 
       const isMatchingToolResult = (e: ConversationEntry): e is IRToolResult =>
         e.kind === 'toolResult' && e.callId === part.callId;
       const toolResult = entries.slice(i + 1).find(isMatchingToolResult);
       if (!toolResult || Array.isArray(toolResult.payload)) continue;
       if (toolResult.payload.startsWith('{')) continue;
-      result.add(skillName);
+      result.add(skillId);
     }
   }
 

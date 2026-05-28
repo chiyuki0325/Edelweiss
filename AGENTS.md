@@ -459,7 +459,12 @@ Toggles are per-chat (deep-merged with `default` like all other config). Defined
 
 ### Skills System
 
-`src/driver/skills.ts` loads user-facing skill/tool definitions from markdown files in a configurable `skills/` folder. Each skill file becomes a `SkillInfo` with `name` (filename stem), `title` (first `# heading`), and `content` (full markdown body). A `load_skill` tool lets the LLM fetch skill content at runtime, injected into the system prompt as an available-tools catalog. When skills are available, `primary-system.velin.md` includes Skill Activation guidance: before answering or using other task-specific tools, the LLM must check the listed skills and load a clearly matching skill by exact name. This decouples skill authoring from code changes — adding a skill is just creating a `.md` file.
+`src/driver/skills.ts` loads user-facing skill/tool definitions from a configurable `skills/` folder. `SkillInfo.name` is the stable load ID and always comes from the file stem or directory name. Supported formats:
+- **CustomSkills**: single `.md` file without front-matter. File stem is the ID, first `#` heading is the catalog description, and the full markdown body is loaded.
+- **CustomSkillsV2**: single `.md` file with YAML front-matter: required `name` (catalog title) and `description`, optional `usage`. File stem remains the ID.
+- **AnthropicSkills**: directory whose name is the ID and whose main file is exactly `SKILL.md`. `SKILL.md` uses the same YAML front-matter loader as CustomSkillsV2, but the catalog omits `title` and shows only ID plus `description` / `usage`. Other files in the directory are listed as resources when the skill is loaded, but their contents are not injected automatically.
+
+A `load_skill` tool lets the LLM fetch skill content at runtime by `skill_id`, injected into the system prompt as an available-tools catalog. When skills are available, `primary-system.velin.md` includes Skill Activation guidance: before answering or using other task-specific tools, the LLM must check the listed skills and load a clearly matching skill by exact ID. This decouples skill authoring from code changes — adding a skill is just creating a supported `.md` file or skill directory.
 
 ### Background Tasks
 

@@ -15,6 +15,13 @@ const lateBindingTemplate = readFileSync(resolve(__dirname, '../../prompts/prima
 const compactionSystemTemplate = readFileSync(resolve(__dirname, '../../prompts/compaction-system.velin.md'), 'utf-8');
 const compactionUserTemplate = readFileSync(resolve(__dirname, '../../prompts/compaction-late-binding.velin.md'), 'utf-8');
 
+export interface AvailableSkillPromptInfo {
+  id: string;
+  title?: string;
+  description?: string;
+  usage?: string;
+}
+
 export const renderSystemPrompt = async (params: {
   language?: string;
   modelName: string;
@@ -22,7 +29,7 @@ export const renderSystemPrompt = async (params: {
   systemFiles?: { filename: string; content: string }[];
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
-  availableSkills?: { name: string; title: string }[];
+  availableSkills?: AvailableSkillPromptInfo[];
   forceToolCall?: boolean;
 }) => {
   return await renderPromptTemplate(systemPromptTemplate, {

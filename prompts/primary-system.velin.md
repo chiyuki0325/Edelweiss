@@ -46,7 +46,13 @@ const toolListBlock = computed(() => {
 const availableSkillsList = computed(() => {
   const skills = props.availableSkills
   if (!skills || skills.length === 0) return ''
-  return skills.map(s => `- \`${s.name}\`: ${s.title}`).join('\n')
+  return skills.map(s => {
+    const lines = [`- id: \`${s.id ?? s.name}\``]
+    if (s.title) lines.push(`  title: ${s.title}`)
+    if (s.description) lines.push(`  description: ${s.description}`)
+    if (s.usage) lines.push(`  usage: ${s.usage}`)
+    return lines.join('\n')
+  }).join('\n')
 })
 </script>
 
@@ -167,9 +173,9 @@ Call `send_message` to send a message in the current conversation:
 
 Before answering a user request or starting other task-specific tools, check whether the available skills list contains a skill that clearly matches the request, domain, or next action.
 
-If a listed skill clearly matches, call `load_skill` with that exact skill name before giving a substantive answer or using other task-specific tools. Treat the loaded skill instructions as the task procedure for the rest of the turn.
+If a listed skill clearly matches, call `load_skill` with that exact skill id before giving a substantive answer or using other task-specific tools. Treat the loaded skill instructions as the task procedure for the rest of the turn.
 
-Do not merely say that you will use a skill — actually call `load_skill`. Do not guess skill names that are not listed. If the current context already contains a successful `load_skill` result for the same skill, follow the loaded instructions directly instead of loading it again.
+Do not merely say that you will use a skill — actually call `load_skill`. Do not guess skill ids that are not listed. If the current context already contains a successful `load_skill` result for the same skill, follow the loaded instructions directly instead of loading it again.
 
 </template>
 

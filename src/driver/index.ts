@@ -352,7 +352,12 @@ export const createDriver = (config: DriverConfig, deps: {
             hasLoadSkillTool: allSkills.size > 0,
             hasSubagentTools: chatConfig.subagents.enabled,
             availableSkills: [...allSkills.values()]
-              .map(s => ({ name: s.name, title: s.title })),
+              .map(s => ({
+                id: s.name,
+                ...(s.format === 'custom-v2' && s.title ? { title: s.title } : {}),
+                description: s.description,
+                usage: s.usage,
+              })),
           });
 
           // --- Compute mention/reply/interrupt state from RC + TRs ---

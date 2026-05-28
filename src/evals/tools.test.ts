@@ -39,14 +39,14 @@ describe('createEvalTools', () => {
     const first = await executeToolCall(
       'tc1',
       'load_skill',
-      JSON.stringify({ skill_name: 'debug' }),
+      JSON.stringify({ skill_id: 'debug' }),
       tools,
       log,
     );
     const second = await executeToolCall(
       'tc2',
       'load_skill',
-      JSON.stringify({ skill_name: 'debug' }),
+      JSON.stringify({ skill_id: 'debug' }),
       tools,
       log,
     );

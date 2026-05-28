@@ -85,17 +85,31 @@ describe('primary-system.velin.md', () => {
       modelName: 'gpt-4o',
       hasLoadSkillTool: true,
       availableSkills: [
-        { name: 'debug', title: 'Debug failing tests' },
-        { name: 'review', title: 'Review code changes' },
+        {
+          id: 'debug',
+          title: 'Debug Skill',
+          description: 'Debug failing tests',
+          usage: 'Load before changing test code.',
+        },
+        {
+          id: 'review',
+          title: 'Review Skill',
+          description: 'Review code changes',
+        },
       ],
     });
 
     expect(rendered).toContain('`load_skill`');
     expect(rendered).toContain('### Skill Activation');
-    expect(rendered).toContain('call `load_skill` with that exact skill name before giving a substantive answer');
-    expect(rendered).toContain('Do not guess skill names that are not listed');
-    expect(rendered).toContain('- `debug`: Debug failing tests');
-    expect(rendered).toContain('- `review`: Review code changes');
+    expect(rendered).toContain('call `load_skill` with that exact skill id before giving a substantive answer');
+    expect(rendered).toContain('Do not guess skill ids that are not listed');
+    expect(rendered).toContain('- id: `debug`');
+    expect(rendered).toContain('title: Debug Skill');
+    expect(rendered).toContain('description: Debug failing tests');
+    expect(rendered).toContain('usage: Load before changing test code.');
+    expect(rendered).toContain('- id: `review`');
+    expect(rendered).toContain('title: Review Skill');
+    expect(rendered).toContain('description: Review code changes');
     assertNoVueSyntaxLeak(rendered);
   });
 

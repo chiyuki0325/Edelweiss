@@ -67,7 +67,22 @@ describe('createReadImageTool', () => {
 
 describe('createLoadSkillTool', () => {
   const skills = new Map([
-    ['debug', { name: 'debug', title: 'Debug Skill', content: 'Find the failing path.' }],
+    ['debug', { name: 'debug', description: 'Debug Skill', format: 'custom' as const, content: 'Find the failing path.' }],
+    ['music', {
+      name: 'music',
+      title: 'Music Helper',
+      description: 'Use for music search.',
+      usage: 'Load before answering music requests.',
+      format: 'custom-v2' as const,
+      content: 'Follow the music workflow.',
+    }],
+    ['browser-use', {
+      name: 'browser-use',
+      description: 'Use for browser automation.',
+      format: 'anthropic' as const,
+      content: 'Inspect pages carefully.',
+      resourceFiles: ['README.md', 'scripts/open.ts'],
+    }],
   ]);
 
   it('rejects skills already loaded in the current context window', async () => {
@@ -78,7 +93,7 @@ describe('createLoadSkillTool', () => {
       name => loaded.has(name),
     );
 
-    const result = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc1' });
+    const result = await tool.execute({ skill_id: 'debug' }, { toolCallId: 'tc1' });
 
     expect(result).toEqual({
       content: JSON.stringify({ error: 'Skill "debug" is already loaded in the current context window.' }),
@@ -94,15 +109,43 @@ describe('createLoadSkillTool', () => {
       name => loaded.has(name),
     );
 
-    const first = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc1' });
-    const second = await tool.execute({ skill_name: 'debug' }, { toolCallId: 'tc2' });
+    const first = await tool.execute({ skill_id: 'debug' }, { toolCallId: 'tc1' });
+    const second = await tool.execute({ skill_id: 'debug' }, { toolCallId: 'tc2' });
 
-    expect(first.content).toContain('# Debug Skill');
+    expect(first.content).toContain('# debug');
+    expect(first.content).toContain('## Description\n\nDebug Skill');
     expect(loaded.has('debug')).toBe(true);
     expect(second).toEqual({
       content: JSON.stringify({ error: 'Skill "debug" is already loaded in the current context window.' }),
       requiresFollowUp: true,
     });
+  });
+
+  it('formats front-matter skill metadata without using display name as lookup id', async () => {
+    const tool = createLoadSkillTool(
+      () => skills,
+      () => {},
+    );
+
+    const result = await tool.execute({ skill_id: 'music' }, { toolCallId: 'tc1' });
+
+    expect(result.content).toContain('# Music Helper');
+    expect(result.content).toContain('## Description\n\nUse for music search.');
+    expect(result.content).toContain('## Usage\n\nLoad before answering music requests.');
+    expect(result.content).toContain('Follow the music workflow.');
+  });
+
+  it('lists anthropic resource files without embedding their contents', async () => {
+    const tool = createLoadSkillTool(
+      () => skills,
+      () => {},
+    );
+
+    const result = await tool.execute({ skill_id: 'browser-use' }, { toolCallId: 'tc1' });
+
+    expect(result.content).toContain('# browser-use');
+    expect(result.content).toContain('## Resource files\n\n- README.md\n- scripts/open.ts');
+    expect(result.content).not.toContain('console.log');
   });
 });
 
@@ -118,7 +161,7 @@ describe('extractLoadedSkillNames', () => {
             kind: 'toolCall',
             callId: 'tc1',
             name: 'load_skill',
-            args: JSON.stringify({ skill_name: 'debug' }),
+            args: JSON.stringify({ skill_id: 'debug' }),
           },
         ],
       },
@@ -144,7 +187,7 @@ describe('extractLoadedSkillNames', () => {
             kind: 'toolCall',
             callId: 'tc1',
             name: 'load_skill',
-            args: JSON.stringify({ skill_name: 'debug' }),
+            args: JSON.stringify({ skill_id: 'debug' }),
           },
         ],
       },

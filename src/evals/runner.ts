@@ -148,7 +148,12 @@ const loadPrompt = async (
     currentChannel: 'telegram',
     hasLoadSkillTool: enabledTools.includes('load_skill') && skills.length > 0,
     hasSubagentTools: false,
-    availableSkills: skills.map(s => ({ name: s.name, title: s.title })),
+    availableSkills: skills.map(s => ({
+      id: s.name,
+      ...(s.format === 'custom-v2' && s.title ? { title: s.title } : {}),
+      description: s.description,
+      usage: s.usage,
+    })),
     ...prompt.params,
     systemFiles: loadSystemFiles(prompt.systemFiles, baseDir),
   };
