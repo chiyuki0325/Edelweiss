@@ -94,6 +94,12 @@ chats:
       #   compactOutput: false                     # pipe output through rtk for token savings (requires rtk in PATH)
       webSearch:
         tavilyKey: ""                              # Tavily API key for web search (required)
+      # webFetch: present = web_fetch tool enabled (omit to disable). Backend is
+      # transparent to the model; the tool only ever takes a `url`.
+      # webFetch:
+      #   provider: "jina"                         # currently only 'jina' (https://r.jina.ai)
+      #   jina:
+      #     apiKey: ""                             # optional; raises rate limit and unlocks proxy pool
     # Subagent config
     # subagents:
     #   enabled: true

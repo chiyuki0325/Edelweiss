@@ -12,9 +12,10 @@ import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, render
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebSearchTool, createDismissMessageTool, extractLoadedSkillNames } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
+import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { RenderedContext } from '../rendering/types';
@@ -232,6 +233,8 @@ export const createDriver = (config: DriverConfig, deps: {
         },
       }));
       tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
+      if (chatConfig.tools.webFetch)
+        tools.push(createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch)));
       tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));
 
       const readFileCmd = deps.runtimeConfig.readFile;

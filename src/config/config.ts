@@ -6,6 +6,7 @@ import * as v from 'valibot';
 import { parse as parseYaml } from 'yaml';
 
 import type { CompactionConfig, LlmEndpoint, ProviderFormat } from '../driver/types';
+import type { WebFetchConfig } from '../driver/web-fetch/types';
 
 const llmEndpointEntries = {
   apiBaseUrl: v.string(),
@@ -94,6 +95,12 @@ const ChatConfigSchema = v.object({
     webSearch: v.object({
       tavilyKey: v.pipe(v.string(), v.minLength(1)),
     }),
+    webFetch: v.optional(v.object({
+      provider: v.optional(v.picklist(['jina']), 'jina'),
+      jina: v.optional(v.object({
+        apiKey: v.optional(v.string(), ''),
+      }), {}),
+    })),
   }),
 });
 
@@ -158,6 +165,12 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     })),
     webSearch: v.partial(v.object({
       tavilyKey: v.string(),
+    })),
+    webFetch: v.partial(v.object({
+      provider: v.picklist(['jina']),
+      jina: v.partial(v.object({
+        apiKey: v.string(),
+      })),
     })),
   })),
 })), {});
@@ -243,6 +256,7 @@ export interface ResolvedChatConfig {
   tools: {
     bash: { backgroundThresholdSec: number; compactOutput: boolean };
     webSearch: { tavilyKey: string };
+    webFetch?: WebFetchConfig;
   };
 }
 
@@ -333,6 +347,9 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     tools: {
       bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec, compactOutput: merged.tools.bash.compactOutput },
       webSearch: { tavilyKey: merged.tools.webSearch.tavilyKey },
+      webFetch: merged.tools.webFetch
+        ? { provider: merged.tools.webFetch.provider, jina: { apiKey: merged.tools.webFetch.jina.apiKey } }
+        : undefined,
     },
   };
 };
