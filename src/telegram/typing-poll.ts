@@ -28,6 +28,7 @@ export const createTypingPollManager = (
 ): TypingPollManager => {
   const log = logger.withContext('typing-poll');
   const polls = new Map<string, PollState>();
+  const unresolvable = new Set<string>();
 
   let lastOnlineHeartbeatAt = 0;
   const HEARTBEAT_THROTTLE_MS = 55_000;
@@ -108,13 +109,14 @@ export const createTypingPollManager = (
   };
 
   const startPolling = async (chatId: string) => {
-    if (polls.has(chatId)) return;
+    if (polls.has(chatId) || unresolvable.has(chatId)) return;
 
     const channelId = parseSupergroupChatId(chatId);
     if (!channelId) return;
 
     const peer = await resolveChannelPeer(chatId);
     if (!peer) {
+      unresolvable.add(chatId);
       log.withFields({ chatId }).warn('Failed to resolve channel peer for typing poll');
       return;
     }

@@ -140,6 +140,13 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     }
 
     registerEventHandler();
+    // Warm entity cache so getInputEntity can resolve channels before live updates arrive
+    try {
+      const dialogs = await client.getDialogs({});
+      log.withFields({ count: dialogs.length }).log('Entity cache warmed via getDialogs');
+    } catch (err) {
+      log.withError(err).warn('Failed to warm entity cache via getDialogs');
+    }
   };
 
   const stop = async () => {
