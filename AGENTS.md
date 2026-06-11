@@ -26,7 +26,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks tables; 27 migrations |
 | Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (with supergroup typing poll), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -178,7 +178,10 @@ src/
     ├── session-ingress-queue.ts # Per-chat ordered commit queue with speculative async transforms
     ├── session-ingress-queue.test.ts # Ingress queue tests
     ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
-    ├── typing-poll.ts       # Supergroup typing poll: replicates Android online heartbeat for reliable typing events
+    ├── typing-action.ts     # Shared typing-like MTProto action classifier
+    ├── typing-action.test.ts # Typing action classifier tests
+    ├── typing-poll.ts       # Debounce-scoped Telegram typing presence manager: online heartbeat, markAsRead, supergroup channel-difference fallback
+    ├── typing-poll.test.ts  # Typing presence lifecycle and channel-difference tests
     ├── gramjs-logger.ts     # Patches gramjs internal logger to @guiiai/logg
     ├── markdown.ts          # Markdown → Telegram HTML converter (MarkdownIt-based)
     ├── session.ts           # Session file load/save
@@ -479,9 +482,9 @@ Long-running shell tasks managed by `src/background-task/`. The Driver's `start_
 - **Shell tasks** (`shell.ts`): the primary implementation — runs shell commands with stdout/stderr capture
 - Completion is surfaced to the LLM as a synthetic runtime event in the conversation context
 
-### Supergroup Typing Poll
+### Telegram Typing Presence
 
-Telegram supergroups don't emit typing events via MTProto. `src/telegram/typing-poll.ts` works around this by periodically polling `messages.getDialogUnreadMarks` in supergroups where the userbot lacks a permanent PTS update subscription. Polling replicates the online heartbeat behavior of Android Telegram clients, providing reliable typing indicators that feed into the Driver's debounce extension mechanism. Typing events within a 6s validity window extend the reply debounce timer.
+Telegram typing updates are ephemeral and only arrive reliably while Telegram considers the userbot online and interested in the chat. During Driver debounce windows, `src/telegram/typing-poll.ts` starts a debounce-scoped typing presence watch: a shared `account.updateStatus(offline=false)` heartbeat every 50 seconds, `markAsRead(peer)` for the watched chat, raw MTProto typing updates from `src/telegram/userbot.ts`, and `updates.getChannelDifference` fallback polling for supergroups/channels. Basic groups rely on raw `UpdateChatUserTyping` plus the same heartbeat/read priming. `src/telegram/typing-action.ts` classifies typing-like actions shared by both update paths. Typing events within a 6s validity window extend the reply debounce timer.
 
 ### Context Compaction
 

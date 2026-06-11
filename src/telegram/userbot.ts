@@ -10,6 +10,7 @@ import { createEventBus } from './event-bus';
 import { createGramjsLogger } from './gramjs-logger';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
 import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsSender } from './message';
+import { isTypingLikeAction } from './typing-action';
 
 export interface UserbotOptions {
   apiId: number;
@@ -103,13 +104,13 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
           chatId = `-100${update.channelId.toJSNumber()}`;
           if (update.fromId instanceof Api.PeerUser)
             userId = `${update.fromId.userId.toJSNumber()}`;
-          if (update.action instanceof Api.SendMessageTypingAction && chatId && userId)
+          if (isTypingLikeAction(update.action) && chatId && userId)
             typingBus.emit({ chatId, userId });
         } else if (update instanceof Api.UpdateChatUserTyping) {
           chatId = `-${update.chatId.toJSNumber()}`;
           if (update.fromId instanceof Api.PeerUser)
             userId = `${update.fromId.userId.toJSNumber()}`;
-          if (update.action instanceof Api.SendMessageTypingAction && chatId && userId)
+          if (isTypingLikeAction(update.action) && chatId && userId)
             typingBus.emit({ chatId, userId });
         }
       },

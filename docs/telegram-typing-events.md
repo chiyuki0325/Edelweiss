@@ -103,9 +103,16 @@ await client.invoke(new Api.account.UpdateStatus({ offline: true }));
 await client.disconnect();
 ```
 
-## Implementation
+## Production Implementation
 
-See `scripts/watch-typing.ts` — implements all three mechanisms with proper error handling and cleanup.
+`scripts/watch-typing.ts` is the behavior baseline and diagnostic tool. It implements all three essential mechanisms with proper error handling and cleanup.
+
+The production path mirrors that behavior in:
+- `src/telegram/typing-poll.ts` — debounce-scoped typing presence manager. The first active watch starts a shared `account.updateStatus(offline=false)` heartbeat every 50 seconds, each watched chat is primed with `markAsRead(peer)`, and supergroups/channels additionally run `updates.getChannelDifference` using the server-provided timeout.
+- `src/telegram/userbot.ts` — raw MTProto update handler for `UpdateChannelUserTyping` and `UpdateChatUserTyping`.
+- `src/telegram/typing-action.ts` — shared "typing-like" action classifier used by both raw updates and channel-difference fallback extraction.
+
+The main bot does **not** keep typing presence permanently active. Driver debounce scheduling calls `startTypingPolling(chatId)` while a reply is waiting and `stopTypingPolling(chatId)` when the debounce window ends. This keeps the userbot behavior close to an official client viewing the chat only while the bot is deciding whether to reply.
 
 ## Why `markAsRead` Alone Fails
 
