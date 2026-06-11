@@ -123,6 +123,16 @@ export const createSendMessageTool = (
         await_response?: boolean;
         attachments?: SendMessageAttachment[];
       };
+      // Enforce 256-byte hard limit when the message does not contain code blocks
+      if (!text.includes('```')) {
+        const byteLength = Buffer.byteLength(text, 'utf8');
+        if (byteLength > 256) {
+          return {
+            content: JSON.stringify({ ok: false, error: 'Message is too long.' }),
+            requiresFollowUp: false,
+          };
+        }
+      }
       const formattedText = prettier.format(text, { parser: 'markdown', plugins: [markdownParser], embeddedLanguageFormatting: 'auto' });
       const result = await send(formattedText, reply_to, attachments);
       return {
