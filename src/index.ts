@@ -456,7 +456,7 @@ const main = async () => {
         }
       }
 
-      if (pulledMessages.length == 0) continue;
+      if (pulledMessages.length === 0) continue;
 
       const events = await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(oneBotServer!.api!, msg)));
 
@@ -569,6 +569,7 @@ const main = async () => {
     },
     onDebounceStateChange: hasTelegram
       ? (chatId, isDebouncing) => {
+          if (resolveChatConfig(config, chatId).platform !== 'telegram') return;
           if (isDebouncing) {
             telegram!.startTypingPolling(chatId);
           } else {
