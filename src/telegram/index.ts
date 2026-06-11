@@ -277,6 +277,7 @@ export const createTelegramManager = (
 
   const handleTypingEvent = (event: TypingEvent) => {
     if (!botChats.has(event.chatId)) return;
+    logger.withFields({ chatId: event.chatId, userId: event.userId }).debug('Telegram typing event received');
     typingBus.emit(event);
   };
 
