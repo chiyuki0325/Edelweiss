@@ -28,6 +28,7 @@ export interface StreamingMessagesParams {
   timeoutSec?: number;
   /** Anthropic output_config effort level. When set, sent as `output_config: { effort }`. */
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  signal?: AbortSignal;
   log: Logger;
   label: string;
 }
@@ -69,6 +70,14 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
   const timeout = params.timeoutSec
     ? setTimeout(() => abortController.abort(new Error(`messages request timed out after ${params.timeoutSec}s`)), params.timeoutSec * 1000)
     : undefined;
+  // If external signal triggers, abort the request
+  if (params.signal) {
+    if (params.signal.aborted) {
+      abortController.abort(new Error('Request aborted before start'));
+    } else {
+      params.signal.addEventListener('abort', () => abortController.abort(params.signal!.reason), { once: true });
+    }
+  }
 
   try {
     const body = JSON.stringify({

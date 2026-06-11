@@ -29,6 +29,7 @@ export interface LlmCallConfig {
   timeoutSec?: number;
   forceToolCall?: boolean;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  signal?: AbortSignal;
 }
 
 export interface ToolSchema {
@@ -96,7 +97,7 @@ export const callLlm = async (
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
       forceToolCall: config.forceToolCall,
       input, instructions: system, ...(wireTools ? { tools: wireTools } : {}),
-      log: log!, label, timeoutSec: config.timeoutSec,
+      log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
     });
     dump(options?.dumpId, 'response', response);
 
@@ -153,7 +154,7 @@ export const callLlm = async (
       forceToolCall: config.forceToolCall,
       system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
       reasoningEffort: config.reasoningEffort,
-      log: log!, label, timeoutSec: config.timeoutSec,
+      log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
     });
     dump(options?.dumpId, 'response', response);
 

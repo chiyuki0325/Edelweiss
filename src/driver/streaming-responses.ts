@@ -19,6 +19,7 @@ export interface StreamingResponsesParams {
   tools?: ResponseTool[];
   forceToolCall?: boolean;
   timeoutSec?: number;
+  signal?: AbortSignal;
   log: Logger;
   label: string;
 }
@@ -37,6 +38,14 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
   const timeout = params.timeoutSec
     ? setTimeout(() => abortController.abort(new Error(`responses request timed out after ${params.timeoutSec}s`)), params.timeoutSec * 1000)
     : undefined;
+  // If external signal triggers, abort the request
+  if (params.signal) {
+    if (params.signal.aborted) {
+      abortController.abort(new Error('Request aborted before start'));
+    } else {
+      params.signal.addEventListener('abort', () => abortController.abort(params.signal!.reason), { once: true });
+    }
+  }
 
   try {
     const body = JSON.stringify({

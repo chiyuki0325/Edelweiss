@@ -29,6 +29,7 @@ export interface StepLoopParams {
   checkInterrupt: () => boolean;
   pullExternalEntries?: () => ConversationEntry[] | Promise<ConversationEntry[]>;
   shouldStop?: () => boolean;
+  signal?: AbortSignal;
   log: Logger;
 }
 
@@ -58,7 +59,7 @@ export const createRunner = (config: RunnerConfig) => {
     let usage: Usage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: -1, cacheReadTokens: -1 };
 
     for (let attempt = 0; attempt < (config.forceToolCall ? MAX_FORCE_TOOL_RETRIES + 1 : 1); attempt++) {
-      result = await callLlm(config, workingEntries, params.system, toolSchemas, {
+      result = await callLlm({ ...config, signal: params.signal }, workingEntries, params.system, toolSchemas, {
         log: params.log,
         label: `step:${step}`,
         dumpId: params.chatId,

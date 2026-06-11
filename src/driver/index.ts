@@ -334,6 +334,9 @@ export const createDriver = (config: DriverConfig, deps: {
           const ctx = composeContext(rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, chatConfig.primaryModel.model, sum);
           if (!ctx) return;
 
+          const stepAbortController = new AbortController();
+          abortManager.current = stepAbortController;
+
           log.withFields({
             chatId,
             entries: ctx.entries.length,
@@ -450,6 +453,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
           const runner = getOrCreateRunner(chatConfig.primaryModel);
           await runner.runStepLoop({
+            signal: stepAbortController.signal,
             chatId,
             entries: ctx.entries,
             system,
@@ -526,6 +530,11 @@ export const createDriver = (config: DriverConfig, deps: {
         if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
+        // New messages arrived while a call is running — abort the current call
+        if (abortManager.current) {
+          abortManager.current.abort(new Error('New messages arrived, aborting current call'));
+          abortManager.current = null;
+        }
         return;
       }
 
@@ -630,12 +639,14 @@ export const createDriver = (config: DriverConfig, deps: {
       if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
       clearDebounceTimers();
       if (compactionTimer) clearTimeout(compactionTimer);
+      abortManager.current = null;
       disposeCursorEffect();
       disposeReplyEffect();
       disposeCompactionEffect();
     };
 
-    const entry = { rc, offline, extendDebounce, notifyTyping, cleanup };
+    const abortManager = { current: null as AbortController | null };
+    const entry = { rc, offline, extendDebounce, notifyTyping, cleanup, abortManager };
     chatScopes.set(chatId, entry);
     return entry;
   };

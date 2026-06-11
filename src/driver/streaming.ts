@@ -45,6 +45,7 @@ export interface StreamingChatParams {
   timeoutSec?: number;
   /** DeepSeek reasoning effort. When set, sent as `thinking: { type: "enabled", reasoning_effort }`. */
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  signal?: AbortSignal;
   log: Logger;
   label: string; // log prefix, e.g. "step" or "compact"
 }
@@ -62,6 +63,14 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
   const timeout = params.timeoutSec
     ? setTimeout(() => abortController.abort(new Error(`chat request timed out after ${params.timeoutSec}s`)), params.timeoutSec * 1000)
     : undefined;
+  // If external signal triggers, abort the request
+  if (params.signal) {
+    if (params.signal.aborted) {
+      abortController.abort(new Error('Request aborted before start'));
+    } else {
+      params.signal.addEventListener('abort', () => abortController.abort(params.signal!.reason), { once: true });
+    }
+  }
 
   try {
     const body = JSON.stringify({
