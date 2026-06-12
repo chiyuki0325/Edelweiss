@@ -34,7 +34,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Runtime**: Node.js (>=22), TypeScript, tsx (dev), tsdown (build).
 - **Telegram Bot API**: grammY — primary message handling, sending replies, commands.
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
-- **OneBot 11**: reverse WebSocket over `ws` — QQ ingress/egress via array message segments, with optional bearer access token.
+- **OneBot 11**: reverse WebSocket over `ws` — QQ ingress/egress via array message segments, with optional bearer access token. Outbound fenced code blocks can be rendered to images through the optional system `silicon` binary; if unavailable or failing, OneBot send falls back to plain text and logs a warning.
 - **LLM**: Three API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`), OpenAI Responses API (via direct `fetch` with SSE streaming), and Anthropic Messages API (via direct `fetch` with SSE streaming). A unified API layer (`src/unified-api/`) provides provider-agnostic intermediate representation (`ConversationEntry[]`) with bidirectional codecs: each producer (streaming parser) emits IR, and each consumer (API sender) converts IR back to provider wire format. `composeContext()` builds a `ConversationEntry[]`: user content parts use `InputMessage` with `InputPart[]`, while assistant/tool entries are `OutputMessage` / `ToolResult`. Final conversion happens at the last send boundary via `toChatCompletionsInput()` / `toResponsesInput()` / `toMessagesInput()`. SSE streaming helpers in `src/driver/streaming.ts` (chat), `src/driver/streaming-responses.ts` (responses), and `src/driver/streaming-messages.ts` (anthropic-messages) parse chunks and emit IR.
 - **Image processing**: sharp — thumbnails, GIF frame extraction, image resizing.
 - **Animation processing**: ffmpeg-static + ffprobe-static (bundled binaries via npm) — MP4/WEBM frame extraction; lottie-frame (native rlottie + libpng addon) — TGS/Lottie frame rendering. System deps: `libpng-dev`, `librlottie-dev`.
@@ -152,6 +152,7 @@ src/
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
 │   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion
 │   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
+│   ├── send.test.ts         # OneBot send rendering tests, including optional silicon code-block image conversion
 │   ├── image-to-text.ts     # OneBot image download + thumbnail generation via shared image-to-text resolver
 │   ├── face-config.ts       # QQ face ID → description lookup
 │   └── face-config.json     # QQ face metadata table

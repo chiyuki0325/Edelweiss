@@ -1,3 +1,5 @@
+import type { Logger } from '@guiiai/logg';
+
 import { buildSendMessage } from './send';
 import { createOneBotServer, type OneBotApiClient } from './server';
 import type { RuntimeConfig } from '../config/config';
@@ -16,6 +18,7 @@ export type {
 export const createOneBotPlatformAdapter = (
   api: OneBotApiClient,
   runtime: RuntimeConfig,
+  logger?: Logger,
 ): PlatformAdapter => ({
   kind: 'onebot',
   sendMessage: async (chatId, text, options) => {
@@ -26,6 +29,7 @@ export const createOneBotPlatformAdapter = (
         path: a.path,
         file_name: a.file_name,
       })),
+      logger: logger?.withContext('onebot:send'),
     });
     return await api.sendMessage(chatId, segments);
   },

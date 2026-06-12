@@ -561,7 +561,7 @@ const main = async () => {
       const existing = platformAdapters.get(chatId);
       if (existing) return existing;
       if (resolveChatConfig(config, chatId).platform === 'onebot' && oneBotServer?.api) {
-        const adapter = createOneBotPlatformAdapter(oneBotServer.api, runtimeConfig);
+        const adapter = createOneBotPlatformAdapter(oneBotServer.api, runtimeConfig, logger);
         platformAdapters.set(chatId, adapter);
         return adapter;
       }
