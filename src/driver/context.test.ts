@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { composeContext } from './context';
+import { composeContext, latestExternalEventMs, latestInterruptingExternalEventMs } from './context';
 import type { TurnResponseV2 } from './types';
 import type { RenderedContext } from '../rendering/types';
 import type { ConversationEntry, InputPart, ToolResult } from '../unified-api/types';
@@ -162,5 +162,34 @@ describe('composeContext — misc', () => {
       && first.parts[0]!.kind === 'text' ? first.parts[0]!.text : '';
     expect(firstText).toContain('Conversation summary');
     expect(firstText).toContain('earlier stuff');
+  });
+});
+
+describe('event timestamp helpers', () => {
+  it('counts runtime events as wake events but not interrupting external messages', () => {
+    const rc: RenderedContext = [
+      { ...textSeg(100, 'task done'), isRuntimeEvent: true },
+    ];
+
+    expect(latestExternalEventMs(rc, 50)).toBe(100);
+    expect(latestInterruptingExternalEventMs(rc, 50)).toBeNull();
+  });
+
+  it('counts non-self chat segments as interrupting external messages', () => {
+    const rc: RenderedContext = [
+      textSeg(100, 'new user message'),
+    ];
+
+    expect(latestExternalEventMs(rc, 50)).toBe(100);
+    expect(latestInterruptingExternalEventMs(rc, 50)).toBe(100);
+  });
+
+  it('ignores self messages for both wake and interrupt decisions', () => {
+    const rc: RenderedContext = [
+      { ...textSeg(100, 'bot message'), isMyself: true },
+    ];
+
+    expect(latestExternalEventMs(rc, 50)).toBeNull();
+    expect(latestInterruptingExternalEventMs(rc, 50)).toBeNull();
   });
 });

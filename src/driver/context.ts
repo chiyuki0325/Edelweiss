@@ -46,6 +46,15 @@ export const latestExternalEventMs = (rc: RenderedContext, afterMs: number): num
   return latest;
 };
 
+export const latestInterruptingExternalEventMs = (rc: RenderedContext, afterMs: number): number | null => {
+  let latest: number | null = null;
+  for (const seg of rc) {
+    if (seg.receivedAtMs > afterMs && !seg.isMyself && !seg.isRuntimeEvent)
+      latest = seg.receivedAtMs > (latest ?? 0) ? seg.receivedAtMs : latest;
+  }
+  return latest;
+};
+
 const trHasToolCalls = (tr: TurnResponseV2): boolean =>
   tr.entries.some(e => e.kind === 'message' && e.role === 'assistant'
     && e.parts.some(p => p.kind === 'toolCall'));

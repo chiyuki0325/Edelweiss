@@ -5,7 +5,7 @@ import { computed, effect, signal } from 'alien-signals';
 
 import { callLlm, type ToolSchema } from './call-llm';
 import { runCompaction } from './compaction';
-import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, latestExternalEventMs, wasToolLoopInterrupted } from './context';
+import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, latestExternalEventMs, latestInterruptingExternalEventMs, wasToolLoopInterrupted } from './context';
 import { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 import { createRunner } from './runner';
 import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
@@ -530,8 +530,10 @@ export const createDriver = (config: DriverConfig, deps: {
         if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
-        // New messages arrived while a call is running — abort the current call
-        if (abortManager.current) {
+        // New chat messages arrived while a call is running — abort the current
+        // call. Runtime events wake the next turn but do not interrupt the
+        // in-flight model/tool loop.
+        if (abortManager.current && latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
           abortManager.current.abort(new Error('New messages arrived, aborting current call'));
           abortManager.current = null;
         }
@@ -546,6 +548,15 @@ export const createDriver = (config: DriverConfig, deps: {
       }
 
       // needsReply is true and we're not running.
+      const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null;
+      if (!hasInterruptingExternalInput) {
+        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+        clearDebounceTimers();
+        debounceWaiting = false;
+        executeLlmCall();
+        return;
+      }
+
       if (!debounceWaiting) {
         // First trigger — start debounce with initialDelayMs + hard cap.
         debounceWaiting = true;
