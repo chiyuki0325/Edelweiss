@@ -128,8 +128,8 @@ export const createSendMessageTool = (
         const byteLength = Buffer.byteLength(text, 'utf8');
         if (byteLength > 256) {
           return {
-            content: JSON.stringify({ ok: false, error: 'Message is too long.' }),
-            requiresFollowUp: false,
+            content: JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages.' }),
+            requiresFollowUp: true,
           };
         }
       }
