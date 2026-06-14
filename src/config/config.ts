@@ -73,6 +73,7 @@ const ChatConfigSchema = v.object({
     initialDelayMs: v.optional(v.number(), 5000),
     typingExtendMs: v.optional(v.number(), 5000),
     maxDelayMs: v.optional(v.number(), 30000),
+    typingExemptUsers: v.optional(v.array(v.string()), []),
   }), {}),
   humanLikeness: v.optional(v.object({
     trailingPeriod: v.optional(v.boolean(), true),
@@ -144,6 +145,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     initialDelayMs: v.number(),
     typingExtendMs: v.number(),
     maxDelayMs: v.number(),
+    typingExemptUsers: v.array(v.string()),
   })),
   humanLikeness: v.partial(v.object({
     trailingPeriod: v.boolean(),
@@ -241,6 +243,7 @@ export interface ResolvedChatConfig {
     initialDelayMs: number;
     typingExtendMs: number;
     maxDelayMs: number;
+    typingExemptUsers: string[];
   };
   humanLikeness: {
     trailingPeriod: boolean;

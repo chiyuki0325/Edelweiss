@@ -716,7 +716,7 @@ const main = async () => {
 
     tg.onTyping(event => {
       if (event.userId === botUserId) return;
-      driver.handleTyping(event.chatId);
+      driver.handleTyping(event.chatId, event.userId);
     });
 
     tg.bot.registerCommand('offline', 'Pause automatic responses (only respond to @mentions and replies)', async chatId => {

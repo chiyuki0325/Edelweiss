@@ -667,8 +667,15 @@ export const createDriver = (config: DriverConfig, deps: {
     getOrCreateScope(chatId).rc(newRC);
   };
 
-  const handleTyping = (chatId: string) => {
-    chatScopes.get(chatId)?.notifyTyping();
+  const handleTyping = (chatId: string, userId?: string) => {
+    const scope = chatScopes.get(chatId);
+    if (!scope) return;
+    if (userId) {
+      const chatConfig = config.resolveChatConfig(chatId);
+      const exemptUsers = chatConfig.debounce?.typingExemptUsers ?? [];
+      if (exemptUsers.includes(userId)) return;
+    }
+    scope.notifyTyping();
   };
 
   const setOfflineMode = (chatId: string, isOffline: boolean) => {
