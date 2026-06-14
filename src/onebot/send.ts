@@ -228,8 +228,13 @@ export const buildSendMessage = async (
         break;
       case 'document':
       default:
-        // TODO: 需要进一步调试
-        segments.push({ type: 'file', data: { file_id: dataUri, file: att.file_name ?? att.path } });
+        segments.push({
+          type: 'file',
+          data: {
+            file: dataUri,
+            name: att.file_name ?? att.path,
+          },
+        });
         break;
       }
     }

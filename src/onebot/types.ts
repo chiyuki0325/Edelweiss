@@ -66,7 +66,16 @@ export interface OneBotVideoSegment {
 
 export interface OneBotFileSegment {
   type: 'file';
-  data: { file: string; file_id: string; url?: string };
+  data: {
+    /** File path, URL, base64://, or file:/// — the actual file source. */
+    file: string;
+    /** File ID (output-only, set by napcat on incoming messages; ignored by napcat on send). */
+    file_id?: string;
+    url?: string;
+    path?: string;
+    name?: string;
+    thumb?: string;
+  };
 }
 
 export interface OneBotJsonSegment {
