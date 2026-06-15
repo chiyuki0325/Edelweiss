@@ -38,7 +38,6 @@ export interface UserbotClient {
   getAvailableReactionEmojis(): string[];
   refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
   getAllowedReactionEmojis(chatId: string): string[];
-  sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
   raw(): TelegramClient;
   getSessionString(): string;
 }
@@ -306,16 +305,6 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
   const getAllowedReactionEmojis = (chatId: string): string[] =>
     allowedReactionEmojisByChat.get(chatId) ?? [];
 
-  const sendReaction = async (chatId: string, messageId: number, emoji: string): Promise<void> => {
-    const peer = await client.getInputEntity(chatId);
-    await client.invoke(new Api.messages.SendReaction({
-      peer,
-      msgId: messageId,
-      reaction: [new Api.ReactionEmoji({ emoticon: emoji })],
-      addToRecent: true,
-    }));
-  };
-
   return {
     start,
     stop,
@@ -331,7 +320,6 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     getAvailableReactionEmojis,
     refreshAllowedReactionEmojis,
     getAllowedReactionEmojis,
-    sendReaction,
     raw: () => client,
     getSessionString: () => String(client.session.save()),
   };

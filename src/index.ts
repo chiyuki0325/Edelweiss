@@ -564,7 +564,7 @@ const main = async () => {
     getAllowedReactionEmojis: hasTelegram && telegram!.userbot
       ? chatId => telegram!.getAllowedReactionEmojis(chatId)
       : undefined,
-    sendReaction: hasTelegram && telegram!.userbot
+    sendReaction: hasTelegram
       ? (chatId, messageId, emoji) => telegram!.sendReaction(chatId, messageId, emoji)
       : undefined,
     getPlatformAdapter: chatId => {

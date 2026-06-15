@@ -20,7 +20,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send/receive message reactions via userbot |
+| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via userbot |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_states tables; 28 migrations |
@@ -300,7 +300,7 @@ MTProto fires `updateEditMessage` for metadata-only changes (link preview loadin
 
 ### Telegram Reactions
 
-Telegram reactions are userbot-only. `messages.getAvailableReactions` provides the global active emoji reaction list, and per-chat `availableReactions` from `GetFullChat` / `GetFullChannel` constrains the final `react_message` tool enum. Custom, premium, and paid reactions are intentionally not exposed to the LLM.
+Incoming Telegram reaction updates and allowed-reaction discovery are userbot-only. `messages.getAvailableReactions` provides the global active emoji reaction list, and per-chat `availableReactions` from `GetFullChat` / `GetFullChannel` constrains the final `react_message` tool enum. Outgoing `react_message` calls use the Bot API `setMessageReaction` endpoint so the visible reaction sender is the real bot account. Custom, premium, and paid reactions are intentionally not exposed to the LLM.
 
 Incoming Telegram reaction updates are aggregate counts. Cahciua stores the latest aggregate per `(chatId, messageId)` in `message_reaction_states`; normal message ingress seeds an empty/current snapshot so the first later live reaction can be detected. Reaction updates emit append-only canonical `reaction` events only when a count increases. Decreases/removals update the snapshot but do not enter IC. If a legacy message has no prior snapshot, the first aggregate update seeds the snapshot without emitting historical reactions.
 

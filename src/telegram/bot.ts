@@ -1,7 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 import type { Context } from 'grammy';
 import { Bot, InputFile } from 'grammy';
-import type { InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo } from 'grammy/types';
+import type { InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo, ReactionType, ReactionTypeEmoji } from 'grammy/types';
 
 import { httpGetBuffer, registerHttpSecret } from '../http';
 import { createEventBus } from './event-bus';
@@ -60,6 +60,7 @@ export interface BotClient {
   sendAnimation(chatId: string | number, animation: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendVideoNote(chatId: string | number, videoNote: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
+  sendReaction(chatId: string | number, messageId: number, emoji: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   raw(): Bot;
   botUserId(): string;
@@ -281,6 +282,11 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     }));
   };
 
+  const sendReaction = async (chatId: string | number, messageId: number, emoji: string): Promise<void> => {
+    const reaction: ReactionType[] = [{ type: 'emoji', emoji: emoji as ReactionTypeEmoji['emoji'] }];
+    await bot.api.setMessageReaction(chatId, messageId, reaction);
+  };
+
   return {
     start,
     stop,
@@ -295,6 +301,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     sendAnimation,
     sendVideoNote,
     sendMediaGroup,
+    sendReaction,
     downloadFile,
     raw: () => bot,
     botUserId: () => userId,

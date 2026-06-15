@@ -380,10 +380,7 @@ export const createTelegramManager = (
     resolvePackTitle,
     refreshAllowedReactionEmojis: chatId => userbot?.refreshAllowedReactionEmojis(chatId) ?? Promise.resolve([]),
     getAllowedReactionEmojis: chatId => userbot?.getAllowedReactionEmojis(chatId) ?? [],
-    sendReaction: async (chatId, messageId, emoji) => {
-      if (!userbot) throw new Error('react_message not available: Telegram userbot is not configured');
-      await userbot.sendReaction(chatId, messageId, emoji);
-    },
+    sendReaction: (chatId, messageId, emoji) => bot.sendReaction(chatId, messageId, emoji),
     botUserId: bot.botUserId(),
     bot,
     userbot,
