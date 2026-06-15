@@ -179,7 +179,7 @@ export const callLlm = async (
     forceToolCall: config.forceToolCall,
     messages: chatMessages, system, ...(wireTools ? { tools: wireTools } : {}),
     reasoningEffort: config.reasoningEffort,
-    log: log!, label, timeoutSec: config.timeoutSec,
+    log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
   });
   dump(options?.dumpId, 'response', response);
 

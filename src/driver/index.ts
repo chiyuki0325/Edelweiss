@@ -160,9 +160,9 @@ export const createDriver = (config: DriverConfig, deps: {
     // --- Main LLM reply effect with debounce ---
     // When new external messages arrive, start a debounce timer (initialDelayMs).
     // New messages or typing events reset it to typingExtendMs. A hard cap
-    // (maxDelayMs) forces the call even if activity continues. The `running`
-    // flag prevents concurrent calls; messages arriving during an LLM call
-    // accumulate and start a fresh debounce cycle when the call finishes.
+    // (maxDelayMs) is a batch deadline that survives LLM-call interruptions.
+    // Before the deadline, new messages abort the in-flight call and reschedule
+    // with typingExtendMs; after it, the current call is allowed to finish.
     const needsReply = computed(() => {
       const rcVal = rc();
       if (rcVal.length === 0) return false;
@@ -180,6 +180,11 @@ export const createDriver = (config: DriverConfig, deps: {
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let maxDelayTimer: ReturnType<typeof setTimeout> | undefined;
     let debounceWaiting = false;
+    let activeRunRc: RenderedContext | null = null;
+    let activeRunInterruptCursorMs = 0;
+    let activeRunInterruptedByInput = false;
+    let startNextDebounceWithExtendDelay = false;
+    let replyBatchDeadlineMs: number | null = null;
 
     const clearDebounceTimers = () => {
       if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
@@ -189,6 +194,30 @@ export const createDriver = (config: DriverConfig, deps: {
     const wakeMain = () => {
       if (running()) return;
       executeLlmCall();
+    };
+
+    const hasInterruptingInputDuringActiveRun = (rcVal = rc()) => {
+      const interruptAfterMs = Math.max(lastProcessedMs(), activeRunInterruptCursorMs);
+      return activeRunRc != null
+        && rcVal !== activeRunRc
+        && latestInterruptingExternalEventMs(rcVal, interruptAfterMs) != null;
+    };
+
+    const ensureReplyBatchDeadline = () => {
+      replyBatchDeadlineMs ??= Date.now() + maxDelayMs;
+      return replyBatchDeadlineMs;
+    };
+
+    const replyBatchRemainingMs = () =>
+      Math.max(0, ensureReplyBatchDeadline() - Date.now());
+
+    const isReplyBatchDeadlineExpired = () =>
+      replyBatchDeadlineMs != null && Date.now() >= replyBatchDeadlineMs;
+
+    const markActiveRunInterruptedByInput = () => {
+      activeRunInterruptedByInput = true;
+      startNextDebounceWithExtendDelay = true;
+      ensureReplyBatchDeadline();
     };
 
     const createSharedTools = (includeSendMessage: boolean): CahciuaTool[] => {
@@ -322,6 +351,9 @@ export const createDriver = (config: DriverConfig, deps: {
       // (by an explicit mention/reply), auto-return to online when done.
       const wasOffline = offline();
       const rcAtStart = rc();
+      activeRunRc = rcAtStart;
+      activeRunInterruptCursorMs = latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs();
+      activeRunInterruptedByInput = false;
       running(true);
 
       void (async () => {
@@ -336,6 +368,11 @@ export const createDriver = (config: DriverConfig, deps: {
 
           const stepAbortController = new AbortController();
           abortManager.current = stepAbortController;
+          if (hasInterruptingInputDuringActiveRun() && !isReplyBatchDeadlineExpired()) {
+            markActiveRunInterruptedByInput();
+            abortManager.current = null;
+            return;
+          }
 
           log.withFields({
             chatId,
@@ -472,7 +509,15 @@ export const createDriver = (config: DriverConfig, deps: {
             },
             checkInterrupt: () => {
               if (rc() === rcAtStart) return false;
-              return latestExternalEventMs(rc(), lastProcessedMs()) != null;
+              const hasPendingExternalInput = latestExternalEventMs(rc(), lastProcessedMs()) != null;
+              if (!hasPendingExternalInput) return false;
+              if (latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
+                const hasPendingRuntimeEvent = rc().some(seg =>
+                  seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
+                if (isReplyBatchDeadlineExpired()) return hasPendingRuntimeEvent;
+                markActiveRunInterruptedByInput();
+              }
+              return true;
             },
             pullExternalEntries: () => mailbox.flush('main'),
             log,
@@ -483,6 +528,11 @@ export const createDriver = (config: DriverConfig, deps: {
           log.withError(err).error('LLM call failed');
           failedRc(rcAtStart);
         } finally {
+          if (!activeRunInterruptedByInput)
+            replyBatchDeadlineMs = null;
+          activeRunRc = null;
+          activeRunInterruptCursorMs = 0;
+          activeRunInterruptedByInput = false;
           running(false);
           if (wasOffline) {
             offline(false);
@@ -499,9 +549,9 @@ export const createDriver = (config: DriverConfig, deps: {
     // Checked at debounce timer expiry: if typing occurred within the validity
     // window, extend instead of firing. maxDelayTimer bypasses this check.
     const debounceTimerCallback = () => {
-      if (debounceWaiting && Date.now() - lastTypingAtMs < TYPING_VALIDITY_MS) {
+      if (debounceWaiting && Date.now() - lastTypingAtMs < TYPING_VALIDITY_MS && !isReplyBatchDeadlineExpired()) {
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
+        debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, replyBatchRemainingMs()));
         return;
       }
       executeLlmCall();
@@ -510,8 +560,13 @@ export const createDriver = (config: DriverConfig, deps: {
     // Exposed to handleTyping — extends the debounce window if waiting.
     const extendDebounce = () => {
       if (!debounceWaiting || running()) return;
+      const remainingMs = replyBatchRemainingMs();
+      if (remainingMs <= 0) {
+        executeLlmCall();
+        return;
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
+      debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
     };
 
     const notifyTyping = () => {
@@ -523,7 +578,7 @@ export const createDriver = (config: DriverConfig, deps: {
     // when RC changes even if needsReply stays true — this triggers debounce
     // extension on new messages arriving during the wait period.
     const disposeReplyEffect = effect(() => {
-      rc();
+      const rcVal = rc();
       const isRunning = running();
 
       if (isRunning) {
@@ -533,9 +588,12 @@ export const createDriver = (config: DriverConfig, deps: {
         // New chat messages arrived while a call is running — abort the current
         // call. Runtime events wake the next turn but do not interrupt the
         // in-flight model/tool loop.
-        if (abortManager.current && latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
-          abortManager.current.abort(new Error('New messages arrived, aborting current call'));
-          abortManager.current = null;
+        if (hasInterruptingInputDuringActiveRun(rcVal) && !isReplyBatchDeadlineExpired()) {
+          markActiveRunInterruptedByInput();
+          if (abortManager.current) {
+            abortManager.current.abort(new Error('New messages arrived, aborting current call'));
+            abortManager.current = null;
+          }
         }
         return;
       }
@@ -544,31 +602,57 @@ export const createDriver = (config: DriverConfig, deps: {
         if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
+        startNextDebounceWithExtendDelay = false;
+        replyBatchDeadlineMs = null;
         return;
       }
 
       // needsReply is true and we're not running.
-      const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null;
+      const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rcVal, lastProcessedMs()) != null;
       if (!hasInterruptingExternalInput) {
         if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
         debounceWaiting = false;
+        startNextDebounceWithExtendDelay = false;
+        replyBatchDeadlineMs = null;
         executeLlmCall();
         return;
       }
 
       if (!debounceWaiting) {
         // First trigger — start debounce with initialDelayMs + hard cap.
+        // If this turn was just interrupted by a new message, treat that
+        // message like an in-flight debounce extension.
+        const debounceDelayMs = startNextDebounceWithExtendDelay ? typingExtendMs : initialDelayMs;
+        startNextDebounceWithExtendDelay = false;
+        const remainingMs = replyBatchRemainingMs();
+        if (remainingMs <= 0) {
+          executeLlmCall();
+          return;
+        }
+        const effectiveDebounceDelayMs = Math.min(debounceDelayMs, remainingMs);
         debounceWaiting = true;
         deps.onDebounceStateChange?.(chatId, true);
-        debounceTimer = setTimeout(debounceTimerCallback, initialDelayMs);
-        maxDelayTimer = setTimeout(executeLlmCall, maxDelayMs);
-        log.withFields({ chatId, initialDelayMs, maxDelayMs }).log('Debounce started');
+        debounceTimer = setTimeout(debounceTimerCallback, effectiveDebounceDelayMs);
+        maxDelayTimer = setTimeout(executeLlmCall, remainingMs);
+        log.withFields({
+          chatId,
+          debounceDelayMs: effectiveDebounceDelayMs,
+          initialDelayMs,
+          typingExtendMs,
+          maxDelayMs,
+          replyBatchDeadlineMs,
+        }).log('Debounce started');
       } else {
         // RC changed while waiting (new message) — extend debounce timer,
         // maxDelayTimer stays unchanged as the hard cap.
+        const remainingMs = replyBatchRemainingMs();
+        if (remainingMs <= 0) {
+          executeLlmCall();
+          return;
+        }
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(debounceTimerCallback, typingExtendMs);
+        debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
       }
     });
 

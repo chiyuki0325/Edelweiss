@@ -117,6 +117,7 @@ src/
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (7 configurable checks)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
 │   ├── system-prompt.test.ts # System prompt tests
+│   ├── index.test.ts      # Driver reactive scheduling/debounce tests
 │   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, load_skill, subagent communication, background-task helpers
 │   ├── tools.test.ts       # Tool capability tests
 │   ├── subagents/          # Subagent runtime: isolated helper manager, mailbox, lifecycle/types, communication/finalize tools
@@ -216,6 +217,7 @@ Top-level directories:
   - `dcp-design.md` — architecture rationale and Driver/TR design
   - `content-aware-frame-selection.md` — MSE-based frame selection findings and rationale
   - `humanize.md` — human-likeness design notes
+  - `rc-change-side-effects.md` — RC 变更可能触发的副作用和代码位点
   - `subagent-system.md` — subagent system design
   - `telegram-typing-events.md` — Telegram typing event research
   - `unified-api-integration.md` — unified API integration design
@@ -318,14 +320,14 @@ Design rule: metadata changes about entities → append-only; content changes to
 
 ### Message Scheduling
 
-Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **debounce + natural batching** — when new external messages trigger the reply effect, a debounce timer (`initialDelayMs`, default 5s) starts. New messages arriving during the wait reset the timer to `typingExtendMs` (default 5s). MTProto typing events (`SendMessageTypingAction`) from non-bot users in the same chat also extend the debounce. A hard cap (`maxDelayMs`, default 30s) forces the LLM call regardless of ongoing activity. The `running` flag prevents concurrent LLM calls; messages arriving during a call accumulate and start a fresh debounce cycle when the call finishes. Bot responds via `send_message` tool call (not 1:1 response).
+Projection runs immediately on every event — IC is always current. Scheduling is owned by the **Driver**. Current strategy: **debounce + natural batching with a cross-interrupt deadline** — when new external messages trigger the reply effect, a debounce timer (`initialDelayMs`, default 5s) starts and the current reply batch gets an absolute deadline (`Date.now() + maxDelayMs`, default 30s). New messages arriving during the wait reset only the debounce timer to `typingExtendMs` (default 5s); they do not move the batch deadline. MTProto typing events (`SendMessageTypingAction`) from non-bot users in the same chat also extend only the debounce timer, capped by the remaining deadline. The `running` flag prevents concurrent LLM calls. Before the batch deadline, new external chat messages arriving during a call abort the in-flight call and reschedule with `typingExtendMs`; once the deadline has passed, ordinary new messages no longer abort the current call, so the bot gets a chance to finish speaking. After a non-interrupted LLM attempt ends, the deadline is cleared; any still-pending external messages form a new batch. Bot responds via `send_message` tool call (not 1:1 response).
 
-The reply effect reads `rc()` directly (in addition to `needsReply()`) so that it re-runs when RC changes even if `needsReply()` stays `true` — this is required for debounce extension on new messages. Typing events bypass the signal graph entirely via `extendDebounce()`, which resets only the debounce timer without touching the maxDelay cap.
+The reply effect reads `rc()` directly (in addition to `needsReply()`) so that it re-runs when RC changes even if `needsReply()` stays `true` — this is required for debounce extension and in-flight interruption checks on new messages. Typing events bypass the signal graph entirely via `extendDebounce()`, which resets only the debounce timer without moving the batch deadline.
 
 **Config** (`debounce` section in chat config, per-chat overridable):
 - `initialDelayMs` (number, default `5000`): delay before first LLM call after new external messages.
 - `typingExtendMs` (number, default `5000`): delay reset on new messages or typing events.
-- `maxDelayMs` (number, default `30000`): hard cap — forces LLM call regardless of activity.
+- `maxDelayMs` (number, default `30000`): per-batch hard deadline — forces an LLM call and, after expiry, prevents ordinary new messages from endlessly aborting it.
 
 Scheduling lives in Driver (not a separate orchestration layer) because the Driver already manages the reactive scheduling graph (signal/computed/effect) — externalizing it would create coordination overhead.
 
@@ -337,7 +339,7 @@ Commands are registered via `bot.registerCommand()` in `src/index.ts` and report
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the complete output of one step: assistant response + tool results produced by executing that step's tool calls. When new external chat messages arrive during a tool call loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. Runtime events (for example background task completion) also break the loop at a step boundary so the next turn can recompose context with the event, but they do **not** abort an in-flight model API request and do **not** wait for debounce when they are the only pending trigger. The reactive effect then re-schedules a new LLM call when interruption is needed, composing fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the complete output of one step: assistant response + tool results produced by executing that step's tool calls. When new external chat messages arrive during a tool call loop before the current reply batch deadline, the Driver's `checkInterrupt` detects the RC change and breaks the loop. After the deadline, ordinary new messages stop interrupting the current loop so the bot is not starved by constant chatter. Runtime events (for example background task completion) also break the loop at a step boundary so the next turn can recompose context with the event, but they do **not** abort an in-flight model API request and do **not** wait for debounce when they are the only pending trigger. The reactive effect then re-schedules a new LLM call when interruption is needed, composing fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
 
 ### Reasoning Signature Sanitization
 
