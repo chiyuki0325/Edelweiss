@@ -197,6 +197,13 @@
       "when": 1781514153703,
       "tag": "0027_create_message_reaction_states",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1781524174994,
+      "tag": "0028_create_message_reaction_snapshots",
+      "breakpoints": true
     }
   ]
 }

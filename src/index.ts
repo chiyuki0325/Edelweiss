@@ -7,7 +7,7 @@ import { shellTaskFactory } from './background-task/shell';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
-import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionState, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionState } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionSnapshot, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionSnapshot } from './db';
 import { getLastMessageId } from './db/persistence';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
@@ -25,7 +25,7 @@ import { computeThumbnailHash, createImageToTextResolver } from './telegram/imag
 import type { ImageToTextCompressionConfig } from './telegram/image-to-text';
 import { createSemaphore } from './telegram/llm-description';
 import { renderMarkdownToTelegramHTML } from './telegram/markdown';
-import type { Attachment } from './telegram/message/types';
+import type { Attachment, TelegramReactionSnapshotEntry, TelegramReactionUpdate } from './telegram/message/types';
 import { normalizeStickerSetMetadata } from './telegram/pack-title';
 import { loadSession } from './telegram/session';
 
@@ -342,7 +342,7 @@ const main = async () => {
       logger.withFields({ chatId, messageId: event.messageId }).warn('Synthetic bypass: userbot arrived first (isSelfSent merged via dedup)');
 
     persistEvent(db, event);
-    upsertMessageReactionState(db, chatId, event.messageId, {}, event.receivedAtMs);
+    upsertMessageReactionSnapshot(db, chatId, event.messageId, [], event.receivedAtMs);
     hydrateAltTextFromCache(event);
     if (isConfiguredChat(configuredChatIds, chatId))
       pipeline.pushEvent(chatId, event);
@@ -619,6 +619,26 @@ const main = async () => {
   if (hasTelegram) {
     const tg = telegram!;
 
+    const reactionEntryKey = (entry: TelegramReactionSnapshotEntry) =>
+      `${entry.emoji}\u0000${entry.sender.id}`;
+
+    const persistReactionEvent = (
+      reaction: TelegramReactionUpdate,
+      emoji: string,
+      count: number,
+      sender?: TelegramReactionSnapshotEntry['sender'],
+    ) => {
+      const event = adaptReaction(reaction, emoji, count, sender);
+      persistEvent(db, event);
+      if (isConfiguredChat(configuredChatIds, event.chatId))
+        pipeline.pushEvent(event.chatId, event);
+    };
+
+    const persistEmptyReactionSnapshotIfUnseeded = (chatId: string, messageId: string, updatedAtMs: number) => {
+      const existing = loadMessageReactionSnapshot(db, chatId, messageId);
+      if (!existing) upsertMessageReactionSnapshot(db, chatId, messageId, [], updatedAtMs);
+    };
+
     tg.onMessage(msg => {
       // Bot's own messages picked up by userbot are already injected into the
       // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
@@ -627,7 +647,8 @@ const main = async () => {
       if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
         try {
           persistMessage(db, msg);
-          upsertMessageReactionState(db, msg.chatId, String(msg.messageId), msg.reactions ?? {}, msg.receivedAtMs ?? Date.now());
+          if (!msg.reactions || Object.keys(msg.reactions).length === 0)
+            persistEmptyReactionSnapshotIfUnseeded(msg.chatId, String(msg.messageId), msg.receivedAtMs ?? Date.now());
         } catch (err) { logger.withError(err).error('Failed to persist self message'); }
         return;
       }
@@ -664,7 +685,8 @@ const main = async () => {
       persistEvent(db, event);
 
       try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
-      upsertMessageReactionState(db, event.chatId, event.messageId, msg.reactions ?? {}, msg.receivedAtMs ?? Date.now());
+      if (!msg.reactions || Object.keys(msg.reactions).length === 0)
+        persistEmptyReactionSnapshotIfUnseeded(event.chatId, event.messageId, msg.receivedAtMs ?? Date.now());
 
       if (isConfiguredChat(configuredChatIds, event.chatId)) {
         hydrateAltTextFromCache(event);
@@ -732,28 +754,50 @@ const main = async () => {
       logger.withFields({
         chatId: reaction.chatId,
         messageId: reaction.messageId,
-        reactions: Object.keys(reaction.counts).length,
+        kind: reaction.kind,
+        reactions: reaction.kind === 'count' ? Object.keys(reaction.counts).length : reaction.newReactions.length,
       }).debug('Message reaction update received');
 
       const messageId = String(reaction.messageId);
-      const counts = Object.fromEntries(
-        Object.entries(reaction.counts).filter(([, count]) => count > 0),
-      );
-      const previous = loadMessageReactionState(db, reaction.chatId, messageId);
-      upsertMessageReactionState(db, reaction.chatId, messageId, counts, reaction.receivedAtMs ?? Date.now());
+      const previous = loadMessageReactionSnapshot(db, reaction.chatId, messageId);
+      const updatedAtMs = reaction.receivedAtMs ?? Date.now();
 
-      // Telegram sends aggregate reaction state. The first aggregate observed for
-      // a message may already include historical reactions, so seed the snapshot
-      // without emitting IC events. Later increases are append-only reaction events.
+      if (reaction.kind === 'user') {
+        const oldReactions = new Set(reaction.oldReactions);
+        const newReactions = [...new Set(reaction.newReactions)];
+        const next = [
+          ...(previous ?? []).filter(entry => entry.sender.id !== reaction.sender.id),
+          ...newReactions.map(emoji => ({ emoji, sender: reaction.sender, date: reaction.date })),
+        ];
+
+        upsertMessageReactionSnapshot(db, reaction.chatId, messageId, next, updatedAtMs);
+
+        for (const emoji of newReactions) {
+          if (oldReactions.has(emoji)) continue;
+          persistReactionEvent(reaction, emoji, 1, reaction.sender);
+        }
+        return;
+      }
+
+      if (!reaction.snapshot) {
+        logger.withFields({
+          chatId: reaction.chatId,
+          messageId: reaction.messageId,
+        }).debug('Reaction count update skipped because actor snapshot is unavailable');
+        return;
+      }
+
+      upsertMessageReactionSnapshot(db, reaction.chatId, messageId, reaction.snapshot, updatedAtMs);
+
+      // Count updates are aggregate and may represent historical state. Seed the
+      // first actor snapshot without emitting; later snapshot additions become IC
+      // reaction events with sender attribution.
       if (!previous) return;
 
-      for (const [emoji, count] of Object.entries(counts)) {
-        const oldCount = previous[emoji] ?? 0;
-        if (count <= oldCount) continue;
-        const event = adaptReaction(reaction, emoji, count - oldCount);
-        persistEvent(db, event);
-        if (isConfiguredChat(configuredChatIds, event.chatId))
-          pipeline.pushEvent(event.chatId, event);
+      const oldKeys = new Set(previous.map(reactionEntryKey));
+      for (const entry of reaction.snapshot) {
+        if (oldKeys.has(reactionEntryKey(entry))) continue;
+        persistReactionEvent(reaction, entry.emoji, 1, entry.sender);
       }
     });
 

@@ -241,6 +241,22 @@ export const createTelegramManager = (
       case 'delete':
         return event;
       case 'reaction':
+        if (event.reaction.kind === 'count' && userbot) {
+          try {
+            return {
+              ...event,
+              reaction: {
+                ...event.reaction,
+                snapshot: await userbot.fetchMessageReactions(event.reaction.chatId, event.reaction.messageId),
+              },
+            };
+          } catch (err) {
+            log.withError(err).withFields({
+              chatId: event.reaction.chatId,
+              messageId: event.reaction.messageId,
+            }).warn('Failed to fetch Telegram message reaction actors');
+          }
+        }
         return event;
       }
     },
@@ -286,6 +302,15 @@ export const createTelegramManager = (
     dispatchMessage(msg);
   });
 
+  bot.onReactionUpdate(reaction => {
+    if (!botChats.has(reaction.chatId)) return;
+    ingressQueue.enqueue({
+      kind: 'reaction',
+      chatId: reaction.chatId,
+      reaction: { ...reaction, ...captureIngressMeta() },
+    });
+  });
+
   const handleTypingEvent = (event: TypingEvent) => {
     if (!botChats.has(event.chatId)) return;
     logger.withFields({ chatId: event.chatId, userId: event.userId }).debug('Telegram typing event received');
@@ -314,15 +339,6 @@ export const createTelegramManager = (
         kind: 'delete',
         chatId,
         del: { ...del, chatId, ...captureIngressMeta() },
-      });
-    });
-
-    userbot.onReactionUpdate(reaction => {
-      if (!botChats.has(reaction.chatId)) return;
-      ingressQueue.enqueue({
-        kind: 'reaction',
-        chatId: reaction.chatId,
-        reaction: { ...reaction, ...captureIngressMeta() },
       });
     });
 

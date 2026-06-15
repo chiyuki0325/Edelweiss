@@ -7,7 +7,10 @@ export type {
   TelegramMessage,
   TelegramMessageDelete,
   TelegramMessageEdit,
+  TelegramReactionCountUpdate,
+  TelegramReactionSnapshotEntry,
   TelegramReactionUpdate,
+  TelegramUserReactionUpdate,
   TelegramUser,
 } from './types';
 
@@ -21,7 +24,7 @@ export {
   resolveGramjsSender,
 } from './gramjs';
 
-export { convertGrammyEntities, fromGrammyMessage } from './grammy';
+export { convertGrammyEntities, fromGrammyMessage, fromGrammyReactionCountUpdate, fromGrammyReactionUpdate } from './grammy';
 
 export { createMessageDedup } from './dedup';
 

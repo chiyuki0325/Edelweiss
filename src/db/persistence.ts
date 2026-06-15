@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { backgroundTasks, compactions, events, imageAltTexts, messageReactionStates, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
+import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalAttachment,
@@ -17,7 +17,7 @@ import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
 import type { ImageAltTextRecord } from '../telegram/image-to-text';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from '../telegram/message';
 import type { Attachment } from '../telegram/message/types';
 import type { ConversationEntry } from '../unified-api/types';
 
@@ -338,30 +338,30 @@ export const lookupChatId = (db: DB, messageIds: number[]): string | undefined =
   return row?.chatId;
 };
 
-export const loadMessageReactionState = (db: DB, chatId: string, messageId: string): Record<string, number> | undefined => {
-  const row = db.select({ counts: messageReactionStates.counts })
-    .from(messageReactionStates)
+export const loadMessageReactionSnapshot = (db: DB, chatId: string, messageId: string): TelegramReactionSnapshotEntry[] | undefined => {
+  const row = db.select({ reactions: messageReactionSnapshots.reactions })
+    .from(messageReactionSnapshots)
     .where(and(
-      eq(messageReactionStates.chatId, chatId),
-      eq(messageReactionStates.messageId, messageId),
+      eq(messageReactionSnapshots.chatId, chatId),
+      eq(messageReactionSnapshots.messageId, messageId),
     ))
     .limit(1)
     .get();
-  return row?.counts;
+  return row?.reactions;
 };
 
-export const upsertMessageReactionState = (
+export const upsertMessageReactionSnapshot = (
   db: DB,
   chatId: string,
   messageId: string,
-  counts: Record<string, number>,
+  reactions: TelegramReactionSnapshotEntry[],
   updatedAtMs: number,
 ): void => {
-  db.insert(messageReactionStates)
-    .values({ chatId, messageId, counts, updatedAtMs })
+  db.insert(messageReactionSnapshots)
+    .values({ chatId, messageId, reactions, updatedAtMs })
     .onConflictDoUpdate({
-      target: [messageReactionStates.chatId, messageReactionStates.messageId],
-      set: { counts, updatedAtMs },
+      target: [messageReactionSnapshots.chatId, messageReactionSnapshots.messageId],
+      set: { reactions, updatedAtMs },
     })
     .run();
 };

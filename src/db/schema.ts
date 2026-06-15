@@ -2,7 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 
 import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode, ServiceAction } from '../adaptation/types';
 import type { RuntimeEventData } from '../runtime-event';
-import type { Attachment, ForwardInfo, MessageEntity } from '../telegram/message/types';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramReactionSnapshotEntry } from '../telegram/message/types';
 
 type AnyMsg = Record<string, any>;
 
@@ -95,13 +95,13 @@ export const events = sqliteTable('events', {
   index('events_chat_id_idx').on(table.chatId),
 ]);
 
-export const messageReactionStates = sqliteTable('message_reaction_states', {
+export const messageReactionSnapshots = sqliteTable('message_reaction_snapshots', {
   chatId: text('chat_id').notNull(),
   messageId: text('message_id').notNull(),
-  counts: text('counts', { mode: 'json' }).notNull().$type<Record<string, number>>(),
+  reactions: text('reactions', { mode: 'json' }).notNull().$type<TelegramReactionSnapshotEntry[]>(),
   updatedAtMs: integer('updated_at_ms').notNull(),
 }, table => [
-  uniqueIndex('message_reaction_states_chat_message_idx').on(table.chatId, table.messageId),
+  uniqueIndex('message_reaction_snapshots_chat_message_idx').on(table.chatId, table.messageId),
 ]);
 
 export const turnResponses = sqliteTable('turn_responses', {

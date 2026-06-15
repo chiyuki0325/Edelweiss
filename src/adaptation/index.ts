@@ -239,9 +239,9 @@ export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent =>
   };
 };
 
-export const adaptReaction = (update: TelegramReactionUpdate, emoji: string, count: number): CanonicalReactionEvent => {
+export const adaptReaction = (update: TelegramReactionUpdate, emoji: string, count: number, sender?: TelegramUser): CanonicalReactionEvent => {
   const receivedAtMs = update.receivedAtMs ?? Date.now();
-  return {
+  const event: CanonicalReactionEvent = {
     type: 'reaction',
     chatId: update.chatId,
     messageId: String(update.messageId),
@@ -251,6 +251,9 @@ export const adaptReaction = (update: TelegramReactionUpdate, emoji: string, cou
     emoji,
     count,
   };
+  const reactionSender = sender ?? (update.kind === 'user' ? update.sender : undefined);
+  if (reactionSender) event.sender = adaptUser(reactionSender);
+  return event;
 };
 
 // --- Service event adaptation ---

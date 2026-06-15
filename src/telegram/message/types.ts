@@ -118,10 +118,35 @@ export interface TelegramMessageDelete {
   utcOffsetMin?: number;
 }
 
-export interface TelegramReactionUpdate {
+export interface TelegramReactionSnapshotEntry {
+  emoji: string;
+  sender: TelegramUser;
+  date?: number;
+}
+
+export interface TelegramUserReactionUpdate {
+  kind: 'user';
   messageId: number;
   chatId: string;
-  counts: Record<string, number>;
+  sender: TelegramUser;
+  oldReactions: string[];
+  newReactions: string[];
+  date: number;
   receivedAtMs?: number;
   utcOffsetMin?: number;
 }
+
+export interface TelegramReactionCountUpdate {
+  kind: 'count';
+  messageId: number;
+  chatId: string;
+  counts: Record<string, number>;
+  date: number;
+  snapshot?: TelegramReactionSnapshotEntry[];
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
+}
+
+export type TelegramReactionUpdate =
+  | TelegramUserReactionUpdate
+  | TelegramReactionCountUpdate;
