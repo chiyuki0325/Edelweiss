@@ -20,13 +20,13 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text |
+| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send/receive message reactions via userbot |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks tables; 27 migrations |
-| Projection | Done | Reducer (message/edit/delete), MetaReducer (user rename detection), Immer-based immutability |
-| Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_states tables; 28 migrations |
+| Projection | Done | Reducer (message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
+| Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, Telegram-only `react_message`, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -142,7 +142,7 @@ src/
 │   └── index.ts            # Public eval harness exports
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
-│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, probeResponses, probeResponsesV2, imageAltTexts, subagents, subagentMessages, backgroundTasks tables
+│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, probeResponses, probeResponsesV2, imageAltTexts, subagents, subagentMessages, backgroundTasks, messageReactionStates tables
 │   ├── persistence.ts      # CRUD: persistEvent, persistTurnResponseV2, persistProbeResponseV2, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponsesV2, loadCompaction, subagent lifecycle, background task persistence
 │   ├── codec.ts            # ConversationEntry ↔ JSON serialization helpers
 │   ├── migrate-v2.ts       # v1 → v2 data migration (turnResponses → turnResponsesV2, probeResponses → probeResponsesV2)
@@ -288,7 +288,7 @@ The queue is fail-closed. If the head event's transform does not succeed, that c
 - **grammY** (Bot API): receives messages from non-bot users, sends replies, handles `/commands`.
 - **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete/typing events.
 
-Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
+Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from events table on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete/reaction events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
 
 ### Configured Chat Residency
 
@@ -296,7 +296,17 @@ The `chats` config is the in-memory residency whitelist. Startup seeds Telegram'
 
 ### Phantom Edit Filtering
 
-MTProto fires `updateEditMessage` for metadata-only changes (link preview loading, reactions in large supergroups, inline keyboard updates). These have no `editDate`. The userbot handler skips events without `editDate` — if reactions support is added later, use `updateMessageReactions` separately.
+MTProto fires `updateEditMessage` for metadata-only changes (link preview loading, reactions in large supergroups, inline keyboard updates). These have no `editDate`. The userbot handler skips events without `editDate`. Reactions are handled separately via `updateMessageReactions` / `updateBotMessageReactions`.
+
+### Telegram Reactions
+
+Telegram reactions are userbot-only. `messages.getAvailableReactions` provides the global active emoji reaction list, and per-chat `availableReactions` from `GetFullChat` / `GetFullChannel` constrains the final `react_message` tool enum. Custom, premium, and paid reactions are intentionally not exposed to the LLM.
+
+Incoming Telegram reaction updates are aggregate counts. Cahciua stores the latest aggregate per `(chatId, messageId)` in `message_reaction_states`; normal message ingress seeds an empty/current snapshot so the first later live reaction can be detected. Reaction updates emit append-only canonical `reaction` events only when a count increases. Decreases/removals update the snapshot but do not enter IC. If a legacy message has no prior snapshot, the first aggregate update seeds the snapshot without emitting historical reactions.
+
+Reaction IC nodes render as passive `<event type="reaction_added" .../>` RC segments. Live reaction ingress updates Pipeline/IC/RC but does not call `driver.handleEvent()`, so reaction storms do not wake or interrupt the LLM. Cold-start replay still passes passive reaction segments to Driver, but `latestExternalEventMs()` and `latestInterruptingExternalEventMs()` ignore `isPassiveEvent`.
+
+`react_message` is registered only for Telegram chats with a configured userbot and a non-empty allowed emoji list. Do not add reaction prompt text or tools to OneBot/QQ paths.
 
 ### Sticker Pack Title Normalization
 
@@ -310,7 +320,7 @@ Edit and delete events come exclusively from the userbot (gramjs / MTProto). Bot
 
 Two categories of IC mutation with different KV cache properties:
 - **In-place** (edit, delete): modify existing IC nodes at their original position with marks (`editedAtSec`, `deleted: true`). Causes KV cache miss from that point onward. Acceptable — edits are infrequent and usually recent.
-- **Append-only** (user rename, future: join/leave): insert system event nodes at the end. Old messages keep their original `sender` field. Rendering uses `node.sender` (name at message time), not `ic.users`. KV-cache friendly.
+- **Append-only** (user rename, join/leave, reactions): insert system event nodes at the end. Old messages keep their original `sender` field. Rendering uses `node.sender` (name at message time), not `ic.users`. KV-cache friendly.
 
 Design rule: metadata changes about entities → append-only; content changes to specific messages → in-place with marks.
 

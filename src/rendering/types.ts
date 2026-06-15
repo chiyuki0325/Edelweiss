@@ -36,6 +36,10 @@ export interface RenderedContextSegment {
   // Segment is a runtime event (e.g. background task completion). These bypass
   // the probe gate — the bot always responds to runtime notifications.
   isRuntimeEvent?: boolean;
+  // Passive events update context but must not trigger or interrupt LLM calls.
+  // Telegram reaction updates use this so they are visible on the next real
+  // message without causing reaction storms to wake the bot.
+  isPassiveEvent?: boolean;
 }
 
 export type RenderedContext = RenderedContextSegment[];

@@ -57,7 +57,7 @@ export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   chatId: text('chat_id').notNull(),
-  type: text('type').notNull().$type<'message' | 'edit' | 'delete' | 'service' | 'runtime'>(),
+  type: text('type').notNull().$type<'message' | 'edit' | 'delete' | 'service' | 'runtime' | 'reaction'>(),
   receivedAtMs: integer('received_at').notNull(),
   timestampSec: integer('timestamp').notNull(),
   utcOffsetMin: integer('utc_offset_min').notNull().default(480),
@@ -88,8 +88,20 @@ export const events = sqliteTable('events', {
 
   // Runtime event data — JSON for runtime-originated events
   runtimeData: text('runtime_data', { mode: 'json' }).$type<RuntimeEventData>(),
+
+  // Reaction event data — append-only increments derived from Telegram aggregate updates
+  reactionData: text('reaction_data', { mode: 'json' }).$type<{ emoji: string; count: number }>(),
 }, table => [
   index('events_chat_id_idx').on(table.chatId),
+]);
+
+export const messageReactionStates = sqliteTable('message_reaction_states', {
+  chatId: text('chat_id').notNull(),
+  messageId: text('message_id').notNull(),
+  counts: text('counts', { mode: 'json' }).notNull().$type<Record<string, number>>(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, table => [
+  uniqueIndex('message_reaction_states_chat_message_idx').on(table.chatId, table.messageId),
 ]);
 
 export const turnResponses = sqliteTable('turn_responses', {

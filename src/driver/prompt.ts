@@ -29,6 +29,8 @@ export const renderSystemPrompt = async (params: {
   systemFiles?: { filename: string; content: string }[];
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
+  hasReactTool?: boolean;
+  availableReactionEmojis?: string[];
   availableSkills?: AvailableSkillPromptInfo[];
   forceToolCall?: boolean;
 }) => {
@@ -38,7 +40,10 @@ export const renderSystemPrompt = async (params: {
     currentChannel: params.currentChannel,
     hasLoadSkillTool: params.hasLoadSkillTool,
     hasSubagentTools: params.hasSubagentTools,
+    hasReactTool: params.hasReactTool,
+    availableReactionEmojis: params.availableReactionEmojis,
     availableSkills: params.availableSkills,
+    forceToolCall: params.forceToolCall,
     systemFiles: params.systemFiles,
   }, basePath);
 };

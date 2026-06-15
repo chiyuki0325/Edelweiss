@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process';
 
-import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
 import type { ContentNode } from './adaptation/types';
 import { createBackgroundTaskManager } from './background-task';
 import { shellTaskFactory } from './background-task/shell';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
-import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionState, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionState } from './db';
 import { getLastMessageId } from './db/persistence';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
@@ -342,6 +342,7 @@ const main = async () => {
       logger.withFields({ chatId, messageId: event.messageId }).warn('Synthetic bypass: userbot arrived first (isSelfSent merged via dedup)');
 
     persistEvent(db, event);
+    upsertMessageReactionState(db, chatId, event.messageId, {}, event.receivedAtMs);
     hydrateAltTextFromCache(event);
     if (isConfiguredChat(configuredChatIds, chatId))
       pipeline.pushEvent(chatId, event);
@@ -557,6 +558,15 @@ const main = async () => {
     downloadMessageMedia: hasTelegram && telegram!.userbot
       ? (chatId, messageId) => telegram!.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
+    refreshAllowedReactionEmojis: hasTelegram && telegram!.userbot
+      ? chatId => telegram!.refreshAllowedReactionEmojis(chatId)
+      : undefined,
+    getAllowedReactionEmojis: hasTelegram && telegram!.userbot
+      ? chatId => telegram!.getAllowedReactionEmojis(chatId)
+      : undefined,
+    sendReaction: hasTelegram && telegram!.userbot
+      ? (chatId, messageId, emoji) => telegram!.sendReaction(chatId, messageId, emoji)
+      : undefined,
     getPlatformAdapter: chatId => {
       const existing = platformAdapters.get(chatId);
       if (existing) return existing;
@@ -615,7 +625,10 @@ const main = async () => {
       // to avoid a spurious driver trigger that would enter the probe flow.
       // Still persist the raw message for richer metadata (upsert is idempotent).
       if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
-        try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist self message'); }
+        try {
+          persistMessage(db, msg);
+          upsertMessageReactionState(db, msg.chatId, String(msg.messageId), msg.reactions ?? {}, msg.receivedAtMs ?? Date.now());
+        } catch (err) { logger.withError(err).error('Failed to persist self message'); }
         return;
       }
 
@@ -651,6 +664,7 @@ const main = async () => {
       persistEvent(db, event);
 
       try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
+      upsertMessageReactionState(db, event.chatId, event.messageId, msg.reactions ?? {}, msg.receivedAtMs ?? Date.now());
 
       if (isConfiguredChat(configuredChatIds, event.chatId)) {
         hydrateAltTextFromCache(event);
@@ -711,6 +725,35 @@ const main = async () => {
       if (isConfiguredChat(configuredChatIds, event.chatId)) {
         const rc = pipeline.pushEvent(event.chatId, event);
         driver.handleEvent(event.chatId, rc);
+      }
+    });
+
+    tg.onReactionUpdate(reaction => {
+      logger.withFields({
+        chatId: reaction.chatId,
+        messageId: reaction.messageId,
+        reactions: Object.keys(reaction.counts).length,
+      }).debug('Message reaction update received');
+
+      const messageId = String(reaction.messageId);
+      const counts = Object.fromEntries(
+        Object.entries(reaction.counts).filter(([, count]) => count > 0),
+      );
+      const previous = loadMessageReactionState(db, reaction.chatId, messageId);
+      upsertMessageReactionState(db, reaction.chatId, messageId, counts, reaction.receivedAtMs ?? Date.now());
+
+      // Telegram sends aggregate reaction state. The first aggregate observed for
+      // a message may already include historical reactions, so seed the snapshot
+      // without emitting IC events. Later increases are append-only reaction events.
+      if (!previous) return;
+
+      for (const [emoji, count] of Object.entries(counts)) {
+        const oldCount = previous[emoji] ?? 0;
+        if (count <= oldCount) continue;
+        const event = adaptReaction(reaction, emoji, count - oldCount);
+        persistEvent(db, event);
+        if (isConfiguredChat(configuredChatIds, event.chatId))
+          pipeline.pushEvent(event.chatId, event);
       }
     });
 

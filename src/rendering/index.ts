@@ -212,6 +212,12 @@ const renderSystemEvent = (event: ICSystemEvent, contactNames?: Map<string, stri
     return `<event type="message_pinned" t="${t}"${actorAttr} message_id="${escapeXml(event.messageId)}"/>`;
   }
 
+  case 'reaction_added': {
+    const countAttr = event.count > 1 ? ` count="${event.count}"` : '';
+    const senderAttr = event.sender ? ` sender="${escapeXml(formatSender(event.sender, contactNames))}"` : '';
+    return `<event type="reaction_added" t="${t}" message_id="${escapeXml(event.messageId)}" emoji="${escapeXml(event.emoji)}"${countAttr}${senderAttr}/>`;
+  }
+
   default: {
       event satisfies never;
       return '';
@@ -256,7 +262,7 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
       segments.push({ receivedAtMs: node.receivedAtMs, content, isRuntimeEvent: true });
     } else {
       const content = [{ type: 'text' as const, text: renderSystemEvent(node, params.contactNames) }];
-      segments.push({ receivedAtMs: node.receivedAtMs, content });
+      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(node.kind === 'reaction_added' && { isPassiveEvent: true }) });
     }
   }
 

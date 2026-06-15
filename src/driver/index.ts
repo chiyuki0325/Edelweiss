@@ -12,7 +12,7 @@ import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, render
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, extractLoadedSkillNames } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
@@ -60,6 +60,9 @@ export const createDriver = (config: DriverConfig, deps: {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  refreshAllowedReactionEmojis?: (chatId: string) => Promise<string[]>;
+  getAllowedReactionEmojis?: (chatId: string) => string[];
+  sendReaction?: (chatId: string, messageId: number, emoji: string) => Promise<void>;
   resolveModel: (name: string) => LlmEndpoint;
   backgroundTask: {
     startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
@@ -220,7 +223,7 @@ export const createDriver = (config: DriverConfig, deps: {
       ensureReplyBatchDeadline();
     };
 
-    const createSharedTools = (includeSendMessage: boolean): CahciuaTool[] => {
+    const createSharedTools = (includeSendMessage: boolean, reactionEmojis: string[] = []): CahciuaTool[] => {
       const platform = deps.getPlatformAdapter?.(chatId);
       const tools: CahciuaTool[] = [];
       if (includeSendMessage) {
@@ -239,6 +242,14 @@ export const createDriver = (config: DriverConfig, deps: {
           return { messageId: String(sent.messageId) };
         }));
         tools.push(createDismissMessageTool());
+        if (chatConfig.platform === 'telegram' && deps.sendReaction && reactionEmojis.length > 0) {
+          tools.push(createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
+            const numericMessageId = Number(messageId);
+            if (!Number.isInteger(numericMessageId) || numericMessageId <= 0)
+              throw new Error(`Invalid Telegram message id for react_message: ${messageId}`);
+            await deps.sendReaction!(chatId, numericMessageId, emoji);
+          }));
+        }
       }
 
       const downloadAttachment = createAttachmentDownloader({
@@ -380,7 +391,17 @@ export const createDriver = (config: DriverConfig, deps: {
             estimatedTokens: ctx.estimatedTokens,
           }).log('Triggering LLM call');
 
-          const sharedTools = createSharedTools(true);
+          let reactionEmojis: string[] = [];
+          if (chatConfig.platform === 'telegram' && deps.refreshAllowedReactionEmojis) {
+            try {
+              reactionEmojis = await deps.refreshAllowedReactionEmojis(chatId);
+            } catch (err) {
+              log.withError(err).withFields({ chatId }).warn('Failed to refresh Telegram reaction emojis');
+              reactionEmojis = deps.getAllowedReactionEmojis?.(chatId) ?? [];
+            }
+          }
+
+          const sharedTools = createSharedTools(true, reactionEmojis);
           const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
           const skillTools: CahciuaTool[] = [];
           if (allSkills.size > 0) {
@@ -402,6 +423,8 @@ export const createDriver = (config: DriverConfig, deps: {
             systemFiles: chatConfig.systemFiles,
             hasLoadSkillTool: allSkills.size > 0,
             hasSubagentTools: chatConfig.subagents.enabled,
+            hasReactTool: chatConfig.platform === 'telegram' && reactionEmojis.length > 0,
+            availableReactionEmojis: reactionEmojis,
             availableSkills: [...allSkills.values()]
               .map(s => ({
                 id: s.name,

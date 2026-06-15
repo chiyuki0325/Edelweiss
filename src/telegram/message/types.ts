@@ -80,6 +80,7 @@ export interface TelegramMessage {
   forwardInfo?: ForwardInfo;
   mediaGroupId?: string;
   viaBotId?: string;
+  reactions?: Record<string, number>;
   attachments?: Attachment[];
   source: 'bot' | 'userbot';
 
@@ -113,6 +114,14 @@ export interface TelegramMessageEdit {
 export interface TelegramMessageDelete {
   messageIds: number[];
   chatId?: string;
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
+}
+
+export interface TelegramReactionUpdate {
+  messageId: number;
+  chatId: string;
+  counts: Record<string, number>;
   receivedAtMs?: number;
   utcOffsetMin?: number;
 }

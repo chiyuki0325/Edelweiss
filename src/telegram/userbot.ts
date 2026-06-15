@@ -8,8 +8,8 @@ import { StringSession } from 'telegram/sessions';
 
 import { createEventBus } from './event-bus';
 import { createGramjsLogger } from './gramjs-logger';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
-import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsSender } from './message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate } from './message';
+import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsChatId, resolveGramjsSender } from './message';
 import { isTypingLikeAction } from './typing-action';
 
 export interface UserbotOptions {
@@ -29,10 +29,16 @@ export interface UserbotClient {
   onMessage: (handler: (msg: TelegramMessage) => void) => void;
   onMessageEdit: (handler: (edit: TelegramMessageEdit) => void) => void;
   onMessageDelete: (handler: (del: TelegramMessageDelete) => void) => void;
+  onReactionUpdate: (handler: (update: TelegramReactionUpdate) => void) => void;
   onTyping: (handler: (event: TypingEvent) => void) => void;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
   downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
+  refreshAvailableReactionEmojis(): Promise<string[]>;
+  getAvailableReactionEmojis(): string[];
+  refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
+  getAllowedReactionEmojis(chatId: string): string[];
+  sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
   raw(): TelegramClient;
   getSessionString(): string;
 }
@@ -55,8 +61,48 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
   const messageBus = createEventBus<TelegramMessage>('userbot:message', log);
   const editBus = createEventBus<TelegramMessageEdit>('userbot:edit', log);
   const deleteBus = createEventBus<TelegramMessageDelete>('userbot:delete', log);
+  const reactionBus = createEventBus<TelegramReactionUpdate>('userbot:reaction', log);
   const typingBus = createEventBus<TypingEvent>('userbot:typing', log);
+  let availableReactionsHash = 0;
+  let availableReactionEmojis: string[] = [];
+  const allowedReactionEmojisByChat = new Map<string, string[]>();
   let eventHandlerRegistered = false;
+
+  const reactionToEmoji = (reaction: Api.TypeReaction): string | undefined =>
+    reaction instanceof Api.ReactionEmoji ? reaction.emoticon : undefined;
+
+  const reactionCountsToEmojis = (counts: Api.TypeReactionCount[]): Record<string, number> => {
+    const result: Record<string, number> = {};
+    for (const count of counts) {
+      const emoji = reactionToEmoji(count.reaction);
+      if (!emoji) continue;
+      result[emoji] = count.count;
+    }
+    return result;
+  };
+
+  const filterAvailableEmojiReactions = (reactions: Api.TypeAvailableReaction[]): string[] =>
+    [...new Set(reactions
+      .filter(r => r instanceof Api.AvailableReaction && !r.inactive && !r.premium)
+      .map(r => r.reaction))];
+
+  const resolveChatAllowedEmojiReactions = (
+    availableReactions: Api.TypeChatReactions | undefined,
+    globalEmojis: string[],
+  ): string[] => {
+    if (!availableReactions || availableReactions instanceof Api.ChatReactionsAll)
+      return globalEmojis;
+    if (availableReactions instanceof Api.ChatReactionsNone)
+      return [];
+    if (availableReactions instanceof Api.ChatReactionsSome) {
+      const allowed = new Set(availableReactions.reactions.flatMap(r => {
+        const emoji = reactionToEmoji(r);
+        return emoji ? [emoji] : [];
+      }));
+      return globalEmojis.filter(emoji => allowed.has(emoji));
+    }
+    return globalEmojis;
+  };
 
   const registerEventHandler = () => {
     if (eventHandlerRegistered) return;
@@ -117,6 +163,25 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
       new Raw({ types: [Api.UpdateChannelUserTyping, Api.UpdateChatUserTyping] }),
     );
 
+    client.addEventHandler(
+      (update: Api.TypeUpdate) => {
+        if (update instanceof Api.UpdateMessageReactions) {
+          reactionBus.emit({
+            chatId: resolveGramjsChatId(update.peer),
+            messageId: update.msgId,
+            counts: reactionCountsToEmojis(update.reactions.results),
+          });
+        } else if (update instanceof Api.UpdateBotMessageReactions) {
+          reactionBus.emit({
+            chatId: resolveGramjsChatId(update.peer),
+            messageId: update.msgId,
+            counts: reactionCountsToEmojis(update.reactions),
+          });
+        }
+      },
+      new Raw({ types: [Api.UpdateMessageReactions, Api.UpdateBotMessageReactions] }),
+    );
+
     log.log('Event handlers registered');
   };
 
@@ -147,6 +212,13 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
       log.withFields({ count: dialogs.length }).log('Entity cache warmed via getDialogs');
     } catch (err) {
       log.withError(err).warn('Failed to warm entity cache via getDialogs');
+    }
+
+    try {
+      const emojis = await refreshAvailableReactionEmojis();
+      log.withFields({ count: emojis.length }).log('Available reaction emojis loaded');
+    } catch (err) {
+      log.withError(err).warn('Failed to load available reaction emojis');
     }
   };
 
@@ -193,16 +265,73 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     return Buffer.isBuffer(result) ? result : undefined;
   };
 
+  const refreshAvailableReactionEmojis = async (): Promise<string[]> => {
+    const result = await client.invoke(new Api.messages.GetAvailableReactions({
+      hash: availableReactionsHash,
+    }));
+
+    if (result instanceof Api.messages.AvailableReactionsNotModified)
+      return availableReactionEmojis;
+
+    if (result instanceof Api.messages.AvailableReactions) {
+      availableReactionsHash = result.hash;
+      availableReactionEmojis = filterAvailableEmojiReactions(result.reactions);
+    }
+    return availableReactionEmojis;
+  };
+
+  const getAvailableReactionEmojis = (): string[] => availableReactionEmojis;
+
+  const refreshAllowedReactionEmojis = async (chatId: string): Promise<string[]> => {
+    const globalEmojis = await refreshAvailableReactionEmojis();
+    const peer = await client.getInputEntity(chatId);
+    let emojis = globalEmojis;
+
+    if (peer instanceof Api.InputPeerChannel) {
+      const full = await client.invoke(new Api.channels.GetFullChannel({ channel: peer }));
+      const fullChat = full.fullChat;
+      if (fullChat instanceof Api.ChannelFull)
+        emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);
+    } else if (peer instanceof Api.InputPeerChat) {
+      const full = await client.invoke(new Api.messages.GetFullChat({ chatId: peer.chatId }));
+      const fullChat = full.fullChat;
+      if (fullChat instanceof Api.ChatFull)
+        emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);
+    }
+
+    allowedReactionEmojisByChat.set(chatId, emojis);
+    return emojis;
+  };
+
+  const getAllowedReactionEmojis = (chatId: string): string[] =>
+    allowedReactionEmojisByChat.get(chatId) ?? [];
+
+  const sendReaction = async (chatId: string, messageId: number, emoji: string): Promise<void> => {
+    const peer = await client.getInputEntity(chatId);
+    await client.invoke(new Api.messages.SendReaction({
+      peer,
+      msgId: messageId,
+      reaction: [new Api.ReactionEmoji({ emoticon: emoji })],
+      addToRecent: true,
+    }));
+  };
+
   return {
     start,
     stop,
     onMessage: messageBus.on,
     onMessageEdit: editBus.on,
     onMessageDelete: deleteBus.on,
+    onReactionUpdate: reactionBus.on,
     onTyping: typingBus.on,
     fetchMessages,
     fetchSpecificMessages,
     downloadMessageMedia,
+    refreshAvailableReactionEmojis,
+    getAvailableReactionEmojis,
+    refreshAllowedReactionEmojis,
+    getAllowedReactionEmojis,
+    sendReaction,
     raw: () => client,
     getSessionString: () => String(client.session.save()),
   };

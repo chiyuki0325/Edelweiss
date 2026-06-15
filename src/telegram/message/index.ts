@@ -7,6 +7,7 @@ export type {
   TelegramMessage,
   TelegramMessageDelete,
   TelegramMessageEdit,
+  TelegramReactionUpdate,
   TelegramUser,
 } from './types';
 
@@ -83,6 +84,7 @@ export const mergeTelegramMessageData = (target: TelegramMessage, source: Telegr
   target.forwardInfo ??= source.forwardInfo;
   target.mediaGroupId ??= source.mediaGroupId;
   target.viaBotId ??= source.viaBotId;
+  target.reactions ??= source.reactions;
   target.newChatMembers = mergeTelegramUsers(target.newChatMembers, source.newChatMembers);
   target.leftChatMember = mergeTelegramUser(target.leftChatMember, source.leftChatMember);
   target.newChatTitle ??= source.newChatTitle;

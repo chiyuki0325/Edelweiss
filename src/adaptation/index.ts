@@ -4,12 +4,13 @@ import type {
   CanonicalEditEvent,
   CanonicalForwardInfo,
   CanonicalMessageEvent,
+  CanonicalReactionEvent,
   CanonicalServiceEvent,
   CanonicalUser,
   ContentNode,
   ServiceAction,
 } from './types';
-import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from '../telegram/message';
 
 export type {
   CanonicalAttachment,
@@ -18,6 +19,7 @@ export type {
   CanonicalIMEvent,
   CanonicalForwardInfo,
   CanonicalMessageEvent,
+  CanonicalReactionEvent,
   CanonicalServiceEvent,
   CanonicalUser,
   ContentNode,
@@ -234,6 +236,20 @@ export const adaptDelete = (del: TelegramMessageDelete): CanonicalDeleteEvent =>
     receivedAtMs: now,
     timestampSec: Math.floor(now / 1000),
     utcOffsetMin: del.utcOffsetMin ?? captureUtcOffset(),
+  };
+};
+
+export const adaptReaction = (update: TelegramReactionUpdate, emoji: string, count: number): CanonicalReactionEvent => {
+  const receivedAtMs = update.receivedAtMs ?? Date.now();
+  return {
+    type: 'reaction',
+    chatId: update.chatId,
+    messageId: String(update.messageId),
+    receivedAtMs,
+    timestampSec: Math.floor(receivedAtMs / 1000),
+    utcOffsetMin: update.utcOffsetMin ?? captureUtcOffset(),
+    emoji,
+    count,
   };
 };
 

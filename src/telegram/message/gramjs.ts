@@ -112,6 +112,20 @@ const convertGramjsMedia = (media?: Api.TypeMessageMedia): Attachment[] | undefi
   return undefined;
 };
 
+const reactionToEmoji = (reaction: Api.TypeReaction): string | undefined =>
+  reaction instanceof Api.ReactionEmoji ? reaction.emoticon : undefined;
+
+const convertGramjsReactions = (reactions?: Api.TypeMessageReactions): Record<string, number> | undefined => {
+  if (!reactions || !(reactions instanceof Api.MessageReactions)) return undefined;
+  const result: Record<string, number> = {};
+  for (const count of reactions.results) {
+    const emoji = reactionToEmoji(count.reaction);
+    if (!emoji || count.count <= 0) continue;
+    result[emoji] = count.count;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+
 const convertGramjsDocument = (doc: Api.Document, spoiler?: boolean): Attachment => {
   const stickerAttr = doc.attributes.find(
     (a): a is Api.DocumentAttributeSticker => a instanceof Api.DocumentAttributeSticker,
@@ -265,7 +279,7 @@ const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUse
     entities: convertGramjsEntities(message.entities),
     replyToMessageId: replyTo?.replyToMsgId,
     replyToTopId: replyTo?.replyToTopId,
-    replyQuoteText: (replyTo?.quote == true) ? replyTo.quoteText : undefined,
+    replyQuoteText: (replyTo?.quote === true) ? replyTo.quoteText : undefined,
     attachments: convertGramjsMedia(message.media),
   };
 };
@@ -279,6 +293,7 @@ export const fromGramjsMessage = (
   forwardInfo: convertGramjsForwardInfo(message.fwdFrom, resolveGramjsForwardSender(message)),
   mediaGroupId: message.groupedId ? String(message.groupedId) : undefined,
   viaBotId: message.viaBotId ? String(message.viaBotId.toJSNumber()) : undefined,
+  reactions: convertGramjsReactions(message.reactions),
   source: 'userbot',
 });
 

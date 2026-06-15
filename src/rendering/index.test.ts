@@ -498,6 +498,28 @@ describe('render', () => {
       expect(result).not.toContain('</event>');
     });
 
+    it('renders reaction_added event as passive segment', () => {
+      const event: ICSystemEvent = {
+        type: 'system_event',
+        kind: 'reaction_added',
+        receivedAtMs: 1000,
+        timestampSec: 1741761000,
+        utcOffsetMin: 480,
+        messageId: '42',
+        sender: bob,
+        emoji: '👍',
+        count: 2,
+      };
+      const rc = render(ic([event]));
+      const result = xml(rc);
+      expect(result).toContain('type="reaction_added"');
+      expect(result).toContain('message_id="42"');
+      expect(result).toContain('emoji="👍"');
+      expect(result).toContain('count="2"');
+      expect(result).toContain('sender="Bob"');
+      expect(rc[0]!.isPassiveEvent).toBe(true);
+    });
+
   });
 
   describe('viewport filtering', () => {

@@ -7,6 +7,7 @@ import type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
   CanonicalMessageEvent,
+  CanonicalReactionEvent,
   CanonicalServiceEvent,
   CanonicalUser,
   ContentNode,
@@ -49,6 +50,18 @@ const del = (overrides: Partial<CanonicalDeleteEvent> = {}): CanonicalDeleteEven
   receivedAtMs: 3000,
   timestampSec: 3,
   utcOffsetMin: 480,
+  ...overrides,
+});
+
+const reaction = (overrides: Partial<CanonicalReactionEvent> = {}): CanonicalReactionEvent => ({
+  type: 'reaction',
+  chatId: 'chat1',
+  messageId: '1',
+  receivedAtMs: 4000,
+  timestampSec: 4,
+  utcOffsetMin: 480,
+  emoji: '👍',
+  count: 1,
   ...overrides,
 });
 
@@ -236,6 +249,25 @@ describe('reduce', () => {
     it('is a no-op when target message not found', () => {
       const ic = reduce(createEmptyIC('chat1'), del({ messageIds: ['999'] }));
       expect(ic.nodes).toHaveLength(0);
+    });
+  });
+
+  describe('reaction events', () => {
+    it('appends reaction_added system event without mutating the message', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg());
+      ic = reduce(ic, reaction({ sender: bob, count: 2 }));
+
+      expect(ic.nodes).toHaveLength(2);
+      expect((ic.nodes[0] as ICMessage).content).toEqual(content);
+      const node = ic.nodes[1]!;
+      expect(node.type).toBe('system_event');
+      if (node.type !== 'system_event') throw new Error('expected system_event');
+      expect(node.kind).toBe('reaction_added');
+      if (node.kind !== 'reaction_added') throw new Error('expected reaction_added');
+      expect(node.messageId).toBe('1');
+      expect(node.emoji).toBe('👍');
+      expect(node.count).toBe(2);
+      expect(node.sender).toEqual(bob);
     });
   });
 

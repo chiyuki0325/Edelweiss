@@ -8,7 +8,7 @@ import { createEventBus } from './event-bus';
 import { canExtractFrames, extractFrames } from './frame-extractor';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from './image-to-text';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, Attachment, MessageEntity } from './message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, Attachment, MessageEntity } from './message';
 import { normalizeStickerSetMetadata } from './pack-title';
 import { createSessionIngressQueue } from './session-ingress-queue';
 import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
@@ -37,7 +37,8 @@ export interface TelegramManagerOptions {
 type IngressEvent =
   | { kind: 'message'; chatId: string; message: TelegramMessage }
   | { kind: 'edit'; chatId: string; edit: TelegramMessageEdit }
-  | { kind: 'delete'; chatId: string; del: TelegramMessageDelete };
+  | { kind: 'delete'; chatId: string; del: TelegramMessageDelete }
+  | { kind: 'reaction'; chatId: string; reaction: TelegramReactionUpdate };
 
 const captureIngressMeta = () => ({
   receivedAtMs: Date.now(),
@@ -50,6 +51,7 @@ export interface TelegramManager {
   onMessage: (handler: (msg: TelegramMessage) => void) => void;
   onMessageEdit: (handler: (edit: TelegramMessageEdit) => void) => void;
   onMessageDelete: (handler: (del: TelegramMessageDelete) => void) => void;
+  onReactionUpdate: (handler: (update: TelegramReactionUpdate) => void) => void;
   onTyping: (handler: (event: TypingEvent) => void) => void;
   sendMessage(chatId: string | number, text: string, options?: SendOptions): Promise<SentMessage>;
   sendPhoto(chatId: string | number, photo: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
@@ -65,6 +67,9 @@ export interface TelegramManager {
   startTypingPolling(chatId: string): void;
   stopTypingPolling(chatId: string): void;
   resolvePackTitle(setName: string): Promise<string>;
+  refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
+  getAllowedReactionEmojis(chatId: string): string[];
+  sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
   botUserId: string;
   bot: BotClient;
   userbot?: UserbotClient;
@@ -90,6 +95,7 @@ export const createTelegramManager = (
   const messageBus = createEventBus<TelegramMessage>('telegram:message', logger);
   const editBus = createEventBus<TelegramMessageEdit>('telegram:edit', logger);
   const deleteBus = createEventBus<TelegramMessageDelete>('telegram:delete', logger);
+  const reactionBus = createEventBus<TelegramReactionUpdate>('telegram:reaction', logger);
   const typingBus = createEventBus<TypingEvent>('telegram:typing', logger);
 
   // Unified download: fileId → Bot API, else → userbot by chatId+messageId
@@ -234,6 +240,8 @@ export const createTelegramManager = (
         return event;
       case 'delete':
         return event;
+      case 'reaction':
+        return event;
       }
     },
     commit: event => {
@@ -247,6 +255,9 @@ export const createTelegramManager = (
         break;
       case 'delete':
         deleteBus.emit(event.del);
+        break;
+      case 'reaction':
+        reactionBus.emit(event.reaction);
         break;
       }
     },
@@ -306,6 +317,15 @@ export const createTelegramManager = (
       });
     });
 
+    userbot.onReactionUpdate(reaction => {
+      if (!botChats.has(reaction.chatId)) return;
+      ingressQueue.enqueue({
+        kind: 'reaction',
+        chatId: reaction.chatId,
+        reaction: { ...reaction, ...captureIngressMeta() },
+      });
+    });
+
     userbot.onTyping(handleTypingEvent);
   }
 
@@ -344,6 +364,7 @@ export const createTelegramManager = (
     onMessage: messageBus.on,
     onMessageEdit: editBus.on,
     onMessageDelete: deleteBus.on,
+    onReactionUpdate: reactionBus.on,
     onTyping: typingBus.on,
     sendMessage: (chatId, text, opts) => bot.sendMessage(chatId, text, opts),
     sendPhoto: (chatId, photo, opts) => bot.sendPhoto(chatId, photo, opts),
@@ -357,6 +378,12 @@ export const createTelegramManager = (
     fetchMessages: (chatId, opts) => userbot?.fetchMessages(chatId, opts) ?? Promise.resolve([]),
     fetchSpecificMessages: (chatId, ids) => userbot?.fetchSpecificMessages(chatId, ids) ?? Promise.resolve([]),
     resolvePackTitle,
+    refreshAllowedReactionEmojis: chatId => userbot?.refreshAllowedReactionEmojis(chatId) ?? Promise.resolve([]),
+    getAllowedReactionEmojis: chatId => userbot?.getAllowedReactionEmojis(chatId) ?? [],
+    sendReaction: async (chatId, messageId, emoji) => {
+      if (!userbot) throw new Error('react_message not available: Telegram userbot is not configured');
+      await userbot.sendReaction(chatId, messageId, emoji);
+    },
     botUserId: bot.botUserId(),
     bot,
     userbot,
