@@ -1,6 +1,21 @@
-import type { Message as GrammyMessage } from '@grammyjs/types';
+import type {
+  Chat,
+  Message as GrammyMessage,
+  MessageReactionCountUpdated,
+  MessageReactionUpdated,
+  ReactionType,
+  User,
+} from '@grammyjs/types';
 
-import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramUser } from './types';
+import type {
+  Attachment,
+  ForwardInfo,
+  MessageEntity,
+  TelegramMessage,
+  TelegramReactionCountUpdate,
+  TelegramUser,
+  TelegramUserReactionUpdate,
+} from './types';
 
 // --- entity conversion ---
 
@@ -68,6 +83,41 @@ const convertGrammyForwardInfo = (
 
   return info;
 };
+
+const convertGrammyUser = (user: User): TelegramUser => ({
+  id: String(user.id),
+  firstName: user.first_name,
+  lastName: user.last_name,
+  username: user.username,
+  isBot: user.is_bot,
+  isPremium: user.is_premium ?? false,
+});
+
+const convertGrammyChatAsUser = (chat: Chat): TelegramUser => {
+  const source = chat as Chat & { title?: string; first_name?: string; username?: string };
+  return {
+    id: String(chat.id),
+    firstName: source.title ?? source.first_name ?? String(chat.id),
+    username: source.username,
+    isBot: false,
+    isPremium: false,
+  };
+};
+
+const reactionToEmoji = (reaction: ReactionType): string | undefined =>
+  reaction.type === 'emoji' ? reaction.emoji : undefined;
+
+const reactionsToEmojis = (reactions: ReactionType[]): string[] =>
+  reactions.flatMap(reaction => {
+    const emoji = reactionToEmoji(reaction);
+    return emoji ? [emoji] : [];
+  });
+
+const reactionCountsToEmojis = (reactions: MessageReactionCountUpdated['reactions']): Record<string, number> =>
+  Object.fromEntries(reactions.flatMap(reaction => {
+    const emoji = reactionToEmoji(reaction.type);
+    return emoji && reaction.total_count > 0 ? [[emoji, reaction.total_count]] : [];
+  }));
 
 // --- media → attachments ---
 
@@ -219,7 +269,7 @@ export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
     entities: convertGrammyEntities(textEntities),
     replyToMessageId: message.reply_to_message?.message_id,
     replyToTopId: message.message_thread_id,
-    replyQuoteText: (message.quote?.is_manual == true) ? message.quote.text : undefined,
+    replyQuoteText: (message.quote?.is_manual === true) ? message.quote.text : undefined,
     forwardInfo: convertGrammyForwardInfo(message.forward_origin),
     mediaGroupId: message.media_group_id,
     viaBotId: message.via_bot ? String(message.via_bot.id) : undefined,
@@ -252,3 +302,35 @@ export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
     ...message.pinned_message && { pinnedMessage: { messageId: message.pinned_message.message_id } },
   };
 };
+
+export const fromGrammyReactionUpdate = (
+  reaction: MessageReactionUpdated,
+): TelegramUserReactionUpdate | undefined => {
+  const sender = reaction.user
+    ? convertGrammyUser(reaction.user)
+    : reaction.actor_chat
+      ? convertGrammyChatAsUser(reaction.actor_chat)
+      : undefined;
+
+  if (!sender) return undefined;
+
+  return {
+    kind: 'user',
+    messageId: reaction.message_id,
+    chatId: String(reaction.chat.id),
+    sender,
+    oldReactions: reactionsToEmojis(reaction.old_reaction),
+    newReactions: reactionsToEmojis(reaction.new_reaction),
+    date: reaction.date,
+  };
+};
+
+export const fromGrammyReactionCountUpdate = (
+  reaction: MessageReactionCountUpdated,
+): TelegramReactionCountUpdate => ({
+  kind: 'count',
+  messageId: reaction.message_id,
+  chatId: String(reaction.chat.id),
+  counts: reactionCountsToEmojis(reaction.reactions),
+  date: reaction.date,
+});

@@ -85,6 +85,18 @@ export interface CanonicalDeleteEvent {
   utcOffsetMin: number;
 }
 
+export interface CanonicalReactionEvent {
+  type: 'reaction';
+  chatId: string;
+  messageId: string;
+  sender?: CanonicalUser;
+  receivedAtMs: number;
+  timestampSec: number;
+  utcOffsetMin: number;
+  emoji: string;
+  count: number;
+}
+
 // --- Service events (group lifecycle) ---
 
 export interface ServiceActionMembersJoined { action: 'members_joined'; members: CanonicalUser[] }
@@ -116,4 +128,5 @@ export type CanonicalIMEvent =
   | CanonicalMessageEvent
   | CanonicalEditEvent
   | CanonicalDeleteEvent
+  | CanonicalReactionEvent
   | CanonicalServiceEvent;

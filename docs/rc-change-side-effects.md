@@ -17,6 +17,7 @@
 
 - `src/pipeline.ts` 的 `pushEvent()`
 - `src/index.ts` 的 Telegram `onMessage` / `onMessageEdit` / `onMessageDelete`
+- `src/index.ts` 的 Telegram `onReactionUpdate`
 - `src/index.ts` 的 OneBot `onEvent`
 - `src/background-task/manager.ts` 的 `completionFlow()`
 
@@ -74,6 +75,36 @@
 - 当前代码只调用 `pipeline.pushEvent()`，不立刻调用 `driver.handleEvent()`。
 
 所以 bot 自己发出的消息会更新 Pipeline 的 RC，但不会马上让 Driver 再跑一轮。后续其他事件或启动回放仍会看到这段 RC。
+
+### Telegram reaction 更新
+
+代码位置：
+
+- `src/telegram/bot.ts` 的 `message_reaction` / `message_reaction_count` Bot API handlers
+- `src/telegram/index.ts` 的 reaction ingress queue 分支
+- `src/telegram/userbot.ts` 的 `fetchMessageReactions()`
+- `src/index.ts` 的 `tg.onReactionUpdate`
+- `src/db/persistence.ts` 的 `message_reaction_snapshots` snapshot helpers
+
+发生的事：
+
+- Bot API polling 显式订阅 `allowed_updates: ['message', 'message_reaction', 'message_reaction_count']`。
+- `message_reaction` 会带 actor 和 `old_reaction` / `new_reaction`，可以直接 diff 出该 actor 新增了哪些 emoji。
+- `message_reaction_count` 只带 aggregate counts；reaction ingress queue 会在进入业务 handler 前用 userbot 的 `messages.getMessageReactionsList` 拉取完整 `(emoji, sender)` actor snapshot。
+- `src/index.ts` 处理 reaction update 时，把新的 actor snapshot 和 `message_reaction_snapshots` 里的上一份 snapshot 做 diff。
+- 只有新增的 `(emoji, sender)` pair 才构造 append-only canonical `reaction` event。
+- 撤销或减少只更新 snapshot，不进入 IC。
+- 如果 message 没有上一份 actor snapshot，第一次 actor snapshot 只用于建立基线，避免把历史 reactions 当成新事件。
+- 对 configured chat，reaction event 会 `pipeline.pushEvent()`，从而更新 Pipeline 内部 RC 和 RC diff 日志。
+- live reaction ingress **不调用** `driver.handleEvent(chatId, rc)`，所以不会启动 debounce、不会打断正在运行的 LLM call，也不会立即触发 compaction。
+
+Rendering 会把 reaction 渲染成 passive segment，例如：
+
+```xml
+<event type="reaction_added" t="..." message_id="123" emoji="👍" sender="..."/>
+```
+
+这个 segment 带 `isPassiveEvent = true`。冷启动回放时已有 RC 仍会交给 Driver，但 Driver 的 `latestExternalEventMs()` / `latestInterruptingExternalEventMs()` 会忽略 passive segment，避免单独的历史 reaction 唤醒模型。
 
 ## Driver 收到新 RC 后的副作用
 
@@ -171,6 +202,7 @@ executeLlmCall() 结束
 - 离线模式下，只有 `@mention` 或回复 bot 才会回复。
 - `isRuntimeEvent` 会唤醒 Driver，但不会打断正在运行的 LLM call。
 - `isMyself` 的片段不会触发回复。
+- `isPassiveEvent` 的片段不会触发回复，也不会打断正在运行的 LLM call。当前用于 Telegram reaction event。
 
 ### 等待一小段时间再回复
 

@@ -192,4 +192,13 @@ describe('event timestamp helpers', () => {
     expect(latestExternalEventMs(rc, 50)).toBeNull();
     expect(latestInterruptingExternalEventMs(rc, 50)).toBeNull();
   });
+
+  it('ignores passive reaction events for both wake and interrupt decisions', () => {
+    const rc: RenderedContext = [
+      { ...textSeg(100, '<event type="reaction_added" message_id="1" emoji="👍"/>'), isPassiveEvent: true },
+    ];
+
+    expect(latestExternalEventMs(rc, 50)).toBeNull();
+    expect(latestInterruptingExternalEventMs(rc, 50)).toBeNull();
+  });
 });

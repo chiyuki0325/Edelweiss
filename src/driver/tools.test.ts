@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createBashTool, createLoadSkillTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
 import type { RuntimeConfig } from '../config/config';
 import type { ConversationEntry } from '../unified-api/types';
 
@@ -55,6 +55,31 @@ describe('createBashTool', () => {
       }, null, 2)}\n`,
       truncated: false,
     });
+  });
+});
+
+describe('createReactMessageTool', () => {
+  it('sends an allowed reaction without requesting follow-up', async () => {
+    const react = vi.fn(async () => {});
+    const tool = createReactMessageTool(['👍'], react);
+
+    const params = tool.function.parameters as { properties: { emoji: { enum: string[] } } };
+    expect(params.properties.emoji.enum).toEqual(['👍']);
+
+    const result = await tool.execute({ message_id: '42', emoji: '👍' }, { toolCallId: 'tc1' });
+    expect(react).toHaveBeenCalledWith('42', '👍');
+    expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '42', emoji: '👍' });
+    expect(result.requiresFollowUp).toBe(false);
+  });
+
+  it('rejects a disallowed reaction emoji', async () => {
+    const react = vi.fn(async () => {});
+    const tool = createReactMessageTool(['👍'], react);
+
+    const result = await tool.execute({ message_id: '42', emoji: '❤️' }, { toolCallId: 'tc1' });
+    expect(react).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content as string).error).toContain('not allowed');
+    expect(result.requiresFollowUp).toBe(true);
   });
 });
 

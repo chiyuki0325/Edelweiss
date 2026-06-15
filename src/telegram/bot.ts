@@ -1,13 +1,13 @@
 import type { Logger } from '@guiiai/logg';
 import type { Context } from 'grammy';
 import { Bot, InputFile } from 'grammy';
-import type { InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo } from 'grammy/types';
+import type { InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo, ReactionType, ReactionTypeEmoji } from 'grammy/types';
 
 import { httpGetBuffer, registerHttpSecret } from '../http';
 import { createEventBus } from './event-bus';
 import { renderMarkdownToTelegramHTML } from './markdown';
-import type { TelegramMessage } from './message';
-import { convertGrammyEntities, fromGrammyMessage } from './message';
+import type { TelegramMessage, TelegramReactionUpdate } from './message';
+import { convertGrammyEntities, fromGrammyMessage, fromGrammyReactionCountUpdate, fromGrammyReactionUpdate } from './message';
 import type { MessageEntity } from './message/types';
 
 export interface BotClientOptions {
@@ -50,6 +50,7 @@ export interface BotClient {
   start(): Promise<void>;
   stop(): Promise<void>;
   onMessage: (handler: (msg: TelegramMessage) => void) => void;
+  onReactionUpdate: (handler: (update: TelegramReactionUpdate) => void) => void;
   registerCommand(name: string, description: string, handler: (chatId: string) => Promise<void>): void;
   sendMessage(chatId: string | number, text: string, options?: SendOptions): Promise<SentMessage>;
   sendPhoto(chatId: string | number, photo: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
@@ -60,6 +61,7 @@ export interface BotClient {
   sendAnimation(chatId: string | number, animation: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendVideoNote(chatId: string | number, videoNote: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
+  sendReaction(chatId: string | number, messageId: number, emoji: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   raw(): Bot;
   botUserId(): string;
@@ -73,6 +75,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
   registerHttpSecret(options.token);
 
   const messageBus = createEventBus<TelegramMessage>('bot:message', log);
+  const reactionBus = createEventBus<TelegramReactionUpdate>('bot:reaction', log);
 
   const downloadFile = async (fileId: string): Promise<Buffer> => {
     const file = await bot.api.getFile(fileId);
@@ -130,7 +133,19 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
       messageBus.emit(fromGrammyMessage(ctx.message));
     });
 
+    bot.on('message_reaction', ctx => {
+      if (!ctx.messageReaction) return;
+      const update = fromGrammyReactionUpdate(ctx.messageReaction);
+      if (update) reactionBus.emit(update);
+    });
+
+    bot.on('message_reaction_count', ctx => {
+      if (!ctx.messageReactionCount) return;
+      reactionBus.emit(fromGrammyReactionCountUpdate(ctx.messageReactionCount));
+    });
+
     void bot.start({
+      allowed_updates: ['message', 'message_reaction', 'message_reaction_count'],
       onStart: () => {
         log.log('Bot polling started');
       },
@@ -281,10 +296,16 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     }));
   };
 
+  const sendReaction = async (chatId: string | number, messageId: number, emoji: string): Promise<void> => {
+    const reaction: ReactionType[] = [{ type: 'emoji', emoji: emoji as ReactionTypeEmoji['emoji'] }];
+    await bot.api.setMessageReaction(chatId, messageId, reaction);
+  };
+
   return {
     start,
     stop,
     onMessage: messageBus.on,
+    onReactionUpdate: reactionBus.on,
     registerCommand,
     sendMessage,
     sendPhoto,
@@ -295,6 +316,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     sendAnimation,
     sendVideoNote,
     sendMediaGroup,
+    sendReaction,
     downloadFile,
     raw: () => bot,
     botUserId: () => userId,

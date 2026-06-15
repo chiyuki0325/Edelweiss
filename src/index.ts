@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process';
 
-import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
 import type { ContentNode } from './adaptation/types';
 import { createBackgroundTaskManager } from './background-task';
 import { shellTaskFactory } from './background-task/shell';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from './config/config';
 import { setupLogger, useLogger } from './config/logger';
 import { loadContacts } from './contacts';
-import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments } from './db';
+import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionSnapshot, loadTurnResponses, lookupChatId, markStaleSubagentsFailed, migrateV1ToV2, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionSnapshot } from './db';
 import { getLastMessageId } from './db/persistence';
 import { createDriver } from './driver';
 import type { PlatformAdapter } from './driver/types';
@@ -25,7 +25,7 @@ import { computeThumbnailHash, createImageToTextResolver } from './telegram/imag
 import type { ImageToTextCompressionConfig } from './telegram/image-to-text';
 import { createSemaphore } from './telegram/llm-description';
 import { renderMarkdownToTelegramHTML } from './telegram/markdown';
-import type { Attachment } from './telegram/message/types';
+import type { Attachment, TelegramReactionSnapshotEntry, TelegramReactionUpdate } from './telegram/message/types';
 import { normalizeStickerSetMetadata } from './telegram/pack-title';
 import { loadSession } from './telegram/session';
 
@@ -342,6 +342,7 @@ const main = async () => {
       logger.withFields({ chatId, messageId: event.messageId }).warn('Synthetic bypass: userbot arrived first (isSelfSent merged via dedup)');
 
     persistEvent(db, event);
+    upsertMessageReactionSnapshot(db, chatId, event.messageId, [], event.receivedAtMs);
     hydrateAltTextFromCache(event);
     if (isConfiguredChat(configuredChatIds, chatId))
       pipeline.pushEvent(chatId, event);
@@ -557,6 +558,15 @@ const main = async () => {
     downloadMessageMedia: hasTelegram && telegram!.userbot
       ? (chatId, messageId) => telegram!.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
+    refreshAllowedReactionEmojis: hasTelegram && telegram!.userbot
+      ? chatId => telegram!.refreshAllowedReactionEmojis(chatId)
+      : undefined,
+    getAllowedReactionEmojis: hasTelegram && telegram!.userbot
+      ? chatId => telegram!.getAllowedReactionEmojis(chatId)
+      : undefined,
+    sendReaction: hasTelegram
+      ? (chatId, messageId, emoji) => telegram!.sendReaction(chatId, messageId, emoji)
+      : undefined,
     getPlatformAdapter: chatId => {
       const existing = platformAdapters.get(chatId);
       if (existing) return existing;
@@ -609,13 +619,37 @@ const main = async () => {
   if (hasTelegram) {
     const tg = telegram!;
 
+    const reactionEntryKey = (entry: TelegramReactionSnapshotEntry) =>
+      `${entry.emoji}\u0000${entry.sender.id}`;
+
+    const persistReactionEvent = (
+      reaction: TelegramReactionUpdate,
+      emoji: string,
+      count: number,
+      sender?: TelegramReactionSnapshotEntry['sender'],
+    ) => {
+      const event = adaptReaction(reaction, emoji, count, sender);
+      persistEvent(db, event);
+      if (isConfiguredChat(configuredChatIds, event.chatId))
+        pipeline.pushEvent(event.chatId, event);
+    };
+
+    const persistEmptyReactionSnapshotIfUnseeded = (chatId: string, messageId: string, updatedAtMs: number) => {
+      const existing = loadMessageReactionSnapshot(db, chatId, messageId);
+      if (!existing) upsertMessageReactionSnapshot(db, chatId, messageId, [], updatedAtMs);
+    };
+
     tg.onMessage(msg => {
       // Bot's own messages picked up by userbot are already injected into the
       // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
       // to avoid a spurious driver trigger that would enter the probe flow.
       // Still persist the raw message for richer metadata (upsert is idempotent).
       if (msg.source === 'userbot' && msg.sender?.id === botUserId) {
-        try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist self message'); }
+        try {
+          persistMessage(db, msg);
+          if (!msg.reactions || Object.keys(msg.reactions).length === 0)
+            persistEmptyReactionSnapshotIfUnseeded(msg.chatId, String(msg.messageId), msg.receivedAtMs ?? Date.now());
+        } catch (err) { logger.withError(err).error('Failed to persist self message'); }
         return;
       }
 
@@ -651,6 +685,8 @@ const main = async () => {
       persistEvent(db, event);
 
       try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
+      if (!msg.reactions || Object.keys(msg.reactions).length === 0)
+        persistEmptyReactionSnapshotIfUnseeded(event.chatId, event.messageId, msg.receivedAtMs ?? Date.now());
 
       if (isConfiguredChat(configuredChatIds, event.chatId)) {
         hydrateAltTextFromCache(event);
@@ -711,6 +747,57 @@ const main = async () => {
       if (isConfiguredChat(configuredChatIds, event.chatId)) {
         const rc = pipeline.pushEvent(event.chatId, event);
         driver.handleEvent(event.chatId, rc);
+      }
+    });
+
+    tg.onReactionUpdate(reaction => {
+      logger.withFields({
+        chatId: reaction.chatId,
+        messageId: reaction.messageId,
+        kind: reaction.kind,
+        reactions: reaction.kind === 'count' ? Object.keys(reaction.counts).length : reaction.newReactions.length,
+      }).debug('Message reaction update received');
+
+      const messageId = String(reaction.messageId);
+      const previous = loadMessageReactionSnapshot(db, reaction.chatId, messageId);
+      const updatedAtMs = reaction.receivedAtMs ?? Date.now();
+
+      if (reaction.kind === 'user') {
+        const oldReactions = new Set(reaction.oldReactions);
+        const newReactions = [...new Set(reaction.newReactions)];
+        const next = [
+          ...(previous ?? []).filter(entry => entry.sender.id !== reaction.sender.id),
+          ...newReactions.map(emoji => ({ emoji, sender: reaction.sender, date: reaction.date })),
+        ];
+
+        upsertMessageReactionSnapshot(db, reaction.chatId, messageId, next, updatedAtMs);
+
+        for (const emoji of newReactions) {
+          if (oldReactions.has(emoji)) continue;
+          persistReactionEvent(reaction, emoji, 1, reaction.sender);
+        }
+        return;
+      }
+
+      if (!reaction.snapshot) {
+        logger.withFields({
+          chatId: reaction.chatId,
+          messageId: reaction.messageId,
+        }).debug('Reaction count update skipped because actor snapshot is unavailable');
+        return;
+      }
+
+      upsertMessageReactionSnapshot(db, reaction.chatId, messageId, reaction.snapshot, updatedAtMs);
+
+      // Count updates are aggregate and may represent historical state. Seed the
+      // first actor snapshot without emitting; later snapshot additions become IC
+      // reaction events with sender attribution.
+      if (!previous) return;
+
+      const oldKeys = new Set(previous.map(reactionEntryKey));
+      for (const entry of reaction.snapshot) {
+        if (oldKeys.has(reactionEntryKey(entry))) continue;
+        persistReactionEvent(reaction, entry.emoji, 1, entry.sender);
       }
     });
 

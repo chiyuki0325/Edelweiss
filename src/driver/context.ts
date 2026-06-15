@@ -40,7 +40,7 @@ const entryTokens = (e: ConversationEntry): number => {
 export const latestExternalEventMs = (rc: RenderedContext, afterMs: number): number | null => {
   let latest: number | null = null;
   for (const seg of rc) {
-    if (seg.receivedAtMs > afterMs && !seg.isMyself)
+    if (seg.receivedAtMs > afterMs && !seg.isMyself && !seg.isPassiveEvent)
       latest = seg.receivedAtMs > (latest ?? 0) ? seg.receivedAtMs : latest;
   }
   return latest;
@@ -49,7 +49,7 @@ export const latestExternalEventMs = (rc: RenderedContext, afterMs: number): num
 export const latestInterruptingExternalEventMs = (rc: RenderedContext, afterMs: number): number | null => {
   let latest: number | null = null;
   for (const seg of rc) {
-    if (seg.receivedAtMs > afterMs && !seg.isMyself && !seg.isRuntimeEvent)
+    if (seg.receivedAtMs > afterMs && !seg.isMyself && !seg.isRuntimeEvent && !seg.isPassiveEvent)
       latest = seg.receivedAtMs > (latest ?? 0) ? seg.receivedAtMs : latest;
   }
   return latest;

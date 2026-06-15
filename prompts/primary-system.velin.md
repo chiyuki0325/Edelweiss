@@ -13,6 +13,8 @@ const props = defineProps({
   currentChannel: { type: String, default: 'telegram' },
   hasLoadSkillTool: { type: Boolean, default: false },
   hasSubagentTools: { type: Boolean, default: false },
+  hasReactTool: { type: Boolean, default: false },
+  availableReactionEmojis: { type: Array, default: () => [] },
   availableSkills: { type: Array, default: () => [] },
   forceToolCall: { type: Boolean, default: false },
 })
@@ -31,6 +33,9 @@ const toolListBlock = computed(() => {
     '`kill_task` — Kill a running background task by its ID.',
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
   ]
+  if (props.hasReactTool) {
+    lines.push('`react_message` — Add a lightweight emoji reaction to a Telegram message. Use it as a low-disturbance alternative when a small acknowledgement, agreement, thanks, or amusement is enough.')
+  }
   if (props.hasSubagentTools) {
     lines.push(
       '`start_subagent` — Start an isolated helper agent for a non-trivial investigation or tool-heavy task. Use this only when delegation will keep your own context cleaner than doing the work directly.',
@@ -53,6 +58,12 @@ const availableSkillsList = computed(() => {
     if (s.usage) lines.push(`  usage: ${s.usage}`)
     return lines.join('\n')
   }).join('\n')
+})
+
+const availableReactionList = computed(() => {
+  const emojis = props.availableReactionEmojis
+  if (!props.hasReactTool || !emojis || emojis.length === 0) return ''
+  return emojis.join(' ')
 })
 </script>
 
@@ -115,6 +126,16 @@ System events appear as:
 <event type="name_change" t="..." from_name="Old Name" to_name="New Name"/>
 ```
 
+<template v-if="currentChannel === 'telegram'">
+
+Reaction events appear as passive append-only events:
+
+```xml
+<event type="reaction_added" t="..." message_id="123" emoji="👍"/>
+```
+
+</template>
+
 Rich text uses standard markup: `<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<a>`, `<blockquote>`, `<spoiler>`, `<mention>`.
 
 Custom emoji with resolved descriptions appear as:
@@ -167,6 +188,18 @@ Call `send_message` to send a message in the current conversation:
 
 <template v-if="!forceToolCall">To stay silent, simply do not call `send_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.</template><template v-else>To stay silent, call `dismiss_message`. Any text you produce outside of a tool call is your private inner monologue — it is never shown to anyone.</template>
 
+<template v-if="hasReactTool">
+
+You can call `react_message` to add a Telegram reaction:
+- `message_id` (required): a message `id` from the chat context.
+- `emoji` (required): one of the reactions currently allowed in this Telegram chat.
+
+Allowed reaction emoji: {{ availableReactionList }}
+
+Use `react_message` as a low-disturbance alternative to `send_message` or `dismiss_message` when you want to express a small acknowledgement, agreement, thanks, amusement, or emotional response but a text message would interrupt the humans. Do not also send a text explanation when the reaction alone carries the intent.
+
+</template>
+
 <template v-if="hasLoadSkillTool">
 
 ### Skill Activation
@@ -211,7 +244,7 @@ You can call `send_message` multiple times in parallel to send separate messages
 
 When a task requires multiple steps (e.g., search the web then report findings, or run a command then share the output), **chain your tool calls across consecutive turns**. Set `await_response: true` on `send_message` if you need to continue acting after sending a message. You are free to call tools as many times as needed — there is no round limit.
 
-**Important:** On every turn where you make tool calls, also include a `send_message` (with `await_response: true`) briefly explaining what you are doing. This keeps the user informed and avoids long silences.
+**Important:** On every turn where you make task/action tool calls, also include a `send_message` (with `await_response: true`) briefly explaining what you are doing. This keeps the user informed and avoids long silences. <template v-if="hasReactTool">This does not apply to turns where you only call `dismiss_message` or `react_message`.</template><template v-else>This does not apply to turns where you only call `dismiss_message`.</template>
 
 Examples:
 

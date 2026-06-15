@@ -8,8 +8,8 @@ import { StringSession } from 'telegram/sessions';
 
 import { createEventBus } from './event-bus';
 import { createGramjsLogger } from './gramjs-logger';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit } from './message';
-import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsSender } from './message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from './message';
+import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsChatId, resolveGramjsSender } from './message';
 import { isTypingLikeAction } from './typing-action';
 
 export interface UserbotOptions {
@@ -32,7 +32,12 @@ export interface UserbotClient {
   onTyping: (handler: (event: TypingEvent) => void) => void;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
+  fetchMessageReactions(chatId: string, messageId: number): Promise<TelegramReactionSnapshotEntry[]>;
   downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
+  refreshAvailableReactionEmojis(): Promise<string[]>;
+  getAvailableReactionEmojis(): string[];
+  refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
+  getAllowedReactionEmojis(chatId: string): string[];
   raw(): TelegramClient;
   getSessionString(): string;
 }
@@ -56,7 +61,36 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
   const editBus = createEventBus<TelegramMessageEdit>('userbot:edit', log);
   const deleteBus = createEventBus<TelegramMessageDelete>('userbot:delete', log);
   const typingBus = createEventBus<TypingEvent>('userbot:typing', log);
+  let availableReactionsHash = 0;
+  let availableReactionEmojis: string[] = [];
+  const allowedReactionEmojisByChat = new Map<string, string[]>();
   let eventHandlerRegistered = false;
+
+  const reactionToEmoji = (reaction: Api.TypeReaction): string | undefined =>
+    reaction instanceof Api.ReactionEmoji ? reaction.emoticon : undefined;
+
+  const filterAvailableEmojiReactions = (reactions: Api.TypeAvailableReaction[]): string[] =>
+    [...new Set(reactions
+      .filter(r => r instanceof Api.AvailableReaction && !r.inactive && !r.premium)
+      .map(r => r.reaction))];
+
+  const resolveChatAllowedEmojiReactions = (
+    availableReactions: Api.TypeChatReactions | undefined,
+    globalEmojis: string[],
+  ): string[] => {
+    if (!availableReactions || availableReactions instanceof Api.ChatReactionsAll)
+      return globalEmojis;
+    if (availableReactions instanceof Api.ChatReactionsNone)
+      return [];
+    if (availableReactions instanceof Api.ChatReactionsSome) {
+      const allowed = new Set(availableReactions.reactions.flatMap(r => {
+        const emoji = reactionToEmoji(r);
+        return emoji ? [emoji] : [];
+      }));
+      return globalEmojis.filter(emoji => allowed.has(emoji));
+    }
+    return globalEmojis;
+  };
 
   const registerEventHandler = () => {
     if (eventHandlerRegistered) return;
@@ -77,8 +111,7 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
         // MTProto fires updateEditMessage for metadata-only changes (link preview
         // loading, first reaction in large supergroups, inline keyboard updates,
         // edit_hide corrections). These "phantom edits" have no editDate.
-        // Skip them here — if we later need reactions, subscribe to
-        // updateMessageReactions separately instead of relying on edit events.
+        // Skip them here; reactions arrive through Bot API updates.
         if (!event.message.editDate) return;
         const msg = event.message;
         const sender = resolveGramjsSender(msg);
@@ -148,6 +181,13 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     } catch (err) {
       log.withError(err).warn('Failed to warm entity cache via getDialogs');
     }
+
+    try {
+      const emojis = await refreshAvailableReactionEmojis();
+      log.withFields({ count: emojis.length }).log('Available reaction emojis loaded');
+    } catch (err) {
+      log.withError(err).warn('Failed to load available reaction emojis');
+    }
   };
 
   const stop = async () => {
@@ -193,6 +233,125 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     return Buffer.isBuffer(result) ? result : undefined;
   };
 
+  const apiUserToTelegramUser = (user: Api.User): TelegramUser => ({
+    id: String(user.id.toJSNumber()),
+    firstName: user.firstName ?? '',
+    lastName: user.lastName,
+    username: user.username,
+    isBot: user.bot ?? false,
+    isPremium: user.premium ?? false,
+  });
+
+  const apiChatToTelegramUser = (chat: Api.TypeChat, id: string): TelegramUser => {
+    if (chat instanceof Api.Channel) {
+      return {
+        id,
+        firstName: chat.title,
+        username: chat.username,
+        isBot: false,
+        isPremium: false,
+      };
+    }
+    if (chat instanceof Api.Chat || chat instanceof Api.ChatForbidden || chat instanceof Api.ChannelForbidden) {
+      return {
+        id,
+        firstName: chat.title,
+        isBot: false,
+        isPremium: false,
+      };
+    }
+    return { id, firstName: id, isBot: false, isPremium: false };
+  };
+
+  const fetchMessageReactions = async (chatId: string, messageId: number): Promise<TelegramReactionSnapshotEntry[]> => {
+    const peer = await client.getInputEntity(chatId);
+    const snapshot: TelegramReactionSnapshotEntry[] = [];
+    let offset: string | undefined;
+
+    do {
+      const result = await client.invoke(new Api.messages.GetMessageReactionsList({
+        peer,
+        id: messageId,
+        limit: 100,
+        offset,
+      }));
+
+      const users = new Map(
+        result.users
+          .filter((user): user is Api.User => user instanceof Api.User)
+          .map(user => [String(user.id.toJSNumber()), apiUserToTelegramUser(user)]),
+      );
+      const chats = new Map(result.chats.map(chat => {
+        let id = '';
+        if (chat instanceof Api.Channel || chat instanceof Api.ChannelForbidden)
+          id = `-100${chat.id.toJSNumber()}`;
+        else if (chat instanceof Api.Chat || chat instanceof Api.ChatForbidden)
+          id = `-${chat.id.toJSNumber()}`;
+        return [id, apiChatToTelegramUser(chat, id)] as const;
+      }));
+
+      for (const reaction of result.reactions) {
+        const emoji = reactionToEmoji(reaction.reaction);
+        if (!emoji) continue;
+
+        const senderId = resolveGramjsChatId(reaction.peerId);
+        const sender = reaction.peerId instanceof Api.PeerUser
+          ? users.get(senderId)
+          : chats.get(senderId);
+        snapshot.push({
+          emoji,
+          sender: sender ?? { id: senderId, firstName: senderId, isBot: false, isPremium: false },
+          date: reaction.date,
+        });
+      }
+
+      offset = result.nextOffset;
+    } while (offset);
+
+    return snapshot;
+  };
+
+  const refreshAvailableReactionEmojis = async (): Promise<string[]> => {
+    const result = await client.invoke(new Api.messages.GetAvailableReactions({
+      hash: availableReactionsHash,
+    }));
+
+    if (result instanceof Api.messages.AvailableReactionsNotModified)
+      return availableReactionEmojis;
+
+    if (result instanceof Api.messages.AvailableReactions) {
+      availableReactionsHash = result.hash;
+      availableReactionEmojis = filterAvailableEmojiReactions(result.reactions);
+    }
+    return availableReactionEmojis;
+  };
+
+  const getAvailableReactionEmojis = (): string[] => availableReactionEmojis;
+
+  const refreshAllowedReactionEmojis = async (chatId: string): Promise<string[]> => {
+    const globalEmojis = await refreshAvailableReactionEmojis();
+    const peer = await client.getInputEntity(chatId);
+    let emojis = globalEmojis;
+
+    if (peer instanceof Api.InputPeerChannel) {
+      const full = await client.invoke(new Api.channels.GetFullChannel({ channel: peer }));
+      const fullChat = full.fullChat;
+      if (fullChat instanceof Api.ChannelFull)
+        emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);
+    } else if (peer instanceof Api.InputPeerChat) {
+      const full = await client.invoke(new Api.messages.GetFullChat({ chatId: peer.chatId }));
+      const fullChat = full.fullChat;
+      if (fullChat instanceof Api.ChatFull)
+        emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);
+    }
+
+    allowedReactionEmojisByChat.set(chatId, emojis);
+    return emojis;
+  };
+
+  const getAllowedReactionEmojis = (chatId: string): string[] =>
+    allowedReactionEmojisByChat.get(chatId) ?? [];
+
   return {
     start,
     stop,
@@ -202,7 +361,12 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     onTyping: typingBus.on,
     fetchMessages,
     fetchSpecificMessages,
+    fetchMessageReactions,
     downloadMessageMedia,
+    refreshAvailableReactionEmojis,
+    getAvailableReactionEmojis,
+    refreshAllowedReactionEmojis,
+    getAllowedReactionEmojis,
     raw: () => client,
     getSessionString: () => String(client.session.save()),
   };

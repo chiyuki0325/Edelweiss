@@ -78,6 +78,38 @@ describe('primary-system.velin.md', () => {
     expect(rendered).toContain('read_task_output');
     expect(rendered).toContain('runtime-event');
     expect(rendered).toContain('task-completed');
+    expect(rendered).not.toContain('react_message');
+    expect(rendered).not.toContain('Telegram reaction');
+  });
+
+  it('renders Telegram reaction tool guidance only when available', async () => {
+    const rendered = await renderSystem({
+      modelName: 'gpt-4o',
+      hasReactTool: true,
+      availableReactionEmojis: ['👍', '❤️'],
+    });
+
+    expect(rendered).toContain('`react_message`');
+    expect(rendered).toContain('Allowed reaction emoji: 👍 ❤️');
+    expect(rendered).toContain('low-disturbance alternative');
+    expect(rendered).toContain('only call `dismiss_message` or `react_message`');
+    assertNoVueSyntaxLeak(rendered);
+  });
+
+  it('does not leak Telegram reaction wording when the tool is unavailable', async () => {
+    const rendered = await renderSystem({
+      modelName: 'gpt-4o',
+      currentChannel: 'onebot',
+      hasReactTool: false,
+      availableReactionEmojis: ['👍'],
+    });
+
+    expect(rendered).not.toContain('react_message');
+    expect(rendered).not.toContain('Allowed reaction emoji');
+    expect(rendered).not.toContain('Telegram reaction');
+    expect(rendered).not.toContain('reaction_added');
+    expect(rendered).toContain('only call `dismiss_message`');
+    assertNoVueSyntaxLeak(rendered);
   });
 
   it('renders load_skill activation guidance when skills are available', async () => {

@@ -2,7 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 
 import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode, ServiceAction } from '../adaptation/types';
 import type { RuntimeEventData } from '../runtime-event';
-import type { Attachment, ForwardInfo, MessageEntity } from '../telegram/message/types';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramReactionSnapshotEntry } from '../telegram/message/types';
 
 type AnyMsg = Record<string, any>;
 
@@ -57,7 +57,7 @@ export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   chatId: text('chat_id').notNull(),
-  type: text('type').notNull().$type<'message' | 'edit' | 'delete' | 'service' | 'runtime'>(),
+  type: text('type').notNull().$type<'message' | 'edit' | 'delete' | 'service' | 'runtime' | 'reaction'>(),
   receivedAtMs: integer('received_at').notNull(),
   timestampSec: integer('timestamp').notNull(),
   utcOffsetMin: integer('utc_offset_min').notNull().default(480),
@@ -88,8 +88,20 @@ export const events = sqliteTable('events', {
 
   // Runtime event data — JSON for runtime-originated events
   runtimeData: text('runtime_data', { mode: 'json' }).$type<RuntimeEventData>(),
+
+  // Reaction event data — append-only increments derived from Telegram aggregate updates
+  reactionData: text('reaction_data', { mode: 'json' }).$type<{ emoji: string; count: number }>(),
 }, table => [
   index('events_chat_id_idx').on(table.chatId),
+]);
+
+export const messageReactionSnapshots = sqliteTable('message_reaction_snapshots', {
+  chatId: text('chat_id').notNull(),
+  messageId: text('message_id').notNull(),
+  reactions: text('reactions', { mode: 'json' }).notNull().$type<TelegramReactionSnapshotEntry[]>(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, table => [
+  uniqueIndex('message_reaction_snapshots_chat_message_idx').on(table.chatId, table.messageId),
 ]);
 
 export const turnResponses = sqliteTable('turn_responses', {

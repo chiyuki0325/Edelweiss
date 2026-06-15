@@ -7,6 +7,7 @@ import type {
   CanonicalEditEvent,
   CanonicalIMEvent,
   CanonicalMessageEvent,
+  CanonicalReactionEvent,
   CanonicalServiceEvent,
   CanonicalUser,
 } from '../adaptation/types';
@@ -135,6 +136,20 @@ const reduceDelete = (draft: IntermediateContext, event: CanonicalDeleteEvent) =
   }
 };
 
+const reduceReaction = (draft: IntermediateContext, event: CanonicalReactionEvent) => {
+  draft.nodes.push({
+    type: 'system_event',
+    kind: 'reaction_added',
+    receivedAtMs: event.receivedAtMs,
+    timestampSec: event.timestampSec,
+    utcOffsetMin: event.utcOffsetMin,
+    messageId: event.messageId,
+    sender: event.sender,
+    emoji: event.emoji,
+    count: event.count,
+  });
+};
+
 const reduceService = (draft: IntermediateContext, event: CanonicalServiceEvent) => {
   const base = {
     type: 'system_event' as const,
@@ -201,6 +216,7 @@ export const reduce = (ic: IntermediateContext, event: PipelineEvent): Intermedi
     case 'message': reduceMessage(draft, event); break;
     case 'edit': reduceEdit(draft, event); break;
     case 'delete': reduceDelete(draft, event); break;
+    case 'reaction': reduceReaction(draft, event); break;
     case 'service': reduceService(draft, event); break;
     case 'runtime': reduceRuntime(draft, event); break;
     }

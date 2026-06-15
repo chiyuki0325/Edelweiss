@@ -2,13 +2,14 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { backgroundTasks, compactions, events, imageAltTexts, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
+import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalAttachment,
   CanonicalDeleteEvent,
   CanonicalEditEvent,
   CanonicalMessageEvent,
+  CanonicalReactionEvent,
   CanonicalServiceEvent,
 } from '../adaptation/types';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
@@ -16,7 +17,7 @@ import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
 import type { ImageAltTextRecord } from '../telegram/image-to-text';
-import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from '../telegram/message';
+import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from '../telegram/message';
 import type { Attachment } from '../telegram/message/types';
 import type { ConversationEntry } from '../unified-api/types';
 
@@ -155,6 +156,17 @@ export const persistEvent = (db: DB, event: PipelineEvent) => {
       ...base,
       messageIds: event.messageIds,
     }).run();
+  } else if (event.type === 'reaction') {
+    db.insert(events).values({
+      ...base,
+      messageId: event.messageId,
+      senderId: event.sender?.id ?? null,
+      sender: event.sender ?? null,
+      reactionData: {
+        emoji: event.emoji,
+        count: event.count,
+      },
+    }).run();
   } else if (event.type === 'service') {
     db.insert(events).values({
       ...base,
@@ -245,6 +257,22 @@ const reconstructDeleteEvent = (row: EventRow): CanonicalDeleteEvent => ({
   utcOffsetMin: row.utcOffsetMin,
 });
 
+const reconstructReactionEvent = (row: EventRow): CanonicalReactionEvent => {
+  const data = row.reactionData!;
+  const event: CanonicalReactionEvent = {
+    type: 'reaction',
+    chatId: row.chatId,
+    messageId: row.messageId!,
+    receivedAtMs: row.receivedAtMs,
+    timestampSec: row.timestampSec,
+    utcOffsetMin: row.utcOffsetMin,
+    emoji: data.emoji,
+    count: data.count,
+  };
+  if (row.sender) event.sender = row.sender;
+  return event;
+};
+
 const reconstructServiceEvent = (row: EventRow): CanonicalServiceEvent => {
   const event: CanonicalServiceEvent = {
     type: 'service',
@@ -280,6 +308,7 @@ const reconstructEvent = (row: EventRow): PipelineEvent => {
   case 'message': return reconstructMessageEvent(row);
   case 'edit': return reconstructEditEvent(row);
   case 'delete': return reconstructDeleteEvent(row);
+  case 'reaction': return reconstructReactionEvent(row);
   case 'service': return reconstructServiceEvent(row);
   case 'runtime': return reconstructRuntimeEvent(row);
   default: throw new Error(`Unknown event type: ${row.type}`);
@@ -307,6 +336,34 @@ export const lookupChatId = (db: DB, messageIds: number[]): string | undefined =
     .limit(1)
     .get();
   return row?.chatId;
+};
+
+export const loadMessageReactionSnapshot = (db: DB, chatId: string, messageId: string): TelegramReactionSnapshotEntry[] | undefined => {
+  const row = db.select({ reactions: messageReactionSnapshots.reactions })
+    .from(messageReactionSnapshots)
+    .where(and(
+      eq(messageReactionSnapshots.chatId, chatId),
+      eq(messageReactionSnapshots.messageId, messageId),
+    ))
+    .limit(1)
+    .get();
+  return row?.reactions;
+};
+
+export const upsertMessageReactionSnapshot = (
+  db: DB,
+  chatId: string,
+  messageId: string,
+  reactions: TelegramReactionSnapshotEntry[],
+  updatedAtMs: number,
+): void => {
+  db.insert(messageReactionSnapshots)
+    .values({ chatId, messageId, reactions, updatedAtMs })
+    .onConflictDoUpdate({
+      target: [messageReactionSnapshots.chatId, messageReactionSnapshots.messageId],
+      set: { reactions, updatedAtMs },
+    })
+    .run();
 };
 
 export const loadKnownChatIds = (db: DB): string[] => {
