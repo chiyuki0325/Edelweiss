@@ -82,6 +82,8 @@ export interface SendMessageAttachment {
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string, attachments?: SendMessageAttachment[]) => Promise<{ messageId: string }>,
 ): CahciuaTool => {
+  let queshiFlaggedThisTurn = false;
+
   const properties: Record<string, unknown> = {
     text: { type: 'string', description: 'The message to send. When sending attachments, this becomes the caption.' },
     reply_to: { type: 'string', description: 'A message id to reply to.' },
@@ -132,6 +134,13 @@ export const createSendMessageTool = (
             requiresFollowUp: true,
           };
         }
+      }
+      if (!queshiFlaggedThisTurn && text.includes('确实')) {
+        queshiFlaggedThisTurn = true;
+        return {
+          content: JSON.stringify({ ok: false, error: '系统可能检测到你在进行无意义的附和。如果只是表示认同而没有新的信息要补充，可以保持沉默。如果你想表达的是别的意思，请直接说出来。' }),
+          requiresFollowUp: true,
+        };
       }
       const formattedText = prettier.format(text, { parser: 'markdown', plugins: [markdownParser], embeddedLanguageFormatting: 'auto' });
       const result = await send(formattedText, reply_to, attachments);
