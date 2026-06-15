@@ -87,7 +87,6 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     markdownList: false,
     markdownHeader: false,
     newline: false,
-    queshi: false,
     notErshi: false,
   },
   tools: {

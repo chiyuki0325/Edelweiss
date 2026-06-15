@@ -85,7 +85,6 @@ chats:
     #   markdownList: true            # flag Markdown lists
     #   markdownHeader: true          # flag Markdown headers
     #   newline: true                 # flag any newline in a send_message
-    #   queshi: true                  # flag when >50% of recent send_message contain '确实' (DeepSeek V4 quirk)
     #   notErshi: true                # flag when >50% of recent send_message contain "不是…而是…" pattern
     # Tools: configuration for enabled tools.
     tools:

@@ -46,16 +46,6 @@ const errResult = (callId: string): ConversationEntry => ({
 });
 
 describe('send-message-human-likeness', () => {
-  const ALL_ENABLED = {
-    trailingPeriod: true,
-    denseClausePunctuation: true,
-    multipleMarkdownBold: true,
-    markdownList: true,
-    markdownHeader: true,
-    newline: true,
-    queshi: true,
-    notErshi: true,
-  } as const;
 
   it('detects trailing periods but not ellipses', () => {
     expect(assessSendMessageHumanLikeness('行。')).toEqual(['trailing-period']);
@@ -143,42 +133,5 @@ describe('send-message-human-likeness', () => {
     expect(rendered).toContain('trailing-period');
     expect(rendered).toContain('dense-clause-punctuation');
     expect(rendered).toContain('<guidance>If those patterns were intentional');
-  });
-
-  it('detects queshi in message text', () => {
-    expect(assessSendMessageHumanLikeness('确实，你说得对')).toContain('queshi');
-    expect(assessSendMessageHumanLikeness('我觉得确实是这样')).toContain('queshi');
-    expect(assessSendMessageHumanLikeness('没有问题')).not.toContain('queshi');
-  });
-
-  it('respects queshi toggle', () => {
-    const withToggle = assessSendMessageHumanLikeness('确实是的', { ...ALL_ENABLED, queshi: true });
-    expect(withToggle).toContain('queshi');
-
-    const withoutToggle = assessSendMessageHumanLikeness('确实是的', { ...ALL_ENABLED, queshi: false });
-    expect(withoutToggle).not.toContain('queshi');
-  });
-
-  it('shows queshi in xml only when >50% of recent messages contain it', () => {
-    // 2/5 = 40% — below threshold, should not appear
-    const belowThreshold = renderRecentSendMessageHumanLikenessXml([
-      { text: '确实', features: ['queshi'] },
-      { text: '确实是的', features: ['queshi'] },
-      { text: '好', features: [] },
-      { text: '行', features: [] },
-      { text: '嗯', features: [] },
-    ]);
-    expect(belowThreshold).not.toContain('queshi');
-
-    // 3/5 = 60% — above threshold, should appear
-    const aboveThreshold = renderRecentSendMessageHumanLikenessXml([
-      { text: '确实', features: ['queshi'] },
-      { text: '确实是的', features: ['queshi'] },
-      { text: '确实没错', features: ['queshi'] },
-      { text: '好', features: [] },
-      { text: '行', features: [] },
-    ]);
-    expect(aboveThreshold).toContain('queshi');
-    expect(aboveThreshold).toContain('Stop echoing');
   });
 });
