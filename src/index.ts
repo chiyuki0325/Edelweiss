@@ -717,7 +717,6 @@ const main = async () => {
         if (prev.text === newText
           && JSON.stringify(prev.content) === JSON.stringify(newContent)
           && JSON.stringify(prev.attachments) === JSON.stringify(newAttachments)) {
-          logger.withFields({ chatId: edit.chatId, messageId: edit.messageId }).log('Phantom edit skipped (content unchanged)');
           return;
         }
       }
