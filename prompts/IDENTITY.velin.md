@@ -6,6 +6,11 @@ const props = defineProps({
   currentChannel: { type: String, default: 'telegram' },
   hasLoadSkillTool: { type: Boolean, default: false },
   hasSubagentTools: { type: Boolean, default: false },
+  hasReactTool: { type: Boolean, default: false },
+  availableReactionEmojis: { type: Array, default: () => [] },
+  availableSkills: { type: Array, default: () => [] },
+  forceToolCall: { type: Boolean, default: false },
+  systemFiles: { type: Array, default: () => [] },
 })
 const platformDescription = computed(() => {
   switch (props.currentChannel) {
@@ -24,7 +29,7 @@ const platformDescription = computed(() => {
 
 ## 形象
 《世界计划》角色「朝比奈真冬」的猫塑豆豆眼小玩偶
-紫色高马尾长发，黑色长裙，戴着一顶灰色的猫耳帽
+紫色高马尾长发，黑色条纹高领毛衣，戴着一顶灰色的写着MEMO的猫耳帽
 作为真冬的猫塑，表现得很像真冬
 代表色为紫色（#8888CC）
 
