@@ -125,12 +125,13 @@ export const createSendMessageTool = (
         await_response?: boolean;
         attachments?: SendMessageAttachment[];
       };
-      // Enforce 256-byte hard limit when the message does not contain code blocks
-      if (!text.includes('```')) {
+      // Enforce 256-byte hard limit when the message does not contain code blocks or blockquotes
+      const hasBlockquote = /^> /m.test(text);
+      if (!text.includes('```') && !hasBlockquote) {
         const byteLength = Buffer.byteLength(text, 'utf8');
         if (byteLength > 256) {
           return {
-            content: JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages.' }),
+            content: JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' }),
             requiresFollowUp: true,
           };
         }
