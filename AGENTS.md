@@ -42,7 +42,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **State management**: Immer — immutable IC updates in Projection reducers.
 - **Reactivity**: alien-signals — signal/computed/effect graph for Driver orchestration.
 - **Validation**: Valibot — schema validation for config and other runtime inputs where schemas are defined.
-- **Prompts**: @velin-dev/core — all LLM prompts are velin templates (`.velin.md`) in the `prompts/` directory, rendered via `renderMarkdownString`. Never hardcode prompt strings in source code.
+- **Prompts**: @velin-dev/core — LLM prompt templates are velin templates (`.velin.md`) in the `prompts/` directory, rendered via `renderMarkdownString`. Configured system files may also be plain markdown files. Never hardcode prompt strings in source code.
 - **Logging**: @guiiai/logg — structured logger with pretty/JSON output.
 - **Dependency injection**: tsyringe — factory-registration mode only (no `@injectable`/`@inject` decorators). The composition root in `src/container/` registers each `create*(deps)` factory via `useFactory`; subsystems stay plain closure factories. Requires `reflect-metadata` imported before tsyringe loads (done at `src/index.ts` and `src/container/index.ts`).
 - **Testing**: Vitest.
@@ -262,6 +262,7 @@ Top-level directories:
   - `subagent-system.velin.md` — internal helper-agent prompt; intentionally contains no group-chat/platform/end-user concepts
   - `primary-late-binding.velin.md` — context-aware injection (mention/reply state, recent send_message human-likeness feedback, background task status)
   - `IDENTITY.velin.md` — bot identity / personality definition (loaded by prompt renderer); **bot persona is hardcoded here**
+  - `CURIOSITY.md` — plain-markdown system file for curiosity-driven silent lookup and high-threshold natural interjections
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)
   - `image-to-text-system.velin.md` — blocking image description prompt used before events enter the pipeline
