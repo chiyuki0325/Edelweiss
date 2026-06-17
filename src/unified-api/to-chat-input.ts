@@ -13,7 +13,6 @@ import type {
   OutputMessage,
   OutputPart,
   ReasoningData,
-  ReasoningPart,
   TextPart,
   ThinkingData,
   ToolCallPart,
@@ -76,10 +75,35 @@ const textPartToContentPart = (tp: TextPart): ChatCompletionsContentPart =>
 /** String shortcut is safe only when nothing source-specific needs to ride on the block. */
 const hasSameSourceExtra = (tp: TextPart): boolean => tp.extra?.source === 'openaiChatCompletion';
 
-const reasoningToContentPart = (part: ReasoningPart): ChatCompletionsContentPart | undefined => {
-  const thinking = reasoningToThinking(part.data);
-  if (thinking === undefined) return undefined;
-  return applyExtra(part.extra, 'openaiChatCompletion', { ...thinking });
+/**
+ * Convert block-level ReasoningParts to message-level reasoning fields
+ * (reasoning_content / reasoning_opaque). Chat Completions uses message-level
+ * fields as the standard format; content-part `type: 'thinking'` is a non-standard
+ * extension that many third-party proxies reject on input.
+ */
+const reasoningPartsToMessageFields = (parts: OutputPart[]): Record<string, string> | undefined => {
+  const result: Record<string, string> = {};
+  let found = false;
+  for (const part of parts) {
+    if (part.kind !== 'reasoning') continue;
+    const thinking = reasoningToThinking(part.data);
+    if (thinking === undefined) continue;
+    if (thinking.type === 'thinking') {
+      if (thinking.thinking.length > 0) {
+        const prev = result['reasoning_content'] ?? '';
+        result['reasoning_content'] = prev ? `${prev}\n${thinking.thinking}` : thinking.thinking;
+        found = true;
+      }
+      if (thinking.signature !== undefined) {
+        result['reasoning_opaque'] = thinking.signature;
+        found = true;
+      }
+    } else if (thinking.type === 'redacted_thinking') {
+      result['reasoning_opaque'] = thinking.data;
+      found = true;
+    }
+  }
+  return found ? result : undefined;
 };
 
 const reasoningToThinking = (data: ReasoningData): ThinkingData | { type: 'redacted_thinking'; data: string } | undefined => {
@@ -103,11 +127,14 @@ const messageToAssistant = async (msg: OutputMessage): Promise<ChatCompletionsAs
   const toolCallParts = msg.parts.filter((p): p is ToolCallPart => p.kind === 'toolCall');
 
   if (hasReasoning) {
+    // Emit reasoning as message-level fields (reasoning_content/reasoning_opaque)
+    // rather than content-part `type: 'thinking'` blocks. Chat Completions uses
+    // message-level fields as the standard format; content-part `type: 'thinking'`
+    // is a non-standard extension that many proxies reject.
+    const reasoningFields = reasoningPartsToMessageFields(msg.parts);
+    if (reasoningFields !== undefined) Object.assign(core, reasoningFields);
+
     const contentParts = msg.parts.flatMap((part): ChatCompletionsContentPart[] => {
-      if (part.kind === 'reasoning') {
-        const cp = reasoningToContentPart(part);
-        return cp !== undefined ? [cp] : [];
-      }
       if (part.kind === 'text') return [textPartToContentPart(part)];
       if (part.kind === 'textGroup') return part.content.map(textPartToContentPart);
       return [];
