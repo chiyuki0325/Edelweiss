@@ -27,7 +27,7 @@ export interface LlmCallConfig {
   model: string;
   apiFormat?: ProviderFormat;
   timeoutSec?: number;
-  forceToolCall?: boolean;
+  forceToolCall?: boolean | 'api' | 'local';
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
   signal?: AbortSignal;
 }

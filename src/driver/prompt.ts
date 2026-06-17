@@ -32,7 +32,7 @@ export const renderSystemPrompt = async (params: {
   hasReactTool?: boolean;
   availableReactionEmojis?: string[];
   availableSkills?: AvailableSkillPromptInfo[];
-  forceToolCall?: boolean;
+  forceToolCall?: boolean | 'api' | 'local';
 }) => {
   return await renderPromptTemplate(systemPromptTemplate, {
     language: params.language,
@@ -43,7 +43,7 @@ export const renderSystemPrompt = async (params: {
     hasReactTool: params.hasReactTool,
     availableReactionEmojis: params.availableReactionEmojis,
     availableSkills: params.availableSkills,
-    forceToolCall: params.forceToolCall,
+    forceToolCall: params.forceToolCall !== false && params.forceToolCall !== undefined,
     systemFiles: params.systemFiles,
   }, basePath);
 };
@@ -68,9 +68,12 @@ export const renderLateBindingPrompt = async (params: {
   recentSendMessageHumanLikenessXml?: string;
   activeBackgroundTasks?: { id: number; typeName: string; intention?: string; liveSummary: string; startedMs: number; timeoutMs: number }[];
   isInterrupted?: boolean;
-  forceToolCall?: boolean;
+  forceToolCall?: boolean | 'api' | 'local';
 }) => {
-  const { rendered } = await renderMarkdownString(lateBindingTemplate, params, basePath);
+  const { rendered } = await renderMarkdownString(lateBindingTemplate, {
+    ...params,
+    forceToolCall: params.forceToolCall !== false && params.forceToolCall !== undefined,
+  }, basePath);
   return cleanVelinOutput(rendered);
 };
 

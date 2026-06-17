@@ -23,7 +23,7 @@ export interface StreamingMessagesParams {
   system?: string | MessagesSystemBlock[];
   messages: MessagesMessage[];
   tools?: AnthropicTool[];
-  forceToolCall?: boolean;
+  forceToolCall?: boolean | 'api' | 'local';
   maxTokens?: number;
   timeoutSec?: number;
   /** Anthropic output_config effort level. When set, sent as `output_config: { effort }`. */
@@ -86,7 +86,7 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
       ...(params.system ? { system: params.system } : {}),
       messages: params.messages,
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
-      ...(params.forceToolCall ? { tool_choice: { type: 'any' } } : {}),
+      ...(params.forceToolCall === true || params.forceToolCall === 'api' ? { tool_choice: { type: 'any' } } : {}),
       ...(params.reasoningEffort ? { output_config: { effort: params.reasoningEffort } } : {}),
       stream: true,
     });
