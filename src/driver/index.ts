@@ -779,6 +779,8 @@ export const createDriver = (config: DriverConfig, deps: {
     if (!scope) return;
     if (userId) {
       const chatConfig = config.resolveChatConfig(chatId);
+      const blockedUserIds = chatConfig.blockedUserIds;
+      if (blockedUserIds.includes(userId)) return;
       const exemptUsers = chatConfig.debounce?.typingExemptUsers ?? [];
       if (exemptUsers.includes(userId)) return;
     }

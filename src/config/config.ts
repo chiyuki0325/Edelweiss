@@ -75,6 +75,7 @@ const ChatConfigSchema = v.object({
     maxDelayMs: v.optional(v.number(), 30000),
     typingExemptUsers: v.optional(v.array(v.string()), []),
   }), {}),
+  blockedUserIds: v.optional(v.array(v.string()), []),
   humanLikeness: v.optional(v.object({
     trailingPeriod: v.optional(v.boolean(), true),
     denseClausePunctuation: v.optional(v.boolean(), true),
@@ -146,6 +147,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     maxDelayMs: v.number(),
     typingExemptUsers: v.array(v.string()),
   })),
+  blockedUserIds: v.array(v.string()),
   humanLikeness: v.partial(v.object({
     trailingPeriod: v.boolean(),
     denseClausePunctuation: v.boolean(),
@@ -243,6 +245,7 @@ export interface ResolvedChatConfig {
     maxDelayMs: number;
     typingExemptUsers: string[];
   };
+  blockedUserIds: string[];
   humanLikeness: {
     trailingPeriod: boolean;
     denseClausePunctuation: boolean;
@@ -343,6 +346,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     },
     skills: merged.skills,
     debounce: merged.debounce,
+    blockedUserIds: merged.blockedUserIds,
     humanLikeness: merged.humanLikeness,
     tools: {
       bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec, compactOutput: merged.tools.bash.compactOutput },

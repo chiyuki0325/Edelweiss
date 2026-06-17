@@ -80,6 +80,7 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     maxFrames: 0,
   },
   debounce,
+  blockedUserIds: [],
   humanLikeness: {
     trailingPeriod: false,
     denseClausePunctuation: false,

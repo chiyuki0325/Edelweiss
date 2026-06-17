@@ -73,6 +73,10 @@ const main = async () => {
   if (customEmojiToTextChatIds.size > 0 && !defaultChatConfig.customEmojiToText.model)
     throw new Error('customEmojiToText.model is required when customEmojiToText.enabled=true (in chats.default or per-chat override)');
 
+  const blockedUserIdsByChat = new Map(
+    chatIds.map(id => [id, new Set(resolveChatConfig(config, id).blockedUserIds)] as const),
+  );
+
   const db = createDatabase(config.database.path, logger);
   runMigrations(db, logger);
   await migrateV1ToV2(db, logger);
@@ -233,14 +237,21 @@ const main = async () => {
     if (compaction)
       pipeline.setCompactCursor(chatId, compaction.newCursorMs);
     const eventsWithId = loadEventsWithId(db, chatId, compaction?.newCursorMs);
-    const events = eventsWithId.map(({ event }) => event);
+    const blockedSenderIds = blockedUserIdsByChat.get(chatId);
+    const filteredEventsWithId = blockedSenderIds?.size
+      ? eventsWithId.filter(({ event }) => {
+          if (!('sender' in event) || !event.sender?.id) return true;
+          return !blockedSenderIds.has(event.sender.id);
+        })
+      : eventsWithId;
+    const events = filteredEventsWithId.map(({ event }) => event);
 
     // Legacy events stored raw set_name in stickerSetName. Normalize them once and
     // persist the resolved title so cold-start replay and live ingress share one format.
     // Requires Telegram (resolvePackTitle uses Bot API).
     if (hasTelegram) {
       const packTitleTasks: Promise<void>[] = [];
-      for (const { id: eventId, event } of eventsWithId) {
+      for (const { id: eventId, event } of filteredEventsWithId) {
         if ((event.type !== 'message' && event.type !== 'edit') || event.attachments.length === 0) continue;
         packTitleTasks.push((async () => {
           if (await normalizeStickerSetMetadata(event.attachments, telegram!.resolvePackTitle))
@@ -639,6 +650,11 @@ const main = async () => {
       if (!existing) upsertMessageReactionSnapshot(db, chatId, messageId, [], updatedAtMs);
     };
 
+    const isBlocked = (chatId: string, senderId: string | undefined): boolean => {
+      if (!senderId) return false;
+      return blockedUserIdsByChat.get(chatId)?.has(senderId) ?? false;
+    };
+
     tg.onMessage(msg => {
       // Bot's own messages picked up by userbot are already injected into the
       // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
@@ -681,6 +697,11 @@ const main = async () => {
         length: msg.text.length,
       }).log('Message received');
 
+      if (isBlocked(msg.chatId, msg.sender?.id)) {
+        logger.withFields({ chatId: msg.chatId, senderId: msg.sender?.id }).debug('Dropped message from blocked user');
+        return;
+      }
+
       const event = adaptMessage(msg);
       persistEvent(db, event);
 
@@ -703,6 +724,11 @@ const main = async () => {
         text: edit.text.length > 100 ? `${edit.text.slice(0, 100)}...` : edit.text,
         length: edit.text.length,
       }).log('Message edited');
+
+      if (isBlocked(edit.chatId, edit.sender?.id)) {
+        logger.withFields({ chatId: edit.chatId, senderId: edit.sender?.id }).debug('Dropped edit from blocked user');
+        return;
+      }
 
       const event = adaptEdit(edit);
 
@@ -773,6 +799,7 @@ const main = async () => {
 
         for (const emoji of newReactions) {
           if (oldReactions.has(emoji)) continue;
+          if (isBlocked(reaction.chatId, reaction.sender.id)) continue;
           persistReactionEvent(reaction, emoji, 1, reaction.sender);
         }
         return;
@@ -796,6 +823,7 @@ const main = async () => {
       const oldKeys = new Set(previous.map(reactionEntryKey));
       for (const entry of reaction.snapshot) {
         if (oldKeys.has(reactionEntryKey(entry))) continue;
+        if (isBlocked(reaction.chatId, entry.sender.id)) continue;
         persistReactionEvent(reaction, entry.emoji, 1, entry.sender);
       }
     });
@@ -917,7 +945,12 @@ const main = async () => {
   if (hasTelegram && customEmojiToTextChatIds.size > 0) {
     for (const chatId of customEmojiToTextChatIds) {
       const compaction = loadCompaction(db, chatId);
-      const events = loadEvents(db, chatId, compaction?.newCursorMs);
+      const blockedSenderIds = blockedUserIdsByChat.get(chatId);
+      const events = loadEvents(db, chatId, compaction?.newCursorMs)
+        .filter(e => {
+          if (!('sender' in e) || !e.sender?.id) return true;
+          return !blockedSenderIds?.has(e.sender.id);
+        });
       const emojiIds = new Map<string, string>();
       for (const event of events) {
         if (event.type !== 'message' && event.type !== 'edit') continue;
