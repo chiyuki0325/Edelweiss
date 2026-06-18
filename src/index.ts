@@ -16,7 +16,7 @@ import { resolveOneBotImageAltText } from './onebot/image-to-text';
 import { createPipeline } from './pipeline';
 import type { PipelineEvent } from './pipeline';
 import type { RenderParams } from './rendering';
-import { isConfiguredChat, selectStartupReplayChatIds } from './startup';
+import { isConfiguredChat, selectStartupReplayChatIds, selectTelegramIngressChatIds } from './startup';
 import { createTelegramManager } from './telegram';
 import { createAnimationToTextResolver } from './telegram/animation-to-text';
 import { createCustomEmojiToTextResolver, emojiCacheKey } from './telegram/custom-emoji-to-text';
@@ -173,6 +173,8 @@ const main = async () => {
   const hasUserbot = hasTelegram && config.telegram!.apiId != null && config.telegram!.apiHash != null;
 
   const knownChatIds = loadKnownChatIds(db);
+  const telegramChatIds = chatIds.filter(id => resolveChatConfig(config, id).platform === 'telegram');
+  const telegramIngressChatIds = selectTelegramIngressChatIds(knownChatIds, telegramChatIds);
 
   let telegram: ReturnType<typeof createTelegramManager> | undefined;
 
@@ -184,7 +186,7 @@ const main = async () => {
         apiHash: config.telegram!.apiHash,
         session: loadSession(config.telegram!.session ?? ''),
       } : {}),
-      initialChatIds: knownChatIds,
+      initialChatIds: telegramIngressChatIds,
       resolveChatId: messageIds => lookupChatId(db, messageIds),
       imageToText: imageToTextChatIds.size > 0 ? imageToTextResolver : undefined,
       imageToTextChatIds,
@@ -244,7 +246,11 @@ const main = async () => {
   // If a compaction cursor exists, only load events from that point onward —
   // older events are summarised and no longer needed for IC or rendering.
   const replayChatIds = selectStartupReplayChatIds(knownChatIds, chatIds);
-  logger.withFields({ knownSessions: knownChatIds.length, replaySessions: replayChatIds.length }).log('Startup chat selection');
+  logger.withFields({
+    knownSessions: knownChatIds.length,
+    telegramIngressSessions: telegramIngressChatIds.length,
+    replaySessions: replayChatIds.length,
+  }).log('Startup chat selection');
 
   for (const chatId of replayChatIds) {
     const compaction = loadCompaction(db, chatId);

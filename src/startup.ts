@@ -8,3 +8,13 @@ export const selectStartupReplayChatIds = (
   const configured = new Set(configuredChatIds);
   return knownChatIds.filter(chatId => configured.has(chatId));
 };
+
+export const selectTelegramIngressChatIds = (
+  knownChatIds: readonly string[],
+  configuredTelegramChatIds: Iterable<string>,
+): string[] => {
+  const accepted = new Set(knownChatIds);
+  for (const chatId of configuredTelegramChatIds)
+    accepted.add(chatId);
+  return [...accepted];
+};
