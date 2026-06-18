@@ -21,6 +21,14 @@ export interface ICMessage {
   isSelfSent?: boolean;
 }
 
+export interface ICBlockedMessage {
+  type: 'blocked_message';
+  messageId: string;
+  receivedAtMs: number;
+  timestampSec: number;
+  utcOffsetMin: number;
+}
+
 export interface ICUserRenamedEvent {
   type: 'system_event';
   kind: 'user_renamed';
@@ -127,7 +135,7 @@ export interface ICRuntimeEvent {
   hasFullOutput: boolean;
 }
 
-export type ICNode = ICMessage | ICSystemEvent | ICRuntimeEvent;
+export type ICNode = ICMessage | ICBlockedMessage | ICSystemEvent | ICRuntimeEvent;
 
 export interface ICUserState {
   user: CanonicalUser;

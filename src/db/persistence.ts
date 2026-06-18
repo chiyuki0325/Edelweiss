@@ -6,6 +6,7 @@ import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSna
 import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalAttachment,
+  CanonicalBlockedMessageEvent,
   CanonicalDeleteEvent,
   CanonicalEditEvent,
   CanonicalMessageEvent,
@@ -151,6 +152,11 @@ export const persistEvent = (db: DB, event: PipelineEvent) => {
       hasFullOutput: event.hasFullOutput,
     };
     db.insert(events).values({ ...base, runtimeData }).run();
+  } else if (event.type === 'blocked_message') {
+    db.insert(events).values({
+      ...base,
+      messageId: event.messageId,
+    }).run();
   } else if (event.type === 'delete') {
     db.insert(events).values({
       ...base,
@@ -195,7 +201,7 @@ type EventRow = typeof events.$inferSelect;
 
 // Load the most recent message/edit event for a given message to detect phantom edits.
 export const loadLatestMessageContent = (db: DB, chatId: string, messageId: string) =>
-  db.select({ text: events.text, content: events.content, attachments: events.attachments })
+  db.select({ type: events.type, text: events.text, content: events.content, attachments: events.attachments })
     .from(events)
     .where(and(
       eq(events.chatId, chatId),
@@ -232,6 +238,15 @@ const reconstructMessageEvent = (row: EventRow): CanonicalMessageEvent => {
   if (row.isSelfSent) event.isSelfSent = true;
   return event;
 };
+
+const reconstructBlockedMessageEvent = (row: EventRow): CanonicalBlockedMessageEvent => ({
+  type: 'blocked_message',
+  chatId: row.chatId,
+  messageId: row.messageId!,
+  receivedAtMs: row.receivedAtMs,
+  timestampSec: row.timestampSec,
+  utcOffsetMin: row.utcOffsetMin,
+});
 
 const reconstructEditEvent = (row: EventRow): CanonicalEditEvent => {
   const event: CanonicalEditEvent = {
@@ -306,6 +321,7 @@ const reconstructRuntimeEvent = (row: EventRow): RuntimeEvent => {
 const reconstructEvent = (row: EventRow): PipelineEvent => {
   switch (row.type) {
   case 'message': return reconstructMessageEvent(row);
+  case 'blocked_message': return reconstructBlockedMessageEvent(row);
   case 'edit': return reconstructEditEvent(row);
   case 'delete': return reconstructDeleteEvent(row);
   case 'reaction': return reconstructReactionEvent(row);

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { reduce } from './reduce';
-import type { ICMessage, ICUserRenamedEvent } from './types';
+import type { ICBlockedMessage, ICMessage, ICUserRenamedEvent } from './types';
 import { createEmptyIC } from './types';
 import type {
   CanonicalDeleteEvent,
   CanonicalEditEvent,
+  CanonicalBlockedMessageEvent,
   CanonicalMessageEvent,
   CanonicalReactionEvent,
   CanonicalServiceEvent,
@@ -27,6 +28,16 @@ const msg = (overrides: Partial<CanonicalMessageEvent> = {}): CanonicalMessageEv
   utcOffsetMin: 480,
   content,
   attachments: [],
+  ...overrides,
+});
+
+const blockedMsg = (overrides: Partial<CanonicalBlockedMessageEvent> = {}): CanonicalBlockedMessageEvent => ({
+  type: 'blocked_message',
+  chatId: 'chat1',
+  messageId: '1',
+  receivedAtMs: 1000,
+  timestampSec: 1,
+  utcOffsetMin: 480,
   ...overrides,
 });
 
@@ -158,6 +169,45 @@ describe('reduce', () => {
       expect(ic.nodes).toHaveLength(1);
       expect((ic.nodes[0] as ICMessage).sender).toBeUndefined();
       expect(ic.users.size).toBe(0);
+    });
+  });
+
+  describe('blocked message events', () => {
+    it('appends a redacted message placeholder without user state', () => {
+      const ic = reduce(createEmptyIC('chat1'), blockedMsg());
+
+      expect(ic.nodes).toHaveLength(1);
+      const node = ic.nodes[0] as ICBlockedMessage;
+      expect(node.type).toBe('blocked_message');
+      expect(node.messageId).toBe('1');
+      expect(node.receivedAtMs).toBe(1000);
+      expect(ic.users.size).toBe(0);
+    });
+
+    it('deduplicates blocked and regular messages by messageId', () => {
+      let ic = reduce(createEmptyIC('chat1'), blockedMsg());
+      ic = reduce(ic, msg());
+
+      expect(ic.nodes).toHaveLength(1);
+      expect(ic.nodes[0]!.type).toBe('blocked_message');
+      expect(ic.users.size).toBe(0);
+    });
+
+    it('does not snapshot sender, preview, quote, or content when replying to a blocked message', () => {
+      let ic = reduce(createEmptyIC('chat1'), blockedMsg({ messageId: 'blocked' }));
+      ic = reduce(ic, msg({
+        messageId: '2',
+        sender: bob,
+        replyToMessageId: 'blocked',
+        replyQuoteText: 'quoted hidden text',
+      }));
+
+      const reply = ic.nodes[1] as ICMessage;
+      expect(reply.replyToMessageId).toBe('blocked');
+      expect(reply.replyToSender).toBeUndefined();
+      expect(reply.replyToPreview).toBeUndefined();
+      expect(reply.replyQuoteText).toBeUndefined();
+      expect(reply.replyToContent).toBeUndefined();
     });
   });
 

@@ -64,6 +64,15 @@ export interface CanonicalMessageEvent {
   isSelfSent?: boolean;
 }
 
+export interface CanonicalBlockedMessageEvent {
+  type: 'blocked_message';
+  chatId: string;
+  messageId: string;
+  receivedAtMs: number;
+  timestampSec: number;
+  utcOffsetMin: number;
+}
+
 export interface CanonicalEditEvent {
   type: 'edit';
   chatId: string;
@@ -126,6 +135,7 @@ export interface CanonicalServiceEvent {
 
 export type CanonicalIMEvent =
   | CanonicalMessageEvent
+  | CanonicalBlockedMessageEvent
   | CanonicalEditEvent
   | CanonicalDeleteEvent
   | CanonicalReactionEvent

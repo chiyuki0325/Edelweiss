@@ -3,6 +3,7 @@ import { enableMapSet, produce } from 'immer';
 import type { ICMessage, ICRuntimeEvent, ICSystemEvent, ICUserState, IntermediateContext } from './types';
 import { contentToPlainText } from '../adaptation';
 import type {
+  CanonicalBlockedMessageEvent,
   CanonicalDeleteEvent,
   CanonicalEditEvent,
   CanonicalIMEvent,
@@ -28,6 +29,14 @@ const findMessageIndex = (nodes: readonly { type: string; messageId?: string }[]
   return -1;
 };
 
+const findAnyMessageIndex = (nodes: readonly { type: string; messageId?: string }[], messageId: string): number => {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i]!;
+    if ((node.type === 'message' || node.type === 'blocked_message') && node.messageId === messageId) return i;
+  }
+  return -1;
+};
+
 const REPLY_PREVIEW_MAX = 100;
 
 const truncate = (text: string, max: number): string => {
@@ -43,9 +52,9 @@ const truncate = (text: string, max: number): string => {
 const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent) => {
   // Dedup: skip if a message with the same ID already exists (bypass + userbot race).
   // Merge isSelfSent from the late-arriving synthetic event into the existing node.
-  const existingIdx = findMessageIndex(draft.nodes, event.messageId);
+  const existingIdx = findAnyMessageIndex(draft.nodes, event.messageId);
   if (existingIdx !== -1) {
-    if (event.isSelfSent)
+    if (event.isSelfSent && draft.nodes[existingIdx]!.type === 'message')
       (draft.nodes[existingIdx] as ICMessage).isSelfSent = true;
     return;
   }
@@ -115,6 +124,19 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
       draft.users.set(event.sender.id, state);
     }
   }
+};
+
+const reduceBlockedMessage = (draft: IntermediateContext, event: CanonicalBlockedMessageEvent) => {
+  const existingIdx = findAnyMessageIndex(draft.nodes, event.messageId);
+  if (existingIdx !== -1) return;
+
+  draft.nodes.push({
+    type: 'blocked_message',
+    messageId: event.messageId,
+    receivedAtMs: event.receivedAtMs,
+    timestampSec: event.timestampSec,
+    utcOffsetMin: event.utcOffsetMin,
+  });
 };
 
 const reduceEdit = (draft: IntermediateContext, event: CanonicalEditEvent) => {
@@ -214,6 +236,7 @@ export const reduce = (ic: IntermediateContext, event: PipelineEvent): Intermedi
   produce(ic, draft => {
     switch (event.type) {
     case 'message': reduceMessage(draft, event); break;
+    case 'blocked_message': reduceBlockedMessage(draft, event); break;
     case 'edit': reduceEdit(draft, event); break;
     case 'delete': reduceDelete(draft, event); break;
     case 'reaction': reduceReaction(draft, event); break;

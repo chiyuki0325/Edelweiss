@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { rcToXml, render } from './index';
 import type { CanonicalUser, ContentNode } from '../adaptation/types';
-import type { ICMessage, ICSystemEvent, IntermediateContext } from '../projection/types';
+import type { ICBlockedMessage, ICMessage, ICSystemEvent, IntermediateContext } from '../projection/types';
 
 // --- helpers ---
 
@@ -24,6 +24,15 @@ const message = (overrides?: Partial<ICMessage>): ICMessage => ({
   utcOffsetMin: 480,
   content: [{ type: 'text', text: 'hello' }],
   attachments: [],
+  ...overrides,
+});
+
+const blockedMessage = (overrides?: Partial<ICBlockedMessage>): ICBlockedMessage => ({
+  type: 'blocked_message',
+  messageId: '43',
+  receivedAtMs: 1001,
+  timestampSec: 1741761000,
+  utcOffsetMin: 480,
   ...overrides,
 });
 
@@ -192,6 +201,13 @@ describe('render', () => {
       expect(result).toContain('/>');
       expect(result).not.toContain('</message>');
       expect(result).not.toContain('hello');
+    });
+
+    it('renders blocked message placeholders as deleted without sender or body', () => {
+      const result = xml(render(ic([blockedMessage()])));
+      expect(result).toBe('<message id="43" t="2025-03-12T14:30:00+08:00" deleted="true"/>');
+      expect(result).not.toContain('sender=');
+      expect(result).not.toContain('</message>');
     });
   });
 

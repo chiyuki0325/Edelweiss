@@ -2,7 +2,7 @@ import sharp from 'sharp';
 
 import type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';
 import type { CanonicalAttachment, CanonicalUser, ContentNode } from '../adaptation/types';
-import type { ICMessage, ICRuntimeEvent, ICSystemEvent, IntermediateContext } from '../projection/types';
+import type { ICBlockedMessage, ICMessage, ICRuntimeEvent, ICSystemEvent, IntermediateContext } from '../projection/types';
 
 export type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';
 
@@ -178,6 +178,15 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
   return { content: pieces, isMyself, isSelfSent, mentionsMe, repliesToMe };
 };
 
+const renderBlockedMessage = (msg: ICBlockedMessage): RenderedContentPiece[] => {
+  const attrs = [
+    `id="${escapeXml(msg.messageId)}"`,
+    `t="${formatTimestamp(msg.timestampSec, msg.utcOffsetMin)}"`,
+    'deleted="true"',
+  ];
+  return [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }];
+};
+
 const renderSystemEvent = (event: ICSystemEvent, contactNames?: Map<string, string>): string => {
   const t = formatTimestamp(event.timestampSec, event.utcOffsetMin);
   const actorAttr = 'actor' in event && event.actor ? ` actor="${escapeXml(formatSender(event.actor, contactNames))}"` : '';
@@ -257,6 +266,8 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
     if (node.type === 'message') {
       const { content, isMyself, isSelfSent, mentionsMe, repliesToMe } = renderMessage(node, params);
       segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }) });
+    } else if (node.type === 'blocked_message') {
+      segments.push({ receivedAtMs: node.receivedAtMs, content: renderBlockedMessage(node) });
     } else if (node.type === 'runtime_event') {
       const content = [{ type: 'text' as const, text: renderRuntimeEvent(node) }];
       segments.push({ receivedAtMs: node.receivedAtMs, content, isRuntimeEvent: true });

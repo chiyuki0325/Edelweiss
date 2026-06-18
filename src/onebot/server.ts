@@ -225,34 +225,36 @@ export const createOneBotServer = (
       const isEvent = (msg: unknown): msg is OneBotEvent =>
         typeof msg === 'object' && msg !== null && 'post_type' in msg;
 
-      ws.on('message', async (data: Buffer) => {
-        try {
-          const msg = JSON.parse(data.toString());
+      ws.on('message', (data: Buffer) => {
+        void (async () => {
+          try {
+            const msg = JSON.parse(data.toString());
 
-          // API responses are handled by createApiClient
-          if ('echo' in msg && msg.echo) return;
+            // API responses are handled by createApiClient
+            if ('echo' in msg && msg.echo) return;
 
-          if (!isEvent(msg)) return;
+            if (!isEvent(msg)) return;
 
-          switch (msg.post_type) {
-          case 'message': {
-            const event = await adaptOneBotMessage(api!!, msg);  // 必须连上了才会有消息被上报，所以这里直接断言 api 不为 null
-            deps.onEvent(event.chatId, event);
-            break;
+            switch (msg.post_type) {
+            case 'message': {
+              const event = await adaptOneBotMessage(api!!, msg);  // 必须连上了才会有消息被上报，所以这里直接断言 api 不为 null
+              deps.onEvent(event.chatId, event);
+              break;
+            }
+            case 'notice': {
+              const event = adaptOneBotNotice(msg);
+              if (event) deps.onEvent(event.chatId, event);
+              break;
+            }
+            case 'meta_event':
+              if (msg.meta_event_type === 'lifecycle' && msg.sub_type === 'connect')
+                selfId = String(msg.self_id);
+              break;
+            }
+          } catch (err) {
+            log.withError(err).warn('Failed to parse OneBot message');
           }
-          case 'notice': {
-            const event = adaptOneBotNotice(msg);
-            if (event) deps.onEvent(event.chatId, event);
-            break;
-          }
-          case 'meta_event':
-            if (msg.meta_event_type === 'lifecycle' && msg.sub_type === 'connect')
-              selfId = String(msg.self_id);
-            break;
-          }
-        } catch (err) {
-          log.withError(err).warn('Failed to parse OneBot message');
-        }
+        })();
       });
 
       ws.on('close', code => {

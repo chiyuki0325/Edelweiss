@@ -57,7 +57,7 @@ export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
 
   chatId: text('chat_id').notNull(),
-  type: text('type').notNull().$type<'message' | 'edit' | 'delete' | 'service' | 'runtime' | 'reaction'>(),
+  type: text('type').notNull().$type<'message' | 'blocked_message' | 'edit' | 'delete' | 'service' | 'runtime' | 'reaction'>(),
   receivedAtMs: integer('received_at').notNull(),
   timestampSec: integer('timestamp').notNull(),
   utcOffsetMin: integer('utc_offset_min').notNull().default(480),

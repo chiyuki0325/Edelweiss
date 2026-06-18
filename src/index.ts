@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 
 import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaptation';
-import type { ContentNode } from './adaptation/types';
+import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from './adaptation/types';
 import { createBackgroundTaskManager } from './background-task';
 import { shellTaskFactory } from './background-task/shell';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from './config/config';
@@ -76,6 +76,20 @@ const main = async () => {
   const blockedUserIdsByChat = new Map(
     chatIds.map(id => [id, new Set(resolveChatConfig(config, id).blockedUserIds)] as const),
   );
+  const isBlocked = (chatId: string, senderId: string | undefined): boolean => {
+    if (!senderId) return false;
+    return blockedUserIdsByChat.get(chatId)?.has(senderId) ?? false;
+  };
+  const toBlockedMessageEvent = (event: CanonicalMessageEvent): CanonicalBlockedMessageEvent => ({
+    type: 'blocked_message',
+    chatId: event.chatId,
+    messageId: event.messageId,
+    receivedAtMs: event.receivedAtMs,
+    timestampSec: event.timestampSec,
+    utcOffsetMin: event.utcOffsetMin,
+  });
+  const redactBlockedMessage = (event: CanonicalMessageEvent): CanonicalMessageEvent | CanonicalBlockedMessageEvent =>
+    isBlocked(event.chatId, event.sender?.id) ? toBlockedMessageEvent(event) : event;
 
   const db = createDatabase(config.database.path, logger);
   runMigrations(db, logger);
@@ -397,6 +411,15 @@ const main = async () => {
             // Only accept events for configured OneBot chats
             if (!onebotChatIds.includes(chatId)) return;
 
+            if (event.type === 'message' && isBlocked(chatId, event.sender?.id)) {
+              const blockedEvent = toBlockedMessageEvent(event);
+              logger.withFields({ chatId, messageId: event.messageId }).debug('Redacted OneBot message from blocked user');
+              persistEvent(db, blockedEvent);
+              const rc = pipeline.pushEvent(chatId, blockedEvent);
+              driverRef.handleEvent?.(chatId, rc);
+              return;
+            }
+
             // Command interception: /offline and /online
             if (event.type === 'message') {
               const text = contentToPlainText(event.content).trim();
@@ -470,13 +493,14 @@ const main = async () => {
 
       if (pulledMessages.length === 0) continue;
 
-      const events = await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(oneBotServer!.api!, msg)));
+      const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(oneBotServer!.api!, msg))))
+        .map(redactBlockedMessage);
 
       if (imageToTextChatIds.has(chatId)) {
         const api = oneBotServer?.api;
         if (api) {
           for (const event of events) {
-            if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
+            if (event.type === 'message' && event.attachments.length > 0) {
               const caption = contentToPlainText(event.content);
               const compression = getImageToTextCompression(chatId);
               await Promise.all(event.attachments.map(att =>
@@ -650,11 +674,6 @@ const main = async () => {
       if (!existing) upsertMessageReactionSnapshot(db, chatId, messageId, [], updatedAtMs);
     };
 
-    const isBlocked = (chatId: string, senderId: string | undefined): boolean => {
-      if (!senderId) return false;
-      return blockedUserIdsByChat.get(chatId)?.has(senderId) ?? false;
-    };
-
     tg.onMessage(msg => {
       // Bot's own messages picked up by userbot are already injected into the
       // pipeline via injectSyntheticEvent (with isSelfSent=true). Skip them here
@@ -697,12 +716,18 @@ const main = async () => {
         length: msg.text.length,
       }).log('Message received');
 
-      if (isBlocked(msg.chatId, msg.sender?.id)) {
-        logger.withFields({ chatId: msg.chatId, senderId: msg.sender?.id }).debug('Dropped message from blocked user');
+      const event = adaptMessage(msg);
+      if (isBlocked(event.chatId, event.sender?.id)) {
+        const blockedEvent = toBlockedMessageEvent(event);
+        logger.withFields({ chatId: event.chatId, messageId: event.messageId }).debug('Redacted message from blocked user');
+        persistEvent(db, blockedEvent);
+        if (isConfiguredChat(configuredChatIds, blockedEvent.chatId)) {
+          const rc = pipeline.pushEvent(blockedEvent.chatId, blockedEvent);
+          driver.handleEvent(blockedEvent.chatId, rc);
+        }
         return;
       }
 
-      const event = adaptMessage(msg);
       persistEvent(db, event);
 
       try { persistMessage(db, msg); } catch (err) { logger.withError(err).error('Failed to persist message'); }
@@ -736,6 +761,10 @@ const main = async () => {
       // for metadata-only changes (link preview resolved, reactions, client re-saves).
       // Skip if text, content, and attachments are identical to the stored event.
       const prev = loadLatestMessageContent(db, event.chatId, event.messageId);
+      if (prev?.type === 'blocked_message') {
+        logger.withFields({ chatId: event.chatId, messageId: event.messageId }).debug('Dropped edit for blocked message');
+        return;
+      }
       if (prev) {
         const newText = contentToPlainText(event.content) || null;
         const newContent = event.content.length > 0 ? event.content : null;
