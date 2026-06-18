@@ -248,6 +248,7 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm test` / `pnpm test:run` — Vitest.
 - `pnpm eval <suite.ts>` — run an offline LLM eval suite. Loads models from `config.yaml`, calls real model endpoints, writes `runs.jsonl`, `summary.json`, and `summary.md` under `eval-results/<suite>/<timestamp>/` unless the suite overrides `outputDir`.
 - `pnpm eval:fixture --chat <chatId> --from-message <id> --to-message <id> --out <file>` — export a real chat slice from persisted canonical `events` into a TypeScript eval fixture. Also supports `--messages <id,id,...>`, `--from-ms/--to-ms`, `--include-replies`, `--context-before`, `--context-after`, `--include-trs`, and `--preview-xml <file>`.
+- `pnpm debug:rc --chat <chatId>` — render a persisted chat's full RC as formatted XML on stdout. Opens the DB read-only by default; add `--migrate` to opt in to migrations, or `--respect-compaction` to mirror the startup compacted viewport.
 - `pnpm login` — interactive MTProto session login.
 - `pnpm db:generate` — generate Drizzle migration from schema changes.
 

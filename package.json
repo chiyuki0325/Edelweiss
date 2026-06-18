@@ -18,6 +18,7 @@
     "test:run": "vitest run",
     "eval": "tsx scripts/run-eval.ts",
     "eval:fixture": "tsx scripts/export-eval-fixture.ts",
+    "debug:rc": "tsx scripts/debug-rc.ts",
     "login": "tsx src/telegram/login.ts",
     "import-contacts": "tsx scripts/import-contacts.ts",
     "db:generate": "drizzle-kit generate",
