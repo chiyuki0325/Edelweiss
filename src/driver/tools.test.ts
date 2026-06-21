@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createSendMessageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
+import type { SendMessageTurnFlags } from './tools';
 import type { RuntimeConfig } from '../config/config';
 import type { ConversationEntry } from '../unified-api/types';
 
@@ -323,5 +324,63 @@ describe('executeToolCall', () => {
     const payload = JSON.parse(result.payload as string);
     expect(payload.error).toContain('boom');
     expect(result.requiresFollowUp).toBe(true);
+  });
+});
+
+describe('createSendMessageTool', () => {
+  const makeText = (len: number) => 'x'.repeat(len);
+
+  it('returns error and sets wasLengthLimited when message exceeds 256 bytes', async () => {
+    const send = vi.fn();
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false };
+    const tool = createSendMessageTool(send, flags);
+
+    const longText = makeText(257);
+    const result = await tool.execute({ text: longText }, { toolCallId: 'tc1' });
+
+    expect(flags.wasLengthLimited).toBe(true);
+    expect(result.requiresFollowUp).toBe(true);
+    const payload = JSON.parse(result.content as string);
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toContain('too long');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('auto-overrides requiresFollowUp to true after wasLengthLimited was set', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '42' });
+    const flags: SendMessageTurnFlags = { wasLengthLimited: true };
+    const tool = createSendMessageTool(send, flags);
+
+    // Model omits await_response — should auto-override to true
+    const result = await tool.execute({ text: makeText(10) }, { toolCallId: 'tc2' });
+
+    expect(result.requiresFollowUp).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('respects explicit await_response: false even after wasLengthLimited', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '43' });
+    const flags: SendMessageTurnFlags = { wasLengthLimited: true };
+    const tool = createSendMessageTool(send, flags);
+
+    // Model explicitly signals "done" — should be respected
+    const result = await tool.execute(
+      { text: makeText(10), await_response: false },
+      { toolCallId: 'tc3' },
+    );
+
+    expect(result.requiresFollowUp).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('requiresFollowUp defaults to false when wasLengthLimited is false and await_response is omitted', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '44' });
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false };
+    const tool = createSendMessageTool(send, flags);
+
+    const result = await tool.execute({ text: makeText(10) }, { toolCallId: 'tc4' });
+
+    expect(result.requiresFollowUp).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

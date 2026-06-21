@@ -13,7 +13,7 @@ import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
-import type { CahciuaTool, SendMessageAttachment } from './tools';
+import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -227,6 +227,7 @@ export const createDriver = (config: DriverConfig, deps: {
       const platform = deps.getPlatformAdapter?.(chatId);
       const tools: CahciuaTool[] = [];
       if (includeSendMessage) {
+        const sendMessageTurnFlags: SendMessageTurnFlags = { wasLengthLimited: false };
         tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
           log.withFields({
             chatId,
@@ -240,7 +241,7 @@ export const createDriver = (config: DriverConfig, deps: {
           }
           const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
           return { messageId: String(sent.messageId) };
-        }));
+        }, sendMessageTurnFlags));
         tools.push(createDismissMessageTool());
         if (chatConfig.platform === 'telegram' && deps.sendReaction && reactionEmojis.length > 0) {
           tools.push(createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
