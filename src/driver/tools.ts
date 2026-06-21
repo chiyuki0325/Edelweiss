@@ -79,8 +79,13 @@ export interface SendMessageAttachment {
   file_name?: string;
 }
 
+export interface SendMessageTurnFlags {
+  wasLengthLimited: boolean;
+}
+
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string, attachments?: SendMessageAttachment[]) => Promise<{ messageId: string }>,
+  turnFlags?: SendMessageTurnFlags,
 ): CahciuaTool => {
   let queshiFlaggedThisTurn = false;
 
@@ -130,6 +135,7 @@ export const createSendMessageTool = (
       if (!text.includes('```') && !hasBlockquote) {
         const byteLength = Buffer.byteLength(text, 'utf8');
         if (byteLength > 256) {
+          if (turnFlags) turnFlags.wasLengthLimited = true;
           return {
             content: JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' }),
             requiresFollowUp: true,
@@ -147,7 +153,7 @@ export const createSendMessageTool = (
       const result = await send(formattedText, reply_to, attachments);
       return {
         content: JSON.stringify({ ok: true, message_id: result.messageId }),
-        requiresFollowUp: await_response ?? false,
+        requiresFollowUp: await_response ?? (turnFlags?.wasLengthLimited ?? false),
       };
     },
   });

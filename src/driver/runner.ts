@@ -12,6 +12,126 @@ import type {
 
 ensureDumpDir();
 
+const isLengthLimitFailure = (tr: ToolResult): boolean => {
+  if (typeof tr.payload !== 'string') return false;
+  try {
+    const parsed = JSON.parse(tr.payload);
+    return parsed.ok === false && typeof parsed.error === 'string' && parsed.error.includes('too long');
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Prune failed send_message tool calls caused by the 256-byte length limit,
+ * plus the thinking content between the failure and the next successful send_message.
+ *
+ * This is a few-shot cleanup: the pruned entries are what gets persisted (future context
+ * won't see the "try long → fail → split" pattern). The live working context within the
+ * current turn is NOT pruned — the model needs to see its error to correct.
+ */
+export const pruneLengthLimitFailures = (
+  entries: ConversationEntry[],
+  pendingPrune: boolean,
+): { pruned: ConversationEntry[]; pendingPrune: boolean } => {
+  // Shallow-clone entries so we can mutate parts arrays safely.
+  // ToolResults with string payloads and OutputMessages with OutputPart[] are safe
+  // to shallow-clone — no Sharp objects in send_message results.
+  const result = entries.map(e => {
+    if (e.kind === 'message') {
+      if (e.role === 'assistant') {
+        return { ...e, parts: [...e.parts], reasoning: e.reasoning };
+      }
+      return { ...e, parts: [...e.parts] };
+    }
+    return { ...e };
+  });
+
+  let nextPendingPrune = pendingPrune;
+
+  // Step 1: If a previous step had a length-limit failure, remove all thinking
+  // (TextPart / ReasoningPart) that appears before the first send_message ToolCallPart
+  // in this step. This is the "from failure to next successful send_message" gap.
+  if (nextPendingPrune) {
+    for (const entry of result) {
+      if (entry.kind !== 'message' || entry.role !== 'assistant') continue;
+      const parts = entry.parts;
+      const firstSendIdx = parts.findIndex(
+        p => p.kind === 'toolCall' && p.name === 'send_message',
+      );
+      if (firstSendIdx !== -1) {
+        entry.parts = parts.filter((p, i) => {
+          if (i < firstSendIdx && (p.kind === 'text' || p.kind === 'reasoning'))
+            return false;
+          return true;
+        });
+        nextPendingPrune = false;
+        break;
+      }
+    }
+  }
+
+  // Step 2: Find and remove length-limit failures.
+  // Iterate in reverse so splice indices stay valid during removal.
+  for (let i = result.length - 1; i >= 0; i--) {
+    const entry = result[i]!;
+    if (entry.kind !== 'toolResult') continue;
+    if (!isLengthLimitFailure(entry)) continue;
+
+    // Find the matching ToolCallPart in a preceding OutputMessage
+    let found = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const e = result[j]!;
+      if (e.kind !== 'message' || e.role !== 'assistant') continue;
+      const parts = e.parts;
+      const tcIdx = parts.findIndex(
+        p => p.kind === 'toolCall' && p.callId === entry.callId && p.name === 'send_message',
+      );
+      if (tcIdx === -1) continue;
+
+      // Remove the failed ToolCallPart
+      parts.splice(tcIdx, 1);
+      // Remove all thinking content from this OutputMessage
+      e.parts = parts.filter(
+        p => p.kind !== 'text' && p.kind !== 'reasoning',
+      );
+      // Clear message-level reasoning too
+      e.reasoning = undefined;
+      // Remove the ToolResult
+      result.splice(i, 1);
+      nextPendingPrune = true;
+      found = true;
+      break;
+    }
+
+    // If no matching ToolCallPart was found (orphaned ToolResult), still remove it
+    if (!found) {
+      result.splice(i, 1);
+      nextPendingPrune = true;
+    }
+  }
+
+  // Step 3: Clean up entries that became empty or orphaned after pruning
+  const remainingCallIds = new Set<string>();
+  for (const entry of result) {
+    if (entry.kind === 'message' && entry.role === 'assistant') {
+      for (const p of entry.parts) {
+        if (p.kind === 'toolCall') remainingCallIds.add(p.callId);
+      }
+    }
+  }
+
+  const cleaned = result.filter(entry => {
+    if (entry.kind === 'message' && entry.role === 'assistant' && entry.parts.length === 0 && !entry.reasoning)
+      return false;
+    if (entry.kind === 'toolResult' && !remainingCallIds.has(entry.callId))
+      return false;
+    return true;
+  });
+
+  return { pruned: cleaned, pendingPrune: nextPendingPrune };
+};
+
 export interface RunnerConfig extends LlmCallConfig {}
 
 export interface StepLoopParams {
@@ -104,6 +224,7 @@ export const createRunner = (config: RunnerConfig) => {
 
   const runStepLoop = async (params: StepLoopParams): Promise<void> => {
     let working: ConversationEntry[] = [...params.entries];
+    let pendingPrune = false;
 
     for (let step = 1; step <= params.maxSteps; step++) {
       if (step > 0 && params.pullExternalEntries) {
@@ -130,7 +251,9 @@ export const createRunner = (config: RunnerConfig) => {
         hasToolCalls, newEntries: stepEntries.length, usage,
       }).log('Step completed');
 
-      await params.onStepComplete(stepEntries, usage, requestedAtMs);
+      const { pruned, pendingPrune: nextPrune } = pruneLengthLimitFailures(stepEntries, pendingPrune);
+      pendingPrune = nextPrune;
+      await params.onStepComplete(pruned, usage, requestedAtMs);
 
       if (!hasToolCalls || !anyRequiresFollowUp) {
         if (hasToolCalls && !anyRequiresFollowUp)
