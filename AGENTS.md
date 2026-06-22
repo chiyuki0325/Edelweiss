@@ -52,9 +52,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 ```
 src/
-├── index.ts                # Entry point — thin wiring shell (config, DB, telegram, pipeline, driver)
-├── startup.ts              # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
-├── startup.test.ts         # Startup chat selection tests
+├── index.ts                # Entry point — thin error-handling shell around startup/startApp()
 ├── pipeline.ts             # Per-chat IC/RC state manager (reduce → render → log → dump)
 ├── prompt-template.ts      # Shared Velin template rendering cleanup used by production prompts and evals
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
@@ -63,6 +61,12 @@ src/
 ├── config/
 │   ├── config.ts           # Unified YAML config loader (Valibot schema)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
+├── startup/                # Platform-neutral application startup orchestration
+│   ├── index.ts            # startApp(): config/DB/pipeline/resolvers/Driver/lifecycle wiring
+│   ├── chat-selection.ts   # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
+│   ├── chat-selection.test.ts # Startup chat selection tests
+│   ├── platform-registry.ts # Driver PlatformAdapter registry for platform startup modules
+│   └── platform-registry.test.ts # Platform registry tests
 ├── adaptation/             # Layer 1: Platform Event → Canonical Event
 │   ├── types.ts            # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
 │   ├── index.ts            # adaptMessage, adaptEdit, adaptDelete, parseContent, contentToPlainText + re-exports
@@ -149,6 +153,7 @@ src/
 │   └── index.ts            # Barrel exports
 ├── onebot/
 │   ├── index.ts             # OneBot exports + PlatformAdapter factory for Driver send/download hooks
+│   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress handling, history pull, PlatformAdapter registration
 │   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
 │   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion
@@ -162,6 +167,7 @@ src/
 │   └── lottie-frame.d.ts    # Type declarations for lottie-frame native addon
 └── telegram/
     ├── index.ts             # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
+    ├── startup.ts           # Telegram startup: manager construction, live handlers, Driver hooks, historical media backfills
     ├── bot.ts               # grammY Bot API client; registerCommand() for external command registration before on('message')
     ├── userbot.ts           # gramjs MTProto client
     ├── event-bus.ts         # Simple typed pub/sub
