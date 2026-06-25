@@ -44,6 +44,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Validation**: Valibot — schema validation for config and other runtime inputs where schemas are defined.
 - **Prompts**: @velin-dev/core — all LLM prompts are velin templates (`.velin.md`) in the `prompts/` directory, rendered via `renderMarkdownString`. Never hardcode prompt strings in source code.
 - **Logging**: @guiiai/logg — structured logger with pretty/JSON output.
+- **Dependency injection**: tsyringe — factory-registration mode only (no `@injectable`/`@inject` decorators). The composition root in `src/container/` registers each `create*(deps)` factory via `useFactory`; subsystems stay plain closure factories. Requires `reflect-metadata` imported before tsyringe loads (done at `src/index.ts` and `src/container/index.ts`).
 - **Testing**: Vitest.
 - **Linting**: ESLint with `@typescript-eslint`, `@stylistic/eslint-plugin`, `eslint-plugin-import`.
 - **Package manager**: pnpm (hoisted `node_modules` via `.npmrc`).
@@ -52,7 +53,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 ```
 src/
-├── index.ts                # Entry point — thin error-handling shell around startup/startApp()
+├── index.ts                # Entry point — `import 'reflect-metadata'` (tsyringe polyfill) + thin error-handling shell around startup/startApp()
 ├── pipeline.ts             # Per-chat IC/RC state manager (reduce → render → log → dump)
 ├── prompt-template.ts      # Shared Velin template rendering cleanup used by production prompts and evals
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
@@ -61,8 +62,11 @@ src/
 ├── config/
 │   ├── config.ts           # Unified YAML config loader (Valibot schema)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
+├── container/              # Dependency injection composition root (tsyringe, factory-registration mode)
+│   ├── tokens.ts           # Phantom-typed InjectionToken registry (TOKENS) + grouped provider interfaces (ChatPolicy, AltTextPolicy, FeatureSets, DescriptionSemaphores, OneBotHolder)
+│   └── index.ts            # buildContainer(): registers every create*(deps) factory as a memoized singleton; lazy get(TOKEN) closures dissolve the Driver↔Telegram/OneBot and resolver↔manager cycles
 ├── startup/                # Platform-neutral application startup orchestration
-│   ├── index.ts            # startApp(): config/DB/pipeline/resolvers/Driver/lifecycle wiring
+│   ├── index.ts            # startApp(): builds container, runs async-only steps (v2 migration, cold-start replay, OneBot WS await, lifecycle/shutdown)
 │   ├── chat-selection.ts   # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
 │   ├── chat-selection.test.ts # Startup chat selection tests
 │   ├── platform-registry.ts # Driver PlatformAdapter registry for platform startup modules
@@ -259,6 +263,18 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 - `pnpm db:generate` — generate Drizzle migration from schema changes.
 
 ## Architecture Rules
+
+### Dependency Injection (tsyringe, factory mode)
+
+The composition root is a **tsyringe** container built in `src/container/index.ts`, not manual wiring. We use tsyringe in **factory-registration mode** — no `@injectable`/`@inject` decorators, no `experimentalDecorators`/`emitDecoratorMetadata`, no class wrappers. This preserves the `const`/closure-factory convention: every subsystem keeps its existing `create*(deps)` signature and stays directly callable (so unit tests construct factories without the container).
+
+Rules when touching the graph:
+- **Tokens** live in `src/container/tokens.ts`. Each is a phantom-typed `Token<T>` (`{ sym: Symbol }`) — the symbol is the runtime key; `T` only flows through the typed `register`/`get` helpers. Add a token there before registering a new node.
+- **Registration** uses `register(TOKEN, c => createX(...))` in `buildContainer()`. Every factory is wrapped in the local `singleton()` helper (tsyringe's `FactoryProvider` does **not** cache, and its built-in `instanceCachingFactory` mis-handles `undefined` — `TELEGRAM` legitimately resolves to `undefined`, so we memoize with an explicit presence flag).
+- **Circular edges are broken by lazy resolution, not forward-ref hacks.** Hook closures call `get(TOKENS.DRIVER)` at invocation time (e.g. `onDriverEvent: (id, rc) => get(TOKENS.DRIVER).handleEvent(id, rc)`), and the custom-emoji resolver reads telegram via a lazy getter (`get telegram() { return get(TOKENS.TELEGRAM)?.manager; }`). The old mutable `driverRef` / `ref` / `managerRef` objects are gone.
+- **`reflect-metadata`** must be imported before `tsyringe` loads. It is imported at the top of `src/index.ts` (entry point) and `src/container/index.ts`.
+- **Async construction stays in the orchestrator.** `buildContainer()` only registers synchronous factories. Async startup steps — `migrateV1ToV2`, cold-start replay, `startOneBot` (awaits a WS client), lifecycle/shutdown — live in `src/startup/index.ts`, which resolves nodes from the container and runs them. OneBot's handle is held in an `OneBotHolder` token the orchestrator populates after the await.
+- `buildContainer()` returns a **child container** (`rootContainer.createChildContainer()`) so tests get isolation.
 
 ### DCP Layers Are Pure Functions
 

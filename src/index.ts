@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+
 import { setupLogger, useLogger } from './config/logger';
 import { startApp } from './startup';
 
