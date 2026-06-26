@@ -5,14 +5,14 @@ import type { createBackgroundTaskManager } from '../background-task/manager';
 import type { BackgroundTasksConfig, Config, RuntimeConfig } from '../config/config';
 import type { DB } from '../db/client';
 import type { createDriver } from '../driver';
+import type { AnimationToTextResolver } from '../media/animation-to-text';
+import type { CustomEmojiToTextResolver } from '../media/custom-emoji-to-text';
+import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
+import type { createSemaphore } from '../media/llm-description';
 import type { OneBotStartupHandle } from '../onebot/startup';
 import type { createPipeline, PipelineEvent } from '../pipeline';
 import type { RenderParams } from '../rendering';
 import type { PlatformRegistry } from '../startup/platform-registry';
-import type { AnimationToTextResolver } from '../telegram/animation-to-text';
-import type { CustomEmojiToTextResolver } from '../telegram/custom-emoji-to-text';
-import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../telegram/image-to-text';
-import type { createSemaphore } from '../telegram/llm-description';
 import type { TelegramStartupHandle } from '../telegram/startup';
 
 export type Pipeline = ReturnType<typeof createPipeline>;

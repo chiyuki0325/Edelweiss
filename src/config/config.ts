@@ -5,8 +5,9 @@ import { merge } from 'es-toolkit';
 import * as v from 'valibot';
 import { parse as parseYaml } from 'yaml';
 
-import type { CompactionConfig, LlmEndpoint, ProviderFormat } from '../driver/types';
+import type { CompactionConfig } from '../driver/types';
 import type { WebFetchConfig } from '../driver/web-fetch/types';
+import type { LlmEndpoint, ProviderFormat } from '../llm/types';
 
 const llmEndpointEntries = {
   apiBaseUrl: v.string(),

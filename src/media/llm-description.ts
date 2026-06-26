@@ -1,9 +1,9 @@
 import type { Logger } from '@guiiai/logg';
 import type { Message } from 'xsai';
 
-import { streamingChat } from '../driver/streaming';
-import { streamingResponses } from '../driver/streaming-responses';
-import type { LlmEndpoint } from '../driver/types';
+import { streamingChat } from '../llm/streaming';
+import { streamingResponses } from '../llm/streaming-responses';
+import type { LlmEndpoint } from '../llm/types';
 
 export const createSemaphore = (max: number) => {
   let current = 0;

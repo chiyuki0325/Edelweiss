@@ -4,7 +4,7 @@ import { callLlm, type LlmCallConfig, type ToolSchema } from './call-llm';
 import { ensureDumpDir } from './constants';
 import type { CahciuaTool } from './tools';
 import { executeToolCall, extractToolCalls } from './tools';
-import type { Usage } from './types';
+import type { Usage } from '../llm/types';
 import type {
   ConversationEntry,
   ToolResult,

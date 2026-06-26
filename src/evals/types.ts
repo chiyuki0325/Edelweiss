@@ -1,7 +1,8 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { CahciuaTool } from '../driver/tools';
-import type { LlmEndpoint, TurnResponseV2, Usage } from '../driver/types';
+import type { TurnResponseV2 } from '../driver/types';
+import type { LlmEndpoint, Usage } from '../llm/types';
 import type { IntermediateContext } from '../projection/types';
 import type { RenderParams } from '../rendering/types';
 import type { ConversationEntry, ToolCallPart } from '../unified-api/types';

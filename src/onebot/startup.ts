@@ -8,10 +8,10 @@ import type { RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, persistEvent } from '../db';
 import type { getLastMessageId } from '../db/persistence';
 import type { PlatformAdapter } from '../driver/types';
+import type { AnimationToTextResolver } from '../media/animation-to-text';
+import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
 import type { PipelineEvent } from '../pipeline';
 import type { RenderedContext } from '../rendering';
-import type { AnimationToTextResolver } from '../telegram/animation-to-text';
-import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../telegram/image-to-text';
 
 export interface OneBotStartupDeps {
   config: Parameters<typeof createOneBotServer>[0] | undefined;

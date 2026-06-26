@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDriver } from './index';
-import type { LlmEndpoint, Usage } from './types';
 import type { ResolvedChatConfig, RuntimeConfig } from '../config/config';
 import { setupLogger, useLogger } from '../config/logger';
+import type { LlmEndpoint, Usage } from '../llm/types';
 import type { RenderedContext } from '../rendering/types';
 
 const mocks = vi.hoisted(() => ({

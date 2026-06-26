@@ -5,9 +5,9 @@ import { renderCustomEmojiToTextSystemPrompt } from './custom-emoji-to-text-prom
 import { deduplicateFrames, extractFrames } from './frame-extractor';
 import type { ImageAltTextRecord } from './image-to-text';
 import { callDescriptionLlm, createSemaphore } from './llm-description';
-import type { Attachment } from './message';
-import { resolveStickerSetMetadata } from './pack-title';
-import type { LlmEndpoint } from '../driver/types';
+import type { LlmEndpoint } from '../llm/types';
+import type { Attachment } from '../telegram/message';
+import { resolveStickerSetMetadata } from '../telegram/pack-title';
 
 const EMOJI_MAX_EDGE = 512;
 

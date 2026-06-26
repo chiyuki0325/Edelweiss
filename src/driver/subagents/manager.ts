@@ -1,10 +1,10 @@
 import type { Logger } from '@guiiai/logg';
 
+import type { LlmEndpoint, Usage } from '../../llm/types';
 import type { ConversationEntry } from '../../unified-api/types';
 import type { RunnerConfig } from '../runner';
 import { createRunner } from '../runner';
 import type { CahciuaTool } from '../tools';
-import type { LlmEndpoint, Usage } from '../types';
 import type { AgentMailbox } from './mailbox';
 import { createFinalizeSubagentTool, createMessageMainTool, createMessageSubagentTool, createStartSubagentTool } from './tools';
 import type { AgentId, SubagentState } from './types';

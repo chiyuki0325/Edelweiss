@@ -1,21 +1,21 @@
 import type { Logger } from '@guiiai/logg';
 
-import type { AnimationToTextResolver } from './animation-to-text';
 import type { BotClient, MediaGroupItem, MediaSendOptions, SendOptions, SentMessage } from './bot';
 import { createBotClient } from './bot';
-import type { CustomEmojiToTextResolver } from './custom-emoji-to-text';
 import { createEventBus } from './event-bus';
-import { canExtractFrames, extractFrames } from './frame-extractor';
-import type { ImageToTextCompressionConfig, ImageToTextResolver } from './image-to-text';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, Attachment, MessageEntity } from './message';
 import { normalizeStickerSetMetadata } from './pack-title';
 import { createSessionIngressQueue } from './session-ingress-queue';
-import { canGenerateThumbnail, generateThumbnail } from './thumbnail';
 import type { TypingPollManager } from './typing-poll';
 import { createTypingPollManager } from './typing-poll';
 import type { FetchOptions, TypingEvent, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
+import type { AnimationToTextResolver } from '../media/animation-to-text';
+import type { CustomEmojiToTextResolver } from '../media/custom-emoji-to-text';
+import { canExtractFrames, extractFrames } from '../media/frame-extractor';
+import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
+import { canGenerateThumbnail, generateThumbnail } from '../media/thumbnail';
 
 export interface TelegramManagerOptions {
   botToken: string;

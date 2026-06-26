@@ -2,10 +2,10 @@ import sharp from 'sharp';
 
 import type { OneBotApiClient } from './server';
 import type { CanonicalAttachment } from '../adaptation/types';
-import type { AnimationToTextResolver } from '../telegram/animation-to-text';
-import { extractFrames } from '../telegram/frame-extractor';
-import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../telegram/image-to-text';
-import { generateThumbnail } from '../telegram/thumbnail';
+import type { AnimationToTextResolver } from '../media/animation-to-text';
+import { extractFrames } from '../media/frame-extractor';
+import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
+import { generateThumbnail } from '../media/thumbnail';
 
 const imageExts = /\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff)(\?|$)/i;
 

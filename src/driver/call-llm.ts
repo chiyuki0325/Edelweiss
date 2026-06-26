@@ -4,10 +4,10 @@ import type { Logger } from '@guiiai/logg';
 
 import { DUMP_DIR } from './constants';
 import { trimImages } from './context';
-import { streamingChat } from './streaming';
-import { streamingMessages } from './streaming-messages';
-import { streamingResponses } from './streaming-responses';
-import type { ProviderFormat, Usage } from './types';
+import { streamingChat } from '../llm/streaming';
+import { streamingMessages } from '../llm/streaming-messages';
+import { streamingResponses } from '../llm/streaming-responses';
+import type { ProviderFormat, Usage } from '../llm/types';
 import {
   fromChatCompletionsOutput,
   fromMessagesOutput,

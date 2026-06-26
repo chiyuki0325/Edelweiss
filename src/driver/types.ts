@@ -1,7 +1,6 @@
 import type { ResolvedChatConfig } from '../config/config';
+import type { LlmEndpoint } from '../llm/types';
 import type { ConversationEntry } from '../unified-api/types';
-
-export type ProviderFormat = 'openai-chat' | 'responses' | 'anthropic-messages';
 
 export interface TurnResponseV2 {
   requestedAtMs: number;
@@ -22,21 +21,6 @@ export interface ProbeResponseV2 {
   createdAt: number;
 }
 
-export interface LlmEndpoint {
-  apiBaseUrl: string;
-  apiKey: string;
-  model: string;
-  apiFormat?: ProviderFormat;
-  maxImagesAllowed?: number;
-  timeoutSec?: number;
-  /** Max concurrent description calls (image/animation/custom-emoji-to-text) for this endpoint. Defaults to 3; set to 1 to serialize. */
-  descriptionConcurrency?: number;
-  /** DeepSeek reasoning effort level ('low'/'medium' map to 'high', 'xhigh' maps to 'max'). Only for openai-chat provider. */
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
-  /** Force tool call. true = always call a tool */
-  forceToolCall?: boolean | 'api' | 'local';
-}
-
 export interface DriverConfig {
   chatIds: string[];
   resolveChatConfig: (chatId: string) => ResolvedChatConfig;
@@ -54,13 +38,6 @@ export interface CompactionSessionMeta {
   summary: string;
   inputTokens: number;
   outputTokens: number;
-}
-
-export interface Usage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationTokens: number;
-  cacheReadTokens: number;
 }
 
 export type { ResolvedChatConfig } from '../config/config';

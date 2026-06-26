@@ -6,15 +6,11 @@ import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent,
 import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from '../adaptation/types';
 import type { Config, RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, loadEventsWithId, loadLatestMessageContent, loadMessageFileId, loadMessageReactionSnapshot, persistMessage, persistMessageDelete, persistMessageEdit, updateEventAttachments } from '../db';
+import { createAnimationToTextResolver, createCustomEmojiToTextResolver, canExtractFrames, extractFrames } from '../media';
+import type { AnimationToTextResolver, CustomEmojiToTextResolver, ImageToTextCompressionConfig, ImageToTextResolver } from '../media';
 import type { PipelineEvent } from '../pipeline';
 import type { RenderedContext } from '../rendering';
-import { createAnimationToTextResolver } from './animation-to-text';
-import type { AnimationToTextResolver } from './animation-to-text';
 import type { SentMessage as TelegramSentMessage } from './bot';
-import { createCustomEmojiToTextResolver } from './custom-emoji-to-text';
-import type { CustomEmojiToTextResolver } from './custom-emoji-to-text';
-import { canExtractFrames, extractFrames } from './frame-extractor';
-import type { ImageToTextCompressionConfig, ImageToTextResolver } from './image-to-text';
 import { createTelegramManager } from './index';
 import { renderMarkdownToTelegramHTML } from './markdown';
 import type { Attachment, TelegramReactionSnapshotEntry, TelegramReactionUpdate } from './message/types';

@@ -35,7 +35,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 - **Telegram Bot API**: grammY — primary message handling, sending replies, commands.
 - **Telegram User API**: gramjs (`telegram` on npm) — MTProto client for history fetching, reply-to context resolution, seeing other bots' messages.
 - **OneBot 11**: reverse WebSocket over `ws` — QQ ingress/egress via array message segments, with optional bearer access token. Outbound fenced code blocks can be rendered to images through the optional system `silicon` binary; if unavailable or failing, OneBot send falls back to plain text and logs a warning.
-- **LLM**: Three API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`), OpenAI Responses API (via direct `fetch` with SSE streaming), and Anthropic Messages API (via direct `fetch` with SSE streaming). A unified API layer (`src/unified-api/`) provides provider-agnostic intermediate representation (`ConversationEntry[]`) with bidirectional codecs: each producer (streaming parser) emits IR, and each consumer (API sender) converts IR back to provider wire format. `composeContext()` builds a `ConversationEntry[]`: user content parts use `InputMessage` with `InputPart[]`, while assistant/tool entries are `OutputMessage` / `ToolResult`. Final conversion happens at the last send boundary via `toChatCompletionsInput()` / `toResponsesInput()` / `toMessagesInput()`. SSE streaming helpers in `src/driver/streaming.ts` (chat), `src/driver/streaming-responses.ts` (responses), and `src/driver/streaming-messages.ts` (anthropic-messages) parse chunks and emit IR.
+- **LLM**: Three API format paths — OpenAI Chat Completions (via xsAI `chat()` with `stream: true`), OpenAI Responses API (via direct `fetch` with SSE streaming), and Anthropic Messages API (via direct `fetch` with SSE streaming). A unified API layer (`src/unified-api/`) provides provider-agnostic intermediate representation (`ConversationEntry[]`) with bidirectional codecs: each producer (streaming parser) emits IR, and each consumer (API sender) converts IR back to provider wire format. `composeContext()` builds a `ConversationEntry[]`: user content parts use `InputMessage` with `InputPart[]`, while assistant/tool entries are `OutputMessage` / `ToolResult`. Final conversion happens at the last send boundary via `toChatCompletionsInput()` / `toResponsesInput()` / `toMessagesInput()`. The provider-agnostic transport layer lives in `src/llm/`: SSE streaming helpers `src/llm/streaming.ts` (chat), `src/llm/streaming-responses.ts` (responses), and `src/llm/streaming-messages.ts` (anthropic-messages) parse chunks and emit IR; `src/llm/types.ts` holds `ProviderFormat` / `LlmEndpoint` / `Usage`. The Driver's `call-llm.ts` dispatches through these.
 - **Image processing**: sharp — thumbnails, GIF frame extraction, image resizing.
 - **Animation processing**: ffmpeg-static + ffprobe-static (bundled binaries via npm) — MP4/WEBM frame extraction; lottie-frame (native rlottie + libpng addon) — TGS/Lottie frame rendering. System deps: `libpng-dev`, `librlottie-dev`.
 - **Database**: SQLite via better-sqlite3, Drizzle ORM.
@@ -84,6 +84,27 @@ src/
 │   ├── types.ts            # RenderParams, RenderedContentPiece, RenderedContextSegment, RenderedContext
 │   ├── index.ts            # render(), rcToXml(), XML serialization of ContentNode/attachments
 │   └── index.test.ts       # Rendering unit tests
+├── llm/                    # Provider-agnostic LLM transport layer (SSE streaming + wire types)
+│   ├── types.ts            # ProviderFormat, LlmEndpoint, Usage
+│   ├── sse.ts              # Shared SSE line-buffer parser used by all provider streamers
+│   ├── streaming.ts        # SSE streaming chat: parses OpenAI-compat SSE → ChatCompletion → IR
+│   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE → IR
+│   ├── streaming-messages.ts  # SSE streaming messages: parses Anthropic Messages SSE → IR
+│   ├── responses-types.ts   # OpenAI Responses API wire types (Response* prefix; consumed by streaming-responses)
+│   └── index.ts            # Barrel exports
+├── media/                  # Cross-subsystem media description / frame extraction / thumbnails
+│   ├── llm-description.ts     # Shared utilities for image/animation description LLM calls (semaphore, streaming helpers)
+│   ├── frame-extractor.ts     # Frame extraction from animations (MP4/WEBM via ffmpeg, GIF via sharp, TGS via lottie-frame)
+│   ├── frame-extractor.test.ts # Frame extraction tests
+│   ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
+│   ├── image-to-text.ts     # Blocking image→alt text workflow + cache lookup/persist + model calls
+│   ├── image-to-text.test.ts # Image-to-text workflow tests
+│   ├── image-to-text-prompt.ts # Velin prompt renderer for image description workflow
+│   ├── animation-to-text.ts   # Blocking animation→alt text workflow (GIF, animated/video stickers)
+│   ├── animation-to-text-prompt.ts # Velin prompt renderer for animation description workflow
+│   ├── custom-emoji-to-text.ts  # Blocking custom emoji→alt text workflow (static + animated)
+│   ├── custom-emoji-to-text-prompt.ts # Velin prompt renderer for custom emoji description workflow
+│   └── index.ts            # Barrel exports
 ├── unified-api/            # Provider-agnostic IR layer (ConversationEntry codec)
 │   ├── types.ts            # ConversationEntry, Message, InputMessage, OutputMessage, ToolResult, InputPart, OutputPart, Extra
 │   ├── chat-types.ts       # OpenAI Chat Completions wire types
@@ -105,19 +126,14 @@ src/
 │   ├── shared.ts           # Shared helpers (image extraction, text assembly)
 │   └── index.ts            # Barrel exports
 ├── driver/                 # Driver: RC + TRs → LLM API calls
-│   ├── types.ts            # TurnResponse, DriverConfig, ProviderFormat, LlmEndpoint, ContextChunk, CompactionSessionMeta
+│   ├── types.ts            # TurnResponseV2, ProbeResponseV2, DriverConfig, CompactionConfig, CompactionSessionMeta, PlatformAdapter
 │   ├── context.ts          # Pure functions: context composition (ConversationEntry[]), token trimming, reasoning sanitization, working window cursor
 │   ├── context.test.ts     # Context composition tests
 │   ├── merge.ts            # mergeContext(RC, TRs) → ContextChunk[] — timestamp-ordered interleave
 │   ├── merge.test.ts       # Merge logic tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
-│   ├── sse.ts              # Shared SSE line-buffer parser used by all provider streamers
 │   ├── call-llm.ts         # Unified LLM call dispatcher (openai-chat / responses / anthropic-messages)
 │   ├── runner.ts           # LLM step loop: triple-provider SSE streaming + manual tool execution
-│   ├── streaming.ts        # SSE streaming chat: parses OpenAI-compat SSE → ChatCompletion → IR
-│   ├── streaming-responses.ts # SSE streaming responses: parses Responses API SSE → IR
-│   ├── streaming-messages.ts  # SSE streaming messages: parses Anthropic Messages SSE → IR
-│   ├── responses-types.ts   # OpenAI Responses API type definitions (shared with unified-api)
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
@@ -177,19 +193,8 @@ src/
     ├── event-bus.ts         # Simple typed pub/sub
     ├── pack-title.ts        # Sticker pack metadata normalization (set_name → display title)
     ├── pack-title.test.ts   # Pack title normalization tests
-    ├── image-to-text.ts     # Blocking image→alt text workflow + cache lookup/persist + model calls
-    ├── image-to-text.test.ts # Image-to-text workflow tests
-    ├── image-to-text-prompt.ts # Velin prompt renderer for image description workflow
-    ├── animation-to-text.ts   # Blocking animation→alt text workflow (GIF, animated/video stickers)
-    ├── animation-to-text-prompt.ts # Velin prompt renderer for animation description workflow
-    ├── custom-emoji-to-text.ts  # Blocking custom emoji→alt text workflow (static + animated)
-    ├── custom-emoji-to-text-prompt.ts # Velin prompt renderer for custom emoji description workflow
-    ├── frame-extractor.ts     # Frame extraction from animations (MP4/WEBM via ffmpeg, GIF via sharp, TGS via lottie-frame)
-    ├── frame-extractor.test.ts # Frame extraction tests
-    ├── llm-description.ts     # Shared utilities for image/animation description LLM calls (semaphore, streaming helpers)
     ├── session-ingress-queue.ts # Per-chat ordered commit queue with speculative async transforms
     ├── session-ingress-queue.test.ts # Ingress queue tests
-    ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
     ├── typing-action.ts     # Shared typing-like MTProto action classifier
     ├── typing-action.test.ts # Typing action classifier tests
     ├── typing-poll.ts       # Debounce-scoped Telegram typing presence manager: online heartbeat, markAsRead, supergroup channel-difference fallback
@@ -636,7 +641,7 @@ Optional blocking ingress transform that resolves GIF animations and animated st
 - **Animated sticker** (`type: 'sticker'`, `isAnimatedSticker: true`): TGS format (gzipped Lottie JSON). Decompressed with `gunzipSync`, frames rendered via `lottie-frame` native addon (rlottie + libpng).
 - **Custom emoji**: not processed (excluded by `canExtractFrames`).
 
-**Frame extraction** (`src/telegram/frame-extractor.ts`):
+**Frame extraction** (`src/media/frame-extractor.ts`):
 - Frame selection is **count-based**, not time-based: total frame count is determined first, then ≤maxFrames → keep all, >maxFrames → pick maxFrames equidistant frames (including first and last).
 - Frame count sources: GIF → `sharp.metadata().pages`; MP4/WEBM → `ffprobe -show_entries stream=nb_frames`; TGS → Lottie JSON `op - ip`.
 - TGS format auto-detected by gzip magic bytes (`0x1f 0x8b`) — does not rely on attachment metadata flags, which may be absent during backfill from `CanonicalAttachment`.

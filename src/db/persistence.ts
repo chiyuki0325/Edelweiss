@@ -15,9 +15,9 @@ import type {
 } from '../adaptation/types';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
 import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../driver/types';
+import type { ImageAltTextRecord } from '../media/image-to-text';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
-import type { ImageAltTextRecord } from '../telegram/image-to-text';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from '../telegram/message';
 import type { Attachment } from '../telegram/message/types';
 import type { ConversationEntry } from '../unified-api/types';

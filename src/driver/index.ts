@@ -14,13 +14,14 @@ import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
-import type { CompactionSessionMeta, DriverConfig, LlmEndpoint, PlatformAdapter, ProbeResponseV2, ProviderFormat, TurnResponseV2 } from './types';
+import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, ProbeResponseV2, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
+import type { LlmEndpoint, ProviderFormat } from '../llm/types';
+import { renderImageToTextSystemPrompt } from '../media/image-to-text-prompt';
+import { callDescriptionLlm } from '../media/llm-description';
 import type { RenderedContext } from '../rendering/types';
-import { renderImageToTextSystemPrompt } from '../telegram/image-to-text-prompt';
-import { callDescriptionLlm } from '../telegram/llm-description';
 import type { Attachment } from '../telegram/message/types';
 
 /** Format current time in local timezone as ISO 8601 with offset (e.g. 2025-03-13T22:30:00+08:00). */
@@ -36,8 +37,9 @@ const localTimeNow = (): string => {
 
 export { mergeContext } from './merge';
 export { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
-export type { DriverConfig, ProviderFormat } from './types';
+export type { DriverConfig } from './types';
 export type { TurnResponseV2, ProbeResponseV2 } from './types';
+export type { ProviderFormat } from '../llm/types';
 
 const MAX_STEPS = Infinity;
 
