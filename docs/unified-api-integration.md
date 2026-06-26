@@ -178,7 +178,7 @@ codec handler 允许 async，`sharp(Buffer.from(base64))` 用 `async v => sharp(
 `src/rendering/index.ts:164` 的 thumbnailWebp 拼 data URL 改成 `sharp(Buffer.from(att.thumbnailWebp, 'base64'))`。DB 里 thumbnailWebp 字段不动。测试同步更新。
 
 ### D14. 启动时一次性迁移(时机 A)
-drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/index.ts` 启动流程中执行 v1→v2 回填。
+drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/startup/index.ts` 启动流程中执行 v1→v2 回填。
 
 ### D15. 回填错误处理
 若任一行迁移抛异常,整个事务 rollback 并崩溃整个程序,要求人工介入。不吞错、不跳行。

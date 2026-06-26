@@ -13,7 +13,7 @@ import type { OneBotStartupHandle } from '../onebot/startup';
 import type { createPipeline, PipelineEvent } from '../pipeline';
 import type { RenderParams } from '../rendering';
 import type { PlatformRegistry } from '../startup/platform-registry';
-import type { TelegramStartupHandle } from '../telegram/startup';
+import type { TelegramDriverHooks, TelegramEventSink, TelegramLiveHandlers, TelegramManager, TelegramMessageStore, TelegramPostStartupTasks, TelegramReactionStore, TelegramStartupHandle } from '../telegram';
 
 export type Pipeline = ReturnType<typeof createPipeline>;
 export type Driver = ReturnType<typeof createDriver>;
@@ -84,6 +84,13 @@ export const TOKENS = {
   IMAGE_TO_TEXT_RESOLVER: token<ImageToTextResolver>('ImageToTextResolver'),
   ANIMATION_TO_TEXT_RESOLVER: token<AnimationToTextResolver>('AnimationToTextResolver'),
   CUSTOM_EMOJI_RESOLVER: token<CustomEmojiToTextResolver>('CustomEmojiToTextResolver'),
+  TELEGRAM_MANAGER: token<TelegramManager | undefined>('TelegramManager'),
+  TELEGRAM_EVENT_SINK: token<TelegramEventSink>('TelegramEventSink'),
+  TELEGRAM_MESSAGE_STORE: token<TelegramMessageStore>('TelegramMessageStore'),
+  TELEGRAM_REACTION_STORE: token<TelegramReactionStore>('TelegramReactionStore'),
+  TELEGRAM_DRIVER_HOOKS: token<TelegramDriverHooks>('TelegramDriverHooks'),
+  TELEGRAM_LIVE_HANDLERS: token<TelegramLiveHandlers>('TelegramLiveHandlers'),
+  TELEGRAM_POST_STARTUP_TASKS: token<TelegramPostStartupTasks>('TelegramPostStartupTasks'),
   TELEGRAM: token<TelegramStartupHandle | undefined>('Telegram'),
   ONEBOT: token<OneBotHolder>('OneBot'),
   BACKGROUND_TASK_MANAGER: token<BackgroundTaskManager>('BackgroundTaskManager'),

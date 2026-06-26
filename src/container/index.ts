@@ -22,7 +22,7 @@ import type { PipelineEvent } from '../pipeline';
 import type { RenderParams } from '../rendering';
 import { isConfiguredChat, selectTelegramIngressChatIds } from '../startup/chat-selection';
 import { createPlatformRegistry } from '../startup/platform-registry';
-import { createTelegramCustomEmojiResolver, startTelegram } from '../telegram/startup';
+import { createTelegramCustomEmojiResolver, createTelegramDriverHooks, createTelegramEventSink, createTelegramLiveHandlers, createTelegramPostStartupTasks, createTelegramStartupManager, startTelegram } from '../telegram';
 
 const logger = useLogger('edelweiss');
 
@@ -39,7 +39,7 @@ const singleton = <T>(factory: (c: DependencyContainer) => T): ((c: DependencyCo
 };
 
 // Walk a ContentNode tree and invoke `fn` on every custom_emoji node. Pure helper
-// shared by the alt-text hydration policy and the Telegram startup deps.
+// shared by the alt-text hydration policy and Telegram post-startup tasks.
 const walkCustomEmoji = (nodes: ContentNode[], fn: (node: Extract<ContentNode, { type: 'custom_emoji' }>) => void) => {
   for (const n of nodes) {
     if (n.type === 'custom_emoji') fn(n);
@@ -189,10 +189,10 @@ export const buildContainer = (): Container => {
     const db = get(TOKENS.DB);
     const defaultChatConfig = resolveChatConfig(config, 'default');
     const semaphores = get(TOKENS.DESCRIPTION_SEMAPHORES);
-    // managerRef is a lazy getter: it resolves TELEGRAM only when invoked at
+    // managerRef is a lazy getter: it resolves TELEGRAM_MANAGER only when invoked at
     // runtime (after startup wiring completes), breaking the resolver↔telegram cycle.
     const managerRef = {
-      get telegram() { return get(TOKENS.TELEGRAM)?.manager; },
+      get telegram() { return get(TOKENS.TELEGRAM_MANAGER); },
     };
     return createTelegramCustomEmojiResolver({
       enabled: get(TOKENS.FEATURE_SETS).customEmojiToTextChatIds.size > 0,
@@ -271,28 +271,21 @@ export const buildContainer = (): Container => {
 
   // --- Telegram ---
 
-  register(TOKENS.TELEGRAM, () => {
+  register(TOKENS.TELEGRAM_MANAGER, () => {
     const config = get(TOKENS.CONFIG);
     const db = get(TOKENS.DB);
-    const pipeline = get(TOKENS.PIPELINE);
-    const runtimeConfig = get(TOKENS.RUNTIME_CONFIG);
-    const chatPolicy = get(TOKENS.CHAT_POLICY);
     const altText = get(TOKENS.ALT_TEXT_POLICY);
     const feature = get(TOKENS.FEATURE_SETS);
     const defaultChatConfig = resolveChatConfig(config, 'default');
 
     const chatIds = getChatIds(config);
-    const configuredChatIds = new Set(chatIds);
     const knownChatIds = loadKnownChatIds(db);
     const telegramChatIds = chatIds.filter(id => resolveChatConfig(config, id).platform === 'telegram');
     const telegramIngressChatIds = selectTelegramIngressChatIds(knownChatIds, telegramChatIds);
 
-    return startTelegram({
+    return createTelegramStartupManager({
       config,
-      runtimeConfig,
       logger,
-      botUserId: get(TOKENS.RENDER_PARAMS).botUserId ?? '0',
-      configuredChatIds,
       telegramIngressChatIds,
       resolveChatId: messageIds => lookupChatId(db, messageIds),
       imageToTextChatIds: feature.imageToTextChatIds,
@@ -301,34 +294,124 @@ export const buildContainer = (): Container => {
       animationToTextResolver: get(TOKENS.ANIMATION_TO_TEXT_RESOLVER),
       customEmojiToTextChatIds: feature.customEmojiToTextChatIds,
       customEmojiToTextResolver: get(TOKENS.CUSTOM_EMOJI_RESOLVER),
-      customEmojiMaxFrames: defaultChatConfig.customEmojiToText.maxFrames,
       animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
       getImageToTextCompression: altText.getImageToTextCompression,
-      resolveChatPlatform: id => resolveChatConfig(config, id).platform,
-      isBlocked: chatPolicy.isBlocked,
-      toBlockedMessageEvent: chatPolicy.toBlockedMessageEvent,
-      blockedSenderIdsForChat: chatId => chatPolicy.blockedUserIdsByChat.get(chatId),
-      hydrateAltTextFromCache: event => altText.hydrateAltTextFromCache(event),
-      walkCustomEmoji: (nodes, fn) => altText.walkCustomEmoji(nodes, fn),
+    });
+  });
+
+  register(TOKENS.TELEGRAM_EVENT_SINK, () => {
+    const config = get(TOKENS.CONFIG);
+    const db = get(TOKENS.DB);
+    const pipeline = get(TOKENS.PIPELINE);
+    const altText = get(TOKENS.ALT_TEXT_POLICY);
+    return createTelegramEventSink({
+      configuredChatIds: new Set(getChatIds(config)),
       persistEvent: event => persistEvent(db, event),
+      hydrateAltTextFromCache: event => altText.hydrateAltTextFromCache(event),
       pushPipelineEvent: (chatId, event) => pipeline.pushEvent(chatId, event),
-      replayChat: (chatId, events) => pipeline.replayChat(chatId, events),
-      getIntermediateContext: chatId => pipeline.getIC(chatId),
       onDriverEvent: (chatId, rc) => get(TOKENS.DRIVER).handleEvent(chatId, rc),
-      handleTyping: (chatId, userId) => get(TOKENS.DRIVER).handleTyping(chatId, userId),
-      setOfflineMode: (chatId, offline) => get(TOKENS.DRIVER).setOfflineMode(chatId, offline),
-      loadMessageAttachments: (chatId, messageId) => loadMessageAttachments(db, chatId, messageId),
-      loadCompaction: chatId => loadCompaction(db, chatId),
-      loadEvents: (chatId, afterMs) => loadEvents(db, chatId, afterMs),
-      loadEventsWithId: (chatId, afterMs) => loadEventsWithId(db, chatId, afterMs),
+    });
+  });
+
+  register(TOKENS.TELEGRAM_MESSAGE_STORE, () => {
+    const db = get(TOKENS.DB);
+    return {
       loadLatestMessageContent: (chatId, messageId) => loadLatestMessageContent(db, chatId, messageId),
-      loadMessageFileId: (chatId, messageId) => loadMessageFileId(db, chatId, messageId),
-      loadMessageReactionSnapshot: (chatId, messageId) => loadMessageReactionSnapshot(db, chatId, messageId),
       persistMessage: msg => persistMessage(db, msg),
       persistMessageEdit: edit => persistMessageEdit(db, edit),
       persistMessageDelete: del => persistMessageDelete(db, del),
+    };
+  });
+
+  register(TOKENS.TELEGRAM_REACTION_STORE, () => {
+    const db = get(TOKENS.DB);
+    return {
+      loadSnapshot: (chatId, messageId) => loadMessageReactionSnapshot(db, chatId, messageId),
+      upsertSnapshot: (chatId, messageId, entries, updatedAtMs) => upsertMessageReactionSnapshot(db, chatId, messageId, entries, updatedAtMs),
+    };
+  });
+
+  register(TOKENS.TELEGRAM_DRIVER_HOOKS, () => {
+    const manager = get(TOKENS.TELEGRAM_MANAGER);
+    if (!manager) throw new Error('Telegram driver hooks requested without Telegram configured');
+    const config = get(TOKENS.CONFIG);
+    const db = get(TOKENS.DB);
+    const pipeline = get(TOKENS.PIPELINE);
+    return createTelegramDriverHooks({
+      manager,
+      runtimeConfig: get(TOKENS.RUNTIME_CONFIG),
+      logger,
+      botUserId: get(TOKENS.RENDER_PARAMS).botUserId ?? '0',
+      eventSink: get(TOKENS.TELEGRAM_EVENT_SINK),
+      reactionStore: get(TOKENS.TELEGRAM_REACTION_STORE),
+      loadMessageAttachments: (chatId, messageId) => loadMessageAttachments(db, chatId, messageId),
+      getIntermediateContext: chatId => pipeline.getIC(chatId),
+      resolveChatPlatform: id => resolveChatConfig(config, id).platform,
+    });
+  });
+
+  register(TOKENS.TELEGRAM_LIVE_HANDLERS, () => {
+    const manager = get(TOKENS.TELEGRAM_MANAGER);
+    if (!manager) throw new Error('Telegram live handlers requested without Telegram configured');
+    const chatPolicy = get(TOKENS.CHAT_POLICY);
+    return createTelegramLiveHandlers({
+      manager,
+      logger,
+      botUserId: get(TOKENS.RENDER_PARAMS).botUserId ?? '0',
+      eventSink: get(TOKENS.TELEGRAM_EVENT_SINK),
+      chatPolicy: {
+        isBlocked: chatPolicy.isBlocked,
+        toBlockedMessageEvent: chatPolicy.toBlockedMessageEvent,
+        blockedSenderIdsForChat: chatId => chatPolicy.blockedUserIdsByChat.get(chatId),
+      },
+      messageStore: get(TOKENS.TELEGRAM_MESSAGE_STORE),
+      reactionStore: get(TOKENS.TELEGRAM_REACTION_STORE),
+      driverControl: {
+        handleTyping: (chatId, userId) => get(TOKENS.DRIVER).handleTyping(chatId, userId),
+        setOfflineMode: (chatId, offline) => get(TOKENS.DRIVER).setOfflineMode(chatId, offline),
+      },
+    });
+  });
+
+  register(TOKENS.TELEGRAM_POST_STARTUP_TASKS, () => {
+    const manager = get(TOKENS.TELEGRAM_MANAGER);
+    if (!manager) throw new Error('Telegram post-startup tasks requested without Telegram configured');
+    const config = get(TOKENS.CONFIG);
+    const db = get(TOKENS.DB);
+    const pipeline = get(TOKENS.PIPELINE);
+    const chatPolicy = get(TOKENS.CHAT_POLICY);
+    const altText = get(TOKENS.ALT_TEXT_POLICY);
+    const feature = get(TOKENS.FEATURE_SETS);
+    const defaultChatConfig = resolveChatConfig(config, 'default');
+    return createTelegramPostStartupTasks({
+      manager,
+      logger,
+      animationToTextChatIds: feature.animationToTextChatIds,
+      animationToTextResolver: get(TOKENS.ANIMATION_TO_TEXT_RESOLVER),
+      customEmojiToTextChatIds: feature.customEmojiToTextChatIds,
+      customEmojiToTextResolver: get(TOKENS.CUSTOM_EMOJI_RESOLVER),
+      animationMaxFrames: defaultChatConfig.animationToText.maxFrames,
+      resolveChatPlatform: id => resolveChatConfig(config, id).platform,
+      blockedSenderIdsForChat: chatId => chatPolicy.blockedUserIdsByChat.get(chatId),
+      hydrateAltTextFromCache: event => altText.hydrateAltTextFromCache(event),
+      walkCustomEmoji: (nodes, fn) => altText.walkCustomEmoji(nodes, fn),
+      replayChat: (chatId, events) => pipeline.replayChat(chatId, events),
+      loadCompaction: chatId => loadCompaction(db, chatId),
+      loadEvents: (chatId, afterMs) => loadEvents(db, chatId, afterMs),
+      loadEventsWithId: (chatId, afterMs) => loadEventsWithId(db, chatId, afterMs),
+      loadMessageFileId: (chatId, messageId) => loadMessageFileId(db, chatId, messageId),
       updateEventAttachments: (eventId, attachments) => updateEventAttachments(db, eventId, attachments),
-      upsertMessageReactionSnapshot: (chatId, messageId, entries, updatedAtMs) => upsertMessageReactionSnapshot(db, chatId, messageId, entries, updatedAtMs),
+    });
+  });
+
+  register(TOKENS.TELEGRAM, () => {
+    const manager = get(TOKENS.TELEGRAM_MANAGER);
+    if (!manager) return undefined;
+    return startTelegram({
+      manager,
+      driverHooks: get(TOKENS.TELEGRAM_DRIVER_HOOKS),
+      liveHandlers: get(TOKENS.TELEGRAM_LIVE_HANDLERS),
+      postStartupTasks: get(TOKENS.TELEGRAM_POST_STARTUP_TASKS),
     });
   });
 

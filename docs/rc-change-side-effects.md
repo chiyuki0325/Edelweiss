@@ -16,9 +16,10 @@
 代码位置：
 
 - `src/pipeline.ts` 的 `pushEvent()`
-- `src/index.ts` 的 Telegram `onMessage` / `onMessageEdit` / `onMessageDelete`
-- `src/index.ts` 的 Telegram `onReactionUpdate`
-- `src/index.ts` 的 OneBot `onEvent`
+- `src/telegram/live-handlers.ts` 的 Telegram `onMessage` / `onMessageEdit` / `onMessageDelete`
+- `src/telegram/live-handlers.ts` 的 Telegram `onReactionUpdate`
+- `src/telegram/event-sink.ts` 的 `publish()`
+- `src/onebot/startup.ts` 的 OneBot `onEvent`
 - `src/background-task/manager.ts` 的 `completionFlow()`
 
 发生的事：
@@ -36,7 +37,7 @@
 代码位置：
 
 - `src/pipeline.ts` 的 `replayChat()`
-- `src/index.ts` 启动流程里给 Driver 回放已有 session 的循环
+- `src/startup/index.ts` 启动流程里给 Driver 回放已有 session 的循环
 - OneBot 启动后拉取历史消息并 `replayChat()`
 
 发生的事：
@@ -50,7 +51,7 @@
 代码位置：
 
 - `src/driver/index.ts` 的 `disposeCursorEffect`
-- `src/index.ts` 注入给 Driver 的 `setCompactCursor`
+- `src/container/index.ts` 注入给 Driver 的 `setCompactCursor`
 - `src/pipeline.ts` 的 `setCompactCursor()`
 
 发生的事：
@@ -66,13 +67,13 @@
 
 代码位置：
 
-- `src/index.ts` 的 `injectSyntheticEvent()`
+- `src/telegram/driver-hooks.ts` 的 `injectSyntheticEvent()`
 
 发生的事：
 
 - `send_message` 工具通过 Telegram 发消息后，会构造一个 synthetic event。
 - 这个 event 会进入 Pipeline，并标记 `isSelfSent = true`。
-- 当前代码只调用 `pipeline.pushEvent()`，不立刻调用 `driver.handleEvent()`。
+- 当前代码通过 Telegram event sink 持久化、seed 空 reaction snapshot、hydrate cached alt text、再 `pipeline.pushEvent()`，不调用 `driver.handleEvent()`。
 
 所以 bot 自己发出的消息会更新 Pipeline 的 RC，但不会马上让 Driver 再跑一轮。后续其他事件或启动回放仍会看到这段 RC。
 
@@ -81,9 +82,9 @@
 代码位置：
 
 - `src/telegram/bot.ts` 的 `message_reaction` / `message_reaction_count` Bot API handlers
-- `src/telegram/index.ts` 的 reaction ingress queue 分支
+- `src/telegram/manager.ts` 的 reaction ingress queue 分支
 - `src/telegram/userbot.ts` 的 `fetchMessageReactions()`
-- `src/index.ts` 的 `tg.onReactionUpdate`
+- `src/telegram/live-handlers.ts` 的 `onReactionUpdate`
 - `src/db/persistence.ts` 的 `message_reaction_snapshots` snapshot helpers
 
 发生的事：
@@ -91,7 +92,7 @@
 - Bot API polling 显式订阅 `allowed_updates: ['message', 'message_reaction', 'message_reaction_count']`。
 - `message_reaction` 会带 actor 和 `old_reaction` / `new_reaction`，可以直接 diff 出该 actor 新增了哪些 emoji。
 - `message_reaction_count` 只带 aggregate counts；reaction ingress queue 会在进入业务 handler 前用 userbot 的 `messages.getMessageReactionsList` 拉取完整 `(emoji, sender)` actor snapshot。
-- `src/index.ts` 处理 reaction update 时，把新的 actor snapshot 和 `message_reaction_snapshots` 里的上一份 snapshot 做 diff。
+- `src/telegram/live-handlers.ts` 处理 reaction update 时，把新的 actor snapshot 和 `message_reaction_snapshots` 里的上一份 snapshot 做 diff。
 - 只有新增的 `(emoji, sender)` pair 才构造 append-only canonical `reaction` event。
 - 撤销或减少只更新 snapshot，不进入 IC。
 - 如果 message 没有上一份 actor snapshot，第一次 actor snapshot 只用于建立基线，避免把历史 reactions 当成新事件。
@@ -210,8 +211,8 @@ executeLlmCall() 结束
 
 - `src/driver/index.ts` 的 `disposeReplyEffect`
 - `src/driver/index.ts` 的 `debounceTimerCallback`
-- `src/index.ts` 的 `onDebounceStateChange`
-- `src/telegram/index.ts` 的 `startTypingPolling()` / `stopTypingPolling()`
+- `src/telegram/driver-hooks.ts` 的 `onDebounceStateChange`
+- `src/telegram/manager.ts` 的 `startTypingPolling()` / `stopTypingPolling()`
 
 发生的事：
 
@@ -282,7 +283,7 @@ Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterru
 
 - `src/driver/index.ts` 的 `executeLlmCall()` finally 分支
 - `src/driver/index.ts` 的 `setOfflineMode()`
-- `src/index.ts` 的 `/offline` / `/online` 命令处理
+- `src/telegram/live-handlers.ts` 的 `/offline` / `/online` 命令处理
 
 发生的事：
 
@@ -328,5 +329,5 @@ Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterru
 - Driver RC signal 与 effects：`src/driver/index.ts`
 - 回复判断辅助函数：`src/driver/context.ts`
 - LLM step loop：`src/driver/runner.ts`
-- Telegram typing polling：`src/telegram/index.ts`
+- Telegram typing polling：`src/telegram/manager.ts` + `src/telegram/typing-poll.ts`
 - 后台任务完成产生 RuntimeEvent：`src/background-task/manager.ts`

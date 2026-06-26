@@ -186,8 +186,14 @@ src/
 │   ├── ffprobe-static.d.ts  # Type declarations for ffprobe-static npm package
 │   └── lottie-frame.d.ts    # Type declarations for lottie-frame native addon
 └── telegram/
-    ├── index.ts             # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
-    ├── startup.ts           # Telegram startup: manager construction, live handlers, Driver hooks, historical media backfills
+    ├── index.ts             # Telegram public entry + startup handle aggregation
+    ├── manager.ts           # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
+    ├── event-sink.ts        # Persist/hydrate/push-to-pipeline/notify-driver event sink used by Telegram ingress
+    ├── live-handlers.ts     # Telegram live ingress handlers, reactions, typing events, /offline and /online commands
+    ├── driver-hooks.ts      # Driver-facing Telegram send/download/reaction hooks and synthetic self-message injection
+    ├── post-startup.ts      # Telegram historical animation/custom-emoji backfill tasks
+    ├── custom-emoji-resolver.ts # Telegram Bot API adapter for custom emoji alt-text resolution
+    ├── stores.ts            # Telegram message/reaction persistence port interfaces
     ├── bot.ts               # grammY Bot API client; registerCommand() for external command registration before on('message')
     ├── userbot.ts           # gramjs MTProto client
     ├── event-bus.ts         # Simple typed pub/sub
@@ -271,12 +277,14 @@ import type { CanonicalIMEvent } from '../adaptation/types';
 
 ### Dependency Injection (tsyringe, factory mode)
 
-The composition root is a **tsyringe** container built in `src/container/index.ts`, not manual wiring. We use tsyringe in **factory-registration mode** — no `@injectable`/`@inject` decorators, no `experimentalDecorators`/`emitDecoratorMetadata`, no class wrappers. This preserves the `const`/closure-factory convention: every subsystem keeps its existing `create*(deps)` signature and stays directly callable (so unit tests construct factories without the container).
+The composition root is a **tsyringe** container built in `src/container/index.ts`, not manual wiring. We use tsyringe in **factory-registration mode** — no `@injectable`/`@inject` decorators, no `experimentalDecorators`/`emitDecoratorMetadata`, no class wrappers. This preserves the `const`/closure-factory convention: every subsystem keeps its existing `create*(deps)` signature and stays directly callable, so unit tests can construct factories without the container.
 
 Rules when touching the graph:
-- **Tokens** live in `src/container/tokens.ts`. Each is a phantom-typed `Token<T>` (`{ sym: Symbol }`) — the symbol is the runtime key; `T` only flows through the typed `register`/`get` helpers. Add a token there before registering a new node.
-- **Registration** uses `register(TOKEN, c => createX(...))` in `buildContainer()`. Every factory is wrapped in the local `singleton()` helper (tsyringe's `FactoryProvider` does **not** cache, and its built-in `instanceCachingFactory` mis-handles `undefined` — `TELEGRAM` legitimately resolves to `undefined`, so we memoize with an explicit presence flag).
-- **Circular edges are broken by lazy resolution, not forward-ref hacks.** Hook closures call `get(TOKENS.DRIVER)` at invocation time (e.g. `onDriverEvent: (id, rc) => get(TOKENS.DRIVER).handleEvent(id, rc)`), and the custom-emoji resolver reads telegram via a lazy getter (`get telegram() { return get(TOKENS.TELEGRAM)?.manager; }`). The old mutable `driverRef` / `ref` / `managerRef` objects are gone.
+- **Tokens** live in `src/container/tokens.ts`. Each is a phantom-typed `Token<T>` (`{ sym: Symbol }`) — the symbol is the runtime key; `T` only flows through the typed `register`/`get` helpers. Add a token there before registering a new graph node.
+- **Registration** uses `register(TOKEN, c => createX(...))` in `buildContainer()`. Every factory is wrapped in the local `singleton()` helper. tsyringe's `FactoryProvider` does **not** cache, and its built-in `instanceCachingFactory` mis-handles `undefined`; some optional platform nodes legitimately resolve to `undefined`, so we memoize with an explicit presence flag.
+- **Tokens should represent real runtime boundaries.** Do not replace a giant deps object with one equally giant token. Split platform construction into focused nodes such as manager, event sink, live handlers, driver hooks, and post-startup tasks when those parts have different dependency shapes.
+- **Circular edges are broken by lazy resolution, not forward-ref hacks.** Hook closures call `get(TOKENS.DRIVER)` at invocation time, for example `onDriverEvent: (id, rc) => get(TOKENS.DRIVER).handleEvent(id, rc)`. The Telegram custom-emoji resolver reads the manager through a lazy getter (`get telegram() { return get(TOKENS.TELEGRAM_MANAGER); }`), which avoids resolving the full Telegram startup handle while the resolver is being built. The old mutable `driverRef` / `ref` / `managerRef` objects are gone.
+- **Optional platform roots stay optional only at the root.** `TOKENS.TELEGRAM_MANAGER` and `TOKENS.TELEGRAM` may resolve to `undefined` when Telegram is not configured. Downstream Telegram-specific nodes (`TELEGRAM_DRIVER_HOOKS`, `TELEGRAM_LIVE_HANDLERS`, `TELEGRAM_POST_STARTUP_TASKS`) assume a manager exists; the `TELEGRAM` aggregator checks the manager before resolving them.
 - **`reflect-metadata`** must be imported before `tsyringe` loads. It is imported at the top of `src/index.ts` (entry point) and `src/container/index.ts`.
 - **Async construction stays in the orchestrator.** `buildContainer()` only registers synchronous factories. Async startup steps — `migrateV1ToV2`, cold-start replay, `startOneBot` (awaits a WS client), lifecycle/shutdown — live in `src/startup/index.ts`, which resolves nodes from the container and runs them. OneBot's handle is held in an `OneBotHolder` token the orchestrator populates after the await.
 - `buildContainer()` returns a **child container** (`rootContainer.createChildContainer()`) so tests get isolation.
@@ -317,6 +325,28 @@ The queue is fail-closed. If the head event's transform does not succeed, that c
 - **gramjs** (User API): fetches history, resolves reply-to chains, sees other bots' messages (invisible to Bot API), receives edit/delete/typing events.
 
 Messages from both clients are deduplicated by `(chatId, messageId)` in the TelegramManager. Userbot events are filtered to bot-joined chats only (`botChats` set, seeded from the events table plus configured Telegram chat IDs on startup). When the bot version arrives second, its `fileId` is merged into the in-flight message for Bot API download preference. All message/edit/delete/reaction events then enter the per-chat ingress queue before Adaptation. Delete events without `chatId` (MTProto private chat deletes) are dropped — `lookupChatId` attempts resolution from the messages table, but if the message was never persisted the event is lost.
+
+### Telegram Runtime Boundaries
+
+Telegram integration is intentionally split by runtime responsibility. Do not reintroduce a large `startup.ts` or a single giant `TelegramStartupDeps` object.
+
+- `src/telegram/manager.ts`: owns the Bot API client, optional userbot, dedup, ingress queue, blocking media transforms, reaction actor hydration, typing event capture, typing polling controls, and raw send/download methods. It does **not** know about DB persistence, Pipeline, Driver, compaction, or chat policy.
+- `src/telegram/event-sink.ts`: owns the platform-neutral event side effect order for Telegram ingress: persist canonical event, optionally hydrate cached alt text, optionally push into Pipeline, optionally notify Driver. It exposes `persist()` and `publish()` separately because message/edit/delete handlers must write platform-specific message tables between those two steps.
+- `src/telegram/live-handlers.ts`: adapts manager callbacks into canonical events, applies blocked-user policy, writes message/edit/delete/reaction snapshot stores, handles typing events, and registers `/offline` / `/online`. Live reaction additions update Pipeline but intentionally do **not** notify Driver.
+- `src/telegram/driver-hooks.ts`: exposes Driver-facing Telegram capabilities: `send_message`, attachment reads, Bot API / userbot downloads, allowed reaction refresh, `react_message`, debounce typing polling, and synthetic self-message injection after a successful send.
+- `src/telegram/post-startup.ts`: runs Telegram-only post-start tasks after live handlers are started: historical animation hash backfill and uncached custom-emoji resolution followed by chat replay.
+- `src/telegram/custom-emoji-resolver.ts`: adapts the shared media custom-emoji resolver to Telegram Bot API methods (`getCustomEmojiStickers`, file download, pack title resolution).
+- `src/telegram/stores.ts`: defines the narrow message/reaction persistence ports shared by live handlers and driver hooks.
+- `src/telegram/index.ts`: public Telegram entry. It re-exports Telegram factories/types and aggregates a `TelegramStartupHandle` from manager + driver hooks + live handlers + post-startup tasks.
+
+Container tokens mirror those boundaries: `TELEGRAM_MANAGER`, `TELEGRAM_EVENT_SINK`, `TELEGRAM_MESSAGE_STORE`, `TELEGRAM_REACTION_STORE`, `TELEGRAM_DRIVER_HOOKS`, `TELEGRAM_LIVE_HANDLERS`, `TELEGRAM_POST_STARTUP_TASKS`, and the final optional `TELEGRAM` handle. New Telegram behavior should usually add or extend one of these focused nodes. If a dependency interface is only used by one module, keep it in that module; only shared ports belong in a separate file.
+
+Important ordering constraints:
+- Synthetic sent-message events: persist event → seed empty reaction snapshot → hydrate/push to Pipeline; do not notify Driver immediately.
+- Normal message ingress: persist canonical event → persist Telegram message row and seed empty reaction snapshot if needed → hydrate/push to Pipeline → notify Driver.
+- Edit/delete ingress: persist canonical event → persist platform edit/delete row → publish to Pipeline → notify Driver.
+- Service/blocked events: persist and publish through the event sink; no Telegram message row is written for blocked content.
+- Reaction additions: update snapshot first, then persist/publish append-only canonical `reaction` events without notifying Driver.
 
 ### Configured Chat Residency
 
@@ -373,7 +403,7 @@ Scheduling lives in Driver (not a separate orchestration layer) because the Driv
 - `/offline` — enter offline mode; bot responds only to @mentions and replies, then auto-returns online.
 - `/online` — return to online mode immediately.
 
-Commands are registered via `bot.registerCommand()` in `src/index.ts` and reported to Telegram via `setMyCommands` at startup. Command messages are intercepted before `bot.on('message')` in the grammY middleware chain so they do not enter the LLM pipeline.
+Commands are registered via `bot.registerCommand()` from `src/telegram/live-handlers.ts` and reported to Telegram via `setMyCommands` when the bot client starts. Command messages are intercepted before `bot.on('message')` in the grammY middleware chain so they do not enter the LLM pipeline.
 
 ### Tool Call Loop Interleaving
 
@@ -449,7 +479,7 @@ Before any actual provider request is sent, the Driver applies a final request-l
 
 ### isSelfSent Pipeline
 
-Bot's own sent messages are marked `isSelfSent: true` at creation time (in the synthetic event bypass in `src/index.ts`). This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
+Bot's own sent messages are marked `isSelfSent: true` at creation time by the synthetic event bypass in `src/telegram/driver-hooks.ts`. This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
 
 ### Context Optimizations
 
@@ -690,7 +720,7 @@ Optional blocking ingress transform that resolves custom emoji (inline `MessageE
 
 **Cold-start hydration**:
 - During initial replay, `hydrateAltTextFromCache` walks ContentNode trees and sets `altText` from cache.
-- After `telegram.start()`, uncached custom emoji IDs are batch-resolved via Bot API, then the affected chats are re-replayed with hydrated events.
+- After `telegram.startLiveHandlers()`, `src/telegram/post-startup.ts` batch-resolves uncached custom emoji IDs via Bot API, then replays the affected chats with hydrated events.
 
 **Config** (`customEmojiToText` section in `config.yaml`):
 - `enabled` (boolean, default `false`): whether to resolve custom emoji descriptions
