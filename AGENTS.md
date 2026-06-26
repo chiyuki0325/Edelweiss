@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed) |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 29 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -168,15 +168,20 @@ src/
 │   ├── codec.ts            # ConversationEntry ↔ JSON serialization helpers
 │   ├── migrate-v2.ts       # v1 → v2 data migration (turnResponses → turnResponsesV2, probeResponses → probeResponsesV2)
 │   └── index.ts            # Barrel exports
+├── ingress/                # Platform-agnostic per-chat ordered ingress queue
+│   ├── session-ingress-queue.ts # createSessionIngressQueue: speculative async transform + in-order commit (shared by Telegram + OneBot)
+│   └── session-ingress-queue.test.ts # Ingress queue tests
 ├── onebot/
 │   ├── index.ts             # OneBot exports + PlatformAdapter factory for Driver send/download hooks
-│   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress handling, history pull, PlatformAdapter registration
-│   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client
+│   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress wiring, history pull, PlatformAdapter registration
+│   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client; captures ingress meta at the WS frame entry and forwards raw events
+│   ├── ingress.ts           # createOneBotIngress: per-chat ordered queue + bounded-retry-then-drop transform (adapt + alt-text); attemptWithBudget policy
+│   ├── ingress.test.ts      # OneBot ingress + attemptWithBudget tests
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
-│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion
+│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; OneBotIngressMeta capture, applies entry-time timestamps
 │   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
 │   ├── send.test.ts         # OneBot send rendering tests, including optional silicon code-block image conversion
-│   ├── image-to-text.ts     # OneBot image download + thumbnail generation via shared image-to-text resolver
+│   ├── image-to-text.ts     # OneBot image download + thumbnail generation via shared image-to-text resolver (fail-closed: throws on failure)
 │   ├── face-config.ts       # QQ face ID → description lookup
 │   └── face-config.json     # QQ face metadata table
 ├── types/
@@ -198,8 +203,6 @@ src/
     ├── event-bus.ts         # Simple typed pub/sub
     ├── pack-title.ts        # Sticker pack metadata normalization (set_name → display title)
     ├── pack-title.test.ts   # Pack title normalization tests
-    ├── session-ingress-queue.ts # Per-chat ordered commit queue with speculative async transforms
-    ├── session-ingress-queue.test.ts # Ingress queue tests
     ├── typing-action.ts     # Shared typing-like MTProto action classifier
     ├── typing-action.test.ts # Typing action classifier tests
     ├── typing-poll.ts       # Debounce-scoped Telegram typing presence manager: online heartbeat, markAsRead, supergroup channel-difference fallback
@@ -239,6 +242,7 @@ Top-level directories:
   - `humanize.md` — human-likeness design notes
   - `rc-change-side-effects.md` — RC 变更可能触发的副作用和代码位点
   - `subagent-system.md` — subagent system design
+  - `telegram-module-architecture.md` / `telegram-module-architecture.svg` — readable Telegram module boundary and data-flow diagram
   - `telegram-typing-events.md` — Telegram typing event research
   - `unified-api-integration.md` — unified API integration design
 - `dcp-updates.md` — implementation deltas from the original RFC
@@ -295,7 +299,7 @@ Projection reducers must be pure: `(IC, CanonicalIMEvent) => IC'`. No I/O, no si
 ### Dual Timestamps
 
 Every `CanonicalIMEvent` carries two timestamps:
-- `receivedAtMs` (milliseconds): local receive time, captured at telegram ingress **before** any asynchronous media transforms or queue blocking. **Ordering source of truth** — ensures cold-start replay matches live processing even when ingress is blocked on image-to-text.
+- `receivedAtMs` (milliseconds): local receive time, captured at platform ingress **before** any asynchronous media transforms or queue blocking. Telegram captures it in `captureIngressMeta()` at dispatch; OneBot captures it in `captureOneBotIngressMeta()` at the WS frame entry, before adaptation's network calls (`getGroupMemberInfo`, image fetch). **Ordering source of truth** — ensures cold-start replay matches live processing even when ingress is blocked on image-to-text.
 - `timestampSec` (seconds): server-reported time, shown to the AI. For delete events (no server time), derived as `Math.floor(receivedAtMs / 1000)`.
 - `utcOffsetMin`: timezone offset captured at the same ingress moment as `receivedAtMs`. Rendering converts `timestampSec` to local time using this per-event offset.
 
@@ -312,11 +316,15 @@ This rule is fail-closed by design:
 
 ### Session Ingress Queue
 
-Telegram ingress uses a **per-chat ordered commit queue**. Each event captures ingress timestamps immediately, then enters a queue with two phases:
-- **Transform**: asynchronous preprocessing (currently image-to-text and thumbnail generation). Later events in the same chat may start transforming before earlier events finish.
+Both platforms use the same **per-chat ordered commit queue** — `createSessionIngressQueue` in `src/ingress/session-ingress-queue.ts` (platform-agnostic; pass `logContext` to scope its logs). Each event captures ingress timestamps immediately, then enters a queue with two phases:
+- **Transform**: asynchronous preprocessing. Later events in the same chat may start transforming before earlier events finish.
 - **Commit**: only the oldest contiguous ready prefix is allowed to enter Adaptation → Projection → Rendering. This preserves event order while still allowing speculative preprocessing of later blocked messages.
 
 The queue is fail-closed. If the head event's transform does not succeed, that chat's `nextCommitSeq` does not advance. Later events may finish transforming, but they remain buffered until the blocked head event resolves.
+
+**Telegram**: the queue's `transform` runs `hydrateAttachments` (image/animation/custom-emoji-to-text + thumbnails); adaptation itself is pure. The shared queue retries a failing transform **forever** — safe because Telegram fileIds stay valid indefinitely.
+
+**OneBot** (`src/onebot/ingress.ts`): unlike Telegram, OneBot **adaptation does network** (`getGroupMemberInfo`, image URL `fetch` for sticker/animation classification), so the WS server forwards *raw* events plus ingress meta and the queue's `transform` runs adaptation **and** alt-text resolution. Notice events adapt synchronously at enqueue (no network) and are keyed by chatId there. Because QQ media URLs / file references **expire**, infinite retry could wedge a chat permanently; instead OneBot wraps the message transform in `attemptWithBudget` — a terminable, never-fail-open exponential-backoff retry bounded by a wall-clock budget (`transformBudgetMs`, default 90s). On budget exhaustion the **whole event is dropped before persist/pipeline** (never admitted with degraded/empty alt text), so the commit cursor keeps advancing and live ingress stays consistent with cold-start replay (the event simply never exists in DCP on either path). `resolveOneBotImageAltText` is fail-closed — it throws on download/LLM failure so the bounded-retry governs it. Historical replay backfill in `startup.ts` stays best-effort (alt-text failures are caught and logged, not fatal), mirroring Telegram's async cold-start hydration.
 
 ### Dual Telegram Client
 

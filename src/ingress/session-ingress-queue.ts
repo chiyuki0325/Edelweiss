@@ -32,11 +32,12 @@ export interface SessionIngressQueue<T extends SessionEvent> {
 
 export const createSessionIngressQueue = <T extends SessionEvent>(params: {
   logger: Logger;
+  logContext?: string;
   transformConcurrency?: number;
   transform: (event: T) => Promise<T>;
   commit: (event: T) => void;
 }): SessionIngressQueue<T> => {
-  const log = params.logger.withContext('telegram:ingress-queue');
+  const log = params.logger.withContext(params.logContext ?? 'ingress-queue');
   const transformConcurrency = params.transformConcurrency ?? 3;
   const sessions = new Map<string, SessionState<T>>();
 

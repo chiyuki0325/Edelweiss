@@ -7,12 +7,12 @@ import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, Attachment, MessageEntity } from './message';
 import { normalizeStickerSetMetadata } from './pack-title';
 import { loadSession } from './session';
-import { createSessionIngressQueue } from './session-ingress-queue';
 import type { TypingPollManager } from './typing-poll';
 import { createTypingPollManager } from './typing-poll';
 import type { FetchOptions, TypingEvent, UserbotClient } from './userbot';
 import { createUserbotClient } from './userbot';
 import type { Config } from '../config/config';
+import { createSessionIngressQueue } from '../ingress/session-ingress-queue';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
 import type { CustomEmojiToTextResolver } from '../media/custom-emoji-to-text';
 import { canExtractFrames, extractFrames } from '../media/frame-extractor';
@@ -247,6 +247,7 @@ export const createTelegramManager = (
 
   const ingressQueue = createSessionIngressQueue<IngressEvent>({
     logger,
+    logContext: 'telegram:ingress-queue',
     transform: async event => {
       switch (event.kind) {
       case 'message':

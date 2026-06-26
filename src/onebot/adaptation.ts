@@ -17,6 +17,25 @@ import type {
 
 const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
 
+// Ingress metadata captured at the WS frame entry, before any network-bound
+// adaptation. `receivedAtMs` is the ordering source of truth (see CLAUDE.md
+// §Dual Timestamps) and must reflect the true receive moment, not the moment
+// adaptation finishes.
+export interface OneBotIngressMeta {
+  receivedAtMs: number;
+  utcOffsetMin: number;
+}
+
+export const captureOneBotIngressMeta = (): OneBotIngressMeta => ({
+  receivedAtMs: Date.now(),
+  utcOffsetMin: captureUtcOffset(),
+});
+
+export const oneBotMessageChatId = (event: OneBotMessageEvent): string =>
+  event.message_type === 'group'
+    ? String(event.group_id!)
+    : `private:${event.user_id}`;
+
 export const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
   id: String(user_id),
   displayName: card && card !== '' ? card : nickname,
@@ -150,10 +169,8 @@ const adaptSegment = async (
 };
 
 // OneBotApiClient 传入用于某些消息（如 mention 的副作用）
-export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent): Promise<CanonicalMessageEvent> => {
-  const chatId = event.message_type === 'group'
-    ? String(event.group_id!)
-    : `private:${event.user_id}`;
+export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent, meta: OneBotIngressMeta): Promise<CanonicalMessageEvent> => {
+  const chatId = oneBotMessageChatId(event);
 
   const content: ContentNode[] = [];
   const attachments: CanonicalAttachment[] = [];
@@ -173,16 +190,16 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     chatId,
     messageId: String(event.message_id),
     sender: adaptUser(event.sender.user_id, event.sender.nickname, event.sender.card),
-    receivedAtMs: Date.now(),
+    receivedAtMs: meta.receivedAtMs,
     timestampSec: event.time,
-    utcOffsetMin: captureUtcOffset(),
+    utcOffsetMin: meta.utcOffsetMin,
     content,
     attachments,
     ...(replyToMessageId && { replyToMessageId }),
   };
 };
 
-export const adaptOneBotNotice = (event: OneBotNoticeEvent): CanonicalIMEvent | null => {
+export const adaptOneBotNotice = (event: OneBotNoticeEvent, meta: OneBotIngressMeta): CanonicalIMEvent | null => {
   switch (event.notice_type) {
   case 'recall':
   case 'group_recall':
@@ -190,14 +207,13 @@ export const adaptOneBotNotice = (event: OneBotNoticeEvent): CanonicalIMEvent | 
     const chatId = event.group_id != null
       ? String(event.group_id)
       : `private:${event.user_id!}`;
-    const now = Date.now();
     return {
       type: 'delete',
       chatId,
       messageIds: event.message_id != null ? [String(event.message_id)] : [],
-      receivedAtMs: now,
-      timestampSec: Math.floor(now / 1000),
-      utcOffsetMin: captureUtcOffset(),
+      receivedAtMs: meta.receivedAtMs,
+      timestampSec: Math.floor(meta.receivedAtMs / 1000),
+      utcOffsetMin: meta.utcOffsetMin,
     };
   }
 
@@ -210,9 +226,9 @@ export const adaptOneBotNotice = (event: OneBotNoticeEvent): CanonicalIMEvent | 
       actor: event.operator_id != null
         ? { id: String(event.operator_id), displayName: `user:${event.operator_id}`, isBot: false }
         : undefined,
-      receivedAtMs: Date.now(),
+      receivedAtMs: meta.receivedAtMs,
       timestampSec: event.time,
-      utcOffsetMin: captureUtcOffset(),
+      utcOffsetMin: meta.utcOffsetMin,
       action: {
         action: 'members_joined',
         members: [{ id: String(senderId), displayName: `user:${senderId}`, isBot: false }],
@@ -229,9 +245,9 @@ export const adaptOneBotNotice = (event: OneBotNoticeEvent): CanonicalIMEvent | 
       actor: event.operator_id != null
         ? { id: String(event.operator_id), displayName: `user:${event.operator_id}`, isBot: false }
         : undefined,
-      receivedAtMs: Date.now(),
+      receivedAtMs: meta.receivedAtMs,
       timestampSec: event.time,
-      utcOffsetMin: captureUtcOffset(),
+      utcOffsetMin: meta.utcOffsetMin,
       action: {
         action: 'member_left',
         member: { id: String(senderId), displayName: `user:${senderId}`, isBot: false },

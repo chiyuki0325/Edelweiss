@@ -6,7 +6,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Logger } from '@guiiai/logg';
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import { adaptOneBotMessage, adaptOneBotNotice, adaptUser } from './adaptation';
+import { adaptUser, captureOneBotIngressMeta, type OneBotIngressMeta } from './adaptation';
 import type {
   OneBotApiRequest,
   OneBotApiResponse,
@@ -15,8 +15,9 @@ import type {
   OneBotGetFileResult,
   OneBotMessageEvent,
   OneBotMessageSegment,
+  OneBotNoticeEvent,
 } from './types';
-import type { CanonicalIMEvent, CanonicalUser } from '../adaption-types';
+import type { CanonicalUser } from '../adaption-types';
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -179,7 +180,7 @@ const createApiClient = (
 };
 
 export interface OneBotServerDeps {
-  onEvent: (chatId: string, event: CanonicalIMEvent) => void;
+  onEvent: (raw: OneBotMessageEvent | OneBotNoticeEvent, meta: OneBotIngressMeta) => void;
   log: Logger;
 }
 
@@ -226,35 +227,32 @@ export const createOneBotServer = (
         typeof msg === 'object' && msg !== null && 'post_type' in msg;
 
       ws.on('message', (data: Buffer) => {
-        void (async () => {
-          try {
-            const msg = JSON.parse(data.toString());
+        // Capture ingress meta synchronously at the frame entry, before any
+        // adaptation or queueing — this is the ordering source of truth.
+        const meta = captureOneBotIngressMeta();
+        try {
+          const msg = JSON.parse(data.toString());
 
-            // API responses are handled by createApiClient
-            if ('echo' in msg && msg.echo) return;
+          // API responses are handled by createApiClient
+          if ('echo' in msg && msg.echo) return;
 
-            if (!isEvent(msg)) return;
+          if (!isEvent(msg)) return;
 
-            switch (msg.post_type) {
-            case 'message': {
-              const event = await adaptOneBotMessage(api!!, msg);  // 必须连上了才会有消息被上报，所以这里直接断言 api 不为 null
-              deps.onEvent(event.chatId, event);
-              break;
-            }
-            case 'notice': {
-              const event = adaptOneBotNotice(msg);
-              if (event) deps.onEvent(event.chatId, event);
-              break;
-            }
-            case 'meta_event':
-              if (msg.meta_event_type === 'lifecycle' && msg.sub_type === 'connect')
-                selfId = String(msg.self_id);
-              break;
-            }
-          } catch (err) {
-            log.withError(err).warn('Failed to parse OneBot message');
+          switch (msg.post_type) {
+          case 'message':
+          case 'notice':
+            // Adaptation (and its network calls) is deferred to the ingress
+            // queue's transform phase, so raw events are forwarded with meta.
+            deps.onEvent(msg, meta);
+            break;
+          case 'meta_event':
+            if (msg.meta_event_type === 'lifecycle' && msg.sub_type === 'connect')
+              selfId = String(msg.self_id);
+            break;
           }
-        })();
+        } catch (err) {
+          log.withError(err).warn('Failed to parse OneBot message');
+        }
       });
 
       ws.on('close', code => {

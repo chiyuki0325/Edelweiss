@@ -38,44 +38,39 @@ export const resolveOneBotImageAltText = async (
   if (!att.fileRef) return;
   if (!isImageFileRef(att.fileRef)) return;
 
-  try {
-    // 1. Download the image
-    const buffer = await api.downloadFile(att.fileRef, '');
+  // Fail-closed (CLAUDE.md §Consistency Above Availability): any download / LLM
+  // failure throws so the OneBot ingress queue's bounded-retry policy governs
+  // the outcome. We never degrade to thumbnail-only / empty alt text here.
+  // 1. Download the image
+  const buffer = await api.downloadFile(att.fileRef, '');
 
-    // 2. Generate thumbnail for cache key + rendering
-    att.thumbnailWebp = await generateThumbnail(buffer);
+  // 2. Generate thumbnail for cache key + rendering
+  att.thumbnailWebp = await generateThumbnail(buffer);
 
-    // 3. Resolve via shared resolver (handles cache lookup + LLM)
-    try {
-      if (att.type === 'animation') {
-        // resolve mimetype (consumed by extractFrames)
-        const format = await sharp(buffer).metadata().then(meta => meta.format ?? 'unknown');
-        let mime = 'application/octet-stream';
-        if (format && format in FORMAT_TO_MIME) {
-          mime = FORMAT_TO_MIME[format as SupportedFormat];
-        }
-
-        const extract = await extractFrames(buffer, { mimeType: mime });
-        const record = await animationResolver.resolve({
-          cacheKey: extract.cacheKey,
-          frames: extract.frames,
-          caption,
-          isSticker: true, // OneBot doesn't differentiate animated stickers, treat all as stickers for better alt text
-          duration: extract.frameTimestamps ? Math.max(...extract.frameTimestamps) : undefined,
-          frameTimestamps: extract.frameTimestamps,
-        });
-        att.altText = record.altText;
-        if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
-
-      } else {
-        const record = await imageResolver.resolve(Buffer.from(att.thumbnailWebp, 'base64'), caption, buffer, { isSticker: att.type === 'sticker', compression });
-        att.altText = record.altText;
-        if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
-      }
-    } catch {
-      // LLM failure: leave altText unset, attachment still renders with thumbnail
+  // 3. Resolve via shared resolver (handles cache lookup + LLM)
+  if (att.type === 'animation') {
+    // resolve mimetype (consumed by extractFrames)
+    const format = await sharp(buffer).metadata().then(meta => meta.format ?? 'unknown');
+    let mime = 'application/octet-stream';
+    if (format && format in FORMAT_TO_MIME) {
+      mime = FORMAT_TO_MIME[format as SupportedFormat];
     }
-  } catch {
-    // Download or thumbnail failure: leave attachment as-is
+
+    const extract = await extractFrames(buffer, { mimeType: mime });
+    const record = await animationResolver.resolve({
+      cacheKey: extract.cacheKey,
+      frames: extract.frames,
+      caption,
+      isSticker: true, // OneBot doesn't differentiate animated stickers, treat all as stickers for better alt text
+      duration: extract.frameTimestamps ? Math.max(...extract.frameTimestamps) : undefined,
+      frameTimestamps: extract.frameTimestamps,
+    });
+    att.altText = record.altText;
+    if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
+
+  } else {
+    const record = await imageResolver.resolve(Buffer.from(att.thumbnailWebp, 'base64'), caption, buffer, { isSticker: att.type === 'sticker', compression });
+    att.altText = record.altText;
+    if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
   }
 };

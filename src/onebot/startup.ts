@@ -1,7 +1,9 @@
 import type { Logger } from '@guiiai/logg';
 
+import { adaptOneBotMessage } from './adaptation';
 import { resolveOneBotImageAltText } from './image-to-text';
-import { adaptOneBotMessage, createOneBotPlatformAdapter, createOneBotServer } from './index';
+import { createOneBotPlatformAdapter, createOneBotServer } from './index';
+import { createOneBotIngress } from './ingress';
 import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaption-types';
 import type { RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, persistEvent } from '../db';
@@ -52,52 +54,34 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
   const onebotChatIds = deps.chatIds.filter(id => deps.resolveChatPlatform(id) === 'onebot');
   const adapters = new Map<string, PlatformAdapter>();
 
+  // The ingress getApi closure and the server's onEvent form a cycle: ingress
+  // reads server.api lazily, and the server forwards frames into ingress.enqueue.
+  // A holder breaks the cycle without a forward `let` (which prefer-const rejects).
+  const serverHolder: { current?: ReturnType<typeof createOneBotServer> } = {};
+
+  const ingress = createOneBotIngress({
+    logger: deps.logger,
+    getApi: () => serverHolder.current?.api ?? null,
+    isWhitelisted: chatId => onebotChatIds.includes(chatId),
+    isBlocked: deps.isBlocked,
+    toBlockedMessageEvent: deps.toBlockedMessageEvent,
+    imageToTextChatIds: deps.imageToTextChatIds,
+    imageToTextResolver: deps.imageToTextResolver,
+    animationToTextResolver: deps.animationToTextResolver,
+    getImageToTextCompression: deps.getImageToTextCompression,
+    persistEvent: deps.persistEvent,
+    hydrateAltTextFromCache: deps.hydrateAltTextFromCache,
+    pushPipelineEvent: deps.pushPipelineEvent,
+    onDriverEvent: deps.onDriverEvent,
+    setOfflineMode: deps.setOfflineMode,
+    sendPlatformMessage: deps.sendPlatformMessage,
+  });
+
   const server = createOneBotServer(onebotConfig, {
-    onEvent: (chatId, event) => {
-      void (async () => {
-        try {
-          if (!onebotChatIds.includes(chatId)) return;
-
-          if (event.type === 'message' && deps.isBlocked(chatId, event.sender?.id)) {
-            const blockedEvent = deps.toBlockedMessageEvent(event);
-            deps.logger.withFields({ chatId, messageId: event.messageId }).debug('Redacted OneBot message from blocked user');
-            deps.persistEvent(blockedEvent);
-            const rc = deps.pushPipelineEvent(chatId, blockedEvent);
-            deps.onDriverEvent(chatId, rc);
-            return;
-          }
-
-          if (event.type === 'message') {
-            const text = contentToPlainText(event.content).trim();
-            if (text === '/offline' || text === '/online') {
-              const off = text === '/offline';
-              deps.setOfflineMode(chatId, off);
-              const reply = off
-                ? 'Offline mode enabled. I will only respond when @mentioned or replied to, then automatically return online.'
-                : 'Online mode enabled.';
-              await deps.sendPlatformMessage(chatId, reply);
-              return;
-            }
-
-            if (deps.imageToTextChatIds.has(chatId) && event.attachments.length > 0 && server.api) {
-              const caption = contentToPlainText(event.content);
-              const compression = deps.getImageToTextCompression(chatId);
-              await Promise.all(event.attachments.map(att =>
-                resolveOneBotImageAltText(att, caption, server.api!, deps.imageToTextResolver, deps.animationToTextResolver, compression)));
-            }
-          }
-
-          deps.persistEvent(event);
-          deps.hydrateAltTextFromCache(event);
-          const rc = deps.pushPipelineEvent(chatId, event);
-          deps.onDriverEvent(chatId, rc);
-        } catch (err) {
-          deps.logger.withError(err).error('OneBot event processing failed');
-        }
-      })();
-    },
+    onEvent: (raw, meta) => ingress.enqueue(raw, meta),
     log: deps.logger.withContext('onebot'),
   });
+  serverHolder.current = server;
 
   await server.start();
 
@@ -139,7 +123,13 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
 
     if (pulledMessages.length === 0) continue;
 
-    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(server.api!, msg))))
+    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(server.api!, msg, {
+      // Historical replay: derive the ordering timestamp from the message's
+      // server time rather than the wall clock, so replayed events keep their
+      // original order relative to one another and to live events.
+      receivedAtMs: msg.time * 1000,
+      utcOffsetMin: -new Date().getTimezoneOffset(),
+    }))))
       .map(deps.redactBlockedMessage);
 
     if (deps.imageToTextChatIds.has(chatId) && server.api) {
@@ -147,8 +137,18 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
         if (event.type === 'message' && event.attachments.length > 0) {
           const caption = contentToPlainText(event.content);
           const compression = deps.getImageToTextCompression(chatId);
-          await Promise.all(event.attachments.map(att =>
-            resolveOneBotImageAltText(att, caption, server.api!, deps.imageToTextResolver, deps.animationToTextResolver, compression)));
+          // Historical backfill is best-effort, unlike the live ingress path
+          // (which is fail-closed with bounded-retry-then-drop). Old QQ media
+          // references are often already expired, so a failure here must not
+          // abort startup — the event is still persisted and renders with its
+          // thumbnail. Live consistency is enforced by the ingress queue.
+          try {
+            await Promise.all(event.attachments.map(att =>
+              resolveOneBotImageAltText(att, caption, server.api!, deps.imageToTextResolver, deps.animationToTextResolver, compression)));
+          } catch (err) {
+            deps.logger.withError(err).withFields({ chatId, messageId: event.messageId })
+              .warn('OneBot replay alt-text resolution failed; keeping event without alt text');
+          }
         }
       }
     }
