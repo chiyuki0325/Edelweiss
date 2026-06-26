@@ -1,7 +1,6 @@
 import { enableMapSet, produce } from 'immer';
 
 import type { ICMessage, ICRuntimeEvent, ICSystemEvent, ICUserState, IntermediateContext } from './types';
-import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalBlockedMessageEvent,
   CanonicalDeleteEvent,
@@ -11,8 +10,9 @@ import type {
   CanonicalReactionEvent,
   CanonicalServiceEvent,
   CanonicalUser,
-} from '../adaptation/types';
+} from '../adaption-types';
 import type { RuntimeEvent } from '../runtime-event';
+import { contentToPlainText } from '../telegram/adaption';
 
 export type PipelineEvent = CanonicalIMEvent | RuntimeEvent;
 

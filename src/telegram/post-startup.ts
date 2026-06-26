@@ -1,7 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 
-import { contentToPlainText } from '../adaptation';
-import type { ContentNode } from '../adaptation/types';
+import { contentToPlainText } from './adaption';
+import type { ContentNode } from '../adaption-types';
 import type { loadCompaction, loadEvents, loadEventsWithId, loadMessageFileId, updateEventAttachments } from '../db';
 import { canExtractFrames, extractFrames } from '../media';
 import type { AnimationToTextResolver, CustomEmojiToTextResolver } from '../media';

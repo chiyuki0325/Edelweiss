@@ -5,7 +5,7 @@ import sharp from 'sharp';
 
 import { renderImageToTextSystemPrompt } from './image-to-text-prompt';
 import { callDescriptionLlm, createSemaphore } from './llm-description';
-import type { CanonicalAttachment } from '../adaptation/types';
+import type { CanonicalAttachment } from '../adaption-types';
 import type { LlmEndpoint } from '../llm/types';
 
 export interface ImageToTextCompressionConfig {

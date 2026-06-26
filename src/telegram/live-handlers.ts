@@ -1,9 +1,9 @@
 import type { Logger } from '@guiiai/logg';
 
-import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent, contentToPlainText, isServiceMessage } from '../adaptation';
+import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent, contentToPlainText, isServiceMessage } from './adaption';
 import type { TelegramEventSink } from './event-sink';
 import type { TelegramManager } from './manager';
-import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaptation/types';
+import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaption-types';
 import type { TelegramReactionSnapshotEntry, TelegramReactionUpdate } from './message/types';
 import type { TelegramMessageStore, TelegramReactionStore } from './stores';
 

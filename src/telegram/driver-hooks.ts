@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 
 import type { Logger } from '@guiiai/logg';
 
-import { adaptMessage } from '../adaptation';
+import { adaptMessage } from './adaption';
 import type { SentMessage as TelegramSentMessage } from './bot';
 import type { TelegramEventSink } from './event-sink';
 import type { TelegramManager } from './manager';

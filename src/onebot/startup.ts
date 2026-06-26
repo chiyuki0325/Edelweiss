@@ -1,9 +1,8 @@
 import type { Logger } from '@guiiai/logg';
 
-import { contentToPlainText } from '../adaptation';
 import { resolveOneBotImageAltText } from './image-to-text';
 import { adaptOneBotMessage, createOneBotPlatformAdapter, createOneBotServer } from './index';
-import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaptation/types';
+import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaption-types';
 import type { RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, persistEvent } from '../db';
 import type { getLastMessageId } from '../db/persistence';
@@ -12,6 +11,7 @@ import type { AnimationToTextResolver } from '../media/animation-to-text';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
 import type { PipelineEvent } from '../pipeline';
 import type { RenderedContext } from '../rendering';
+import { contentToPlainText } from '../telegram/adaption';
 
 export interface OneBotStartupDeps {
   config: Parameters<typeof createOneBotServer>[0] | undefined;

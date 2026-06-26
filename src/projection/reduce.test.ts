@@ -12,7 +12,7 @@ import type {
   CanonicalServiceEvent,
   CanonicalUser,
   ContentNode,
-} from '../adaptation/types';
+} from '../adaption-types';
 
 const alice: CanonicalUser = { id: '1', displayName: 'Alice', username: 'alice', isBot: false };
 const bob: CanonicalUser = { id: '2', displayName: 'Bob', isBot: false };

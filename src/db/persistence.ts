@@ -3,7 +3,6 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import type { DB } from './client';
 import { codec } from './codec';
 import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
-import { contentToPlainText } from '../adaptation';
 import type {
   CanonicalAttachment,
   CanonicalBlockedMessageEvent,
@@ -12,12 +11,13 @@ import type {
   CanonicalMessageEvent,
   CanonicalReactionEvent,
   CanonicalServiceEvent,
-} from '../adaptation/types';
+} from '../adaption-types';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
 import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../driver/types';
 import type { ImageAltTextRecord } from '../media/image-to-text';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
+import { contentToPlainText } from '../telegram/adaption';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from '../telegram/message';
 import type { Attachment } from '../telegram/message/types';
 import type { ConversationEntry } from '../unified-api/types';

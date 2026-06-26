@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 
 import type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';
-import type { CanonicalAttachment, CanonicalUser, ContentNode } from '../adaptation/types';
+import type { CanonicalAttachment, CanonicalUser, ContentNode } from '../adaption-types';
 import type { ICBlockedMessage, ICMessage, ICRuntimeEvent, ICSystemEvent, IntermediateContext } from '../projection/types';
 
 export type { RenderParams, RenderedContentPiece, RenderedContext, RenderedContextSegment } from './types';

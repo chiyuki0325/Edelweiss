@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { rcToXml, render } from './index';
-import type { CanonicalUser, ContentNode } from '../adaptation/types';
+import type { CanonicalUser, ContentNode } from '../adaption-types';
 import type { ICBlockedMessage, ICMessage, ICSystemEvent, IntermediateContext } from '../projection/types';
 
 // --- helpers ---

@@ -5,7 +5,7 @@ import type { DependencyContainer } from 'tsyringe';
 
 import { TOKENS } from './tokens';
 import type { AltTextPolicy, ChatPolicy, DescriptionSemaphores, FeatureSets, OneBotHolder, Semaphore, Token } from './tokens';
-import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from '../adaptation/types';
+import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from '../adaption-types';
 import { createBackgroundTaskManager } from '../background-task/manager';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from '../config/config';
 import { useLogger } from '../config/logger';

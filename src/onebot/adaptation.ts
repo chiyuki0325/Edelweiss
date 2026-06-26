@@ -7,14 +7,15 @@ import type {
   OneBotMessageSegment,
   OneBotNoticeEvent,
 } from './types';
-import { captureUtcOffset } from '../adaptation/index';
 import type {
   CanonicalAttachment,
   CanonicalIMEvent,
   CanonicalMessageEvent,
   CanonicalUser,
   ContentNode,
-} from '../adaptation/types';
+} from '../adaption-types';
+
+const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
 
 export const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
   id: String(user_id),

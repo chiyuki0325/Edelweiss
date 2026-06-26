@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 
 import type { OneBotApiClient } from './server';
-import type { CanonicalAttachment } from '../adaptation/types';
+import type { CanonicalAttachment } from '../adaption-types';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
 import { extractFrames } from '../media/frame-extractor';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';

@@ -1,6 +1,6 @@
 import type { Logger } from '@guiiai/logg';
 
-import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from '../adaptation/types';
+import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent, ContentNode } from '../adaption-types';
 import type { createBackgroundTaskManager } from '../background-task/manager';
 import type { BackgroundTasksConfig, Config, RuntimeConfig } from '../config/config';
 import type { DB } from '../db/client';

@@ -1,6 +1,6 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode, ServiceAction } from '../adaptation/types';
+import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode, ServiceAction } from '../adaption-types';
 import type { RuntimeEventData } from '../runtime-event';
 import type { Attachment, ForwardInfo, MessageEntity, TelegramReactionSnapshotEntry } from '../telegram/message/types';
 

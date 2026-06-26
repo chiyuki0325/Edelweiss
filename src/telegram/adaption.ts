@@ -9,8 +9,8 @@ import type {
   CanonicalUser,
   ContentNode,
   ServiceAction,
-} from './types';
-import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from '../telegram/message';
+} from '../adaption-types';
+import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from './message';
 
 export type {
   CanonicalAttachment,
@@ -24,7 +24,7 @@ export type {
   CanonicalUser,
   ContentNode,
   ServiceAction,
-} from './types';
+} from '../adaption-types';
 
 const adaptUser = (user: TelegramUser): CanonicalUser => {
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ');

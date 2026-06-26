@@ -1,4 +1,3 @@
-import { contentToPlainText } from '../adaptation';
 import { selectStartupReplayChatIds } from './chat-selection';
 import { shellTaskFactory } from '../background-task/shell';
 import { getChatIds, resolveChatConfig } from '../config/config';
@@ -7,6 +6,7 @@ import { TOKENS } from '../container/tokens';
 import { loadCompaction, loadEvents, loadEventsWithId, loadKnownChatIds, markStaleSubagentsFailed, migrateV1ToV2, persistEvent, updateEventAttachments } from '../db';
 import { getLastMessageId } from '../db/persistence';
 import { startOneBot } from '../onebot/startup';
+import { contentToPlainText } from '../telegram/adaption';
 import { normalizeStickerSetMetadata } from '../telegram/pack-title';
 
 export const startApp = async () => {

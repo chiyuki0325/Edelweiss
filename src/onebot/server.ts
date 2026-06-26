@@ -16,7 +16,7 @@ import type {
   OneBotMessageEvent,
   OneBotMessageSegment,
 } from './types';
-import type { CanonicalIMEvent, CanonicalUser } from '../adaptation/types';
+import type { CanonicalIMEvent, CanonicalUser } from '../adaption-types';
 
 interface PendingCall {
   resolve: (value: unknown) => void;

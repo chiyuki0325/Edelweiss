@@ -1,4 +1,4 @@
-import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode } from '../adaptation/types';
+import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentNode } from '../adaption-types';
 
 export interface ICMessage {
   type: 'message';

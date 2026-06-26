@@ -59,6 +59,7 @@ src/
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── contacts.ts             # Contact list loader (contacts.json → Map<id, displayName>)
 ├── runtime-event.ts        # RuntimeEvent types for Driver-generated synthetic events (e.g. background task completion)
+├── adaption-types.ts       # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
 ├── config/
 │   ├── config.ts           # Unified YAML config loader (Valibot schema)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
@@ -71,10 +72,6 @@ src/
 │   ├── chat-selection.test.ts # Startup chat selection tests
 │   ├── platform-registry.ts # Driver PlatformAdapter registry for platform startup modules
 │   └── platform-registry.test.ts # Platform registry tests
-├── adaptation/             # Layer 1: Platform Event → Canonical Event
-│   ├── types.ts            # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
-│   ├── index.ts            # adaptMessage, adaptEdit, adaptDelete, parseContent, contentToPlainText + re-exports
-│   └── index.test.ts       # Adaptation unit tests
 ├── projection/             # Layer 2: IC' = Reducers(IC, Event)
 │   ├── types.ts            # IntermediateContext, ICMessage, ICSystemEvent, ICUserState
 │   ├── reduce.ts           # reduce(IC, CanonicalIMEvent) → IC' with Immer
@@ -187,6 +184,8 @@ src/
 │   └── lottie-frame.d.ts    # Type declarations for lottie-frame native addon
 └── telegram/
     ├── index.ts             # Telegram public entry + startup handle aggregation
+    ├── adaption.ts          # Telegram message/edit/delete/reaction/service → CanonicalIMEvent conversion, rich text parsing, contentToPlainText
+    ├── adaption.test.ts     # Telegram adaptation and rich text parser tests
     ├── manager.ts           # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
     ├── event-sink.ts        # Persist/hydrate/push-to-pipeline/notify-driver event sink used by Telegram ingress
     ├── live-handlers.ts     # Telegram live ingress handlers, reactions, typing events, /offline and /online commands
@@ -248,14 +247,14 @@ Top-level directories:
 
 Platform types (`Attachment`, `ForwardInfo`, `MessageEntity`) are defined in `telegram/message/types.ts` — they belong to the telegram layer. `db/schema.ts` imports them for JSON column annotations. Never define platform types in the DB layer.
 
-Canonical types (`CanonicalIMEvent`, `CanonicalUser`, `ContentNode`, etc.) are defined in `adaptation/types.ts`. `ContentNode` is the platform-agnostic rich text representation — Adaptation parses platform-specific encodings (e.g. Telegram's text + offset-based entities) into `ContentNode[]` trees. All IDs in canonical types are strings (platform-agnostic).
+Canonical types (`CanonicalIMEvent`, `CanonicalUser`, `ContentNode`, etc.) are defined in `adaption-types.ts`. `ContentNode` is the platform-agnostic rich text representation — platform adapters parse platform-specific encodings (e.g. Telegram's text + offset-based entities in `telegram/adaption.ts`) into `ContentNode[]` trees. All IDs in canonical types are strings (platform-agnostic).
 
 ### Imports
 
 Use relative paths for all internal imports:
 ```ts
 import { loadConfig } from './config/config';
-import type { CanonicalIMEvent } from '../adaptation/types';
+import type { CanonicalIMEvent } from '../adaption-types';
 ```
 
 ## Commands

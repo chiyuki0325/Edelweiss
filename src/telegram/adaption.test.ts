@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage, parseContent } from './index';
-import type { ContentNode } from './types';
-import type { MessageEntity, TelegramMessage, TelegramMessageEdit } from '../telegram/message/types';
+import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage, parseContent } from './adaption';
+import type { ContentNode } from '../adaption-types';
+import type { MessageEntity, TelegramMessage, TelegramMessageEdit } from './message/types';
 
 // --- helpers ---
 
