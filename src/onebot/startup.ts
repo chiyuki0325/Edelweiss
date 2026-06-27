@@ -108,7 +108,17 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
     if (!server.api) return undefined;
     const existing = adapters.get(chatId);
     if (existing) return existing;
-    const adapter = createOneBotPlatformAdapter(server.api, deps.runtimeConfig, deps.logger);
+    const adapter = createOneBotPlatformAdapter({
+      api: server.api,
+      runtime: deps.runtimeConfig,
+      logger: deps.logger,
+      selfSentSink: {
+        getSelfId: () => server.selfId,
+        persistEvent: deps.persistEvent,
+        hydrateAltTextFromCache: deps.hydrateAltTextFromCache,
+        pushPipelineEvent: deps.pushPipelineEvent,
+      },
+    });
     adapters.set(chatId, adapter);
     deps.registerAdapter(chatId, adapter);
     return adapter;

@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort) |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 29 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -494,6 +494,8 @@ Before any actual provider request is sent, the Driver applies a final request-l
 ### isSelfSent Pipeline
 
 Bot's own sent messages are marked `isSelfSent: true` at creation time by the synthetic event bypass in `src/telegram/driver-hooks.ts`. This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
+
+OneBot mirrors this: `createOneBotPlatformAdapter` (`src/onebot/index.ts`) takes an optional `selfSentSink` and, after a successful `api.sendMessage`, builds a synthetic self-sent event via `buildOneBotSelfSentEvent` (`src/onebot/adaptation.ts`) and runs the same ordering — persist event → hydrate alt text → push to Pipeline — **without** notifying the Driver (the bot must not wake on its own message). The OneBot send API returns only a message id (no server timestamp), so `timestampSec` is derived from `receivedAtMs` like delete events (see §Dual Timestamps); the synthetic sender is the OneBot `selfId` captured at lifecycle connect. If `selfId` is unavailable the injection is skipped. The sink is wired in `src/onebot/startup.ts` from the same `persistEvent` / `hydrateAltTextFromCache` / `pushPipelineEvent` deps used by ingress.
 
 ### Context Optimizations
 

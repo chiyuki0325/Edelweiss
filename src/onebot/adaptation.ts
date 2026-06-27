@@ -36,6 +36,42 @@ export const oneBotMessageChatId = (event: OneBotMessageEvent): string =>
     ? String(event.group_id!)
     : `private:${event.user_id}`;
 
+export interface OneBotSelfSentParams {
+  chatId: string;
+  messageId: string;
+  selfId: string;
+  text: string;
+  replyToMessageId?: string;
+  receivedAtMs?: number;
+  utcOffsetMin?: number;
+}
+
+// Construct the synthetic CanonicalMessageEvent for a message the bot just sent.
+// Mirrors Telegram's `injectSyntheticEvent` (src/telegram/driver-hooks.ts): the
+// bot's own outbound messages must enter Projection so that user replies to them
+// resolve `repliesToMe`, offline-mode mention/reply gating sees them, and they
+// appear in IC/RC. The OneBot send API returns only a message id (no server
+// timestamp), so `timestampSec` is derived from `receivedAtMs` like delete
+// events (see CLAUDE.md §Dual Timestamps).
+export const buildOneBotSelfSentEvent = (params: OneBotSelfSentParams): CanonicalMessageEvent => {
+  const receivedAtMs = params.receivedAtMs ?? Date.now();
+  const utcOffsetMin = params.utcOffsetMin ?? captureUtcOffset();
+  const content: ContentNode[] = params.text ? [{ type: 'text', text: params.text }] : [];
+  return {
+    type: 'message',
+    chatId: params.chatId,
+    messageId: params.messageId,
+    sender: { id: params.selfId, displayName: params.selfId, isBot: true },
+    receivedAtMs,
+    timestampSec: Math.floor(receivedAtMs / 1000),
+    utcOffsetMin,
+    content,
+    attachments: [],
+    isSelfSent: true,
+    ...(params.replyToMessageId && { replyToMessageId: params.replyToMessageId }),
+  };
+};
+
 export const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
   id: String(user_id),
   displayName: card && card !== '' ? card : nickname,
