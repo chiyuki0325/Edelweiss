@@ -125,6 +125,8 @@ export const startApp = async () => {
     },
     loadCompaction: chatId => loadCompaction(db, chatId),
     loadEvents: (chatId, afterMs) => loadEvents(db, chatId, afterMs),
+    loadEventsWithId: (chatId, afterMs) => loadEventsWithId(db, chatId, afterMs),
+    updateEventAttachments: (eventId, attachments) => updateEventAttachments(db, eventId, attachments),
     getLastMessageId: chatId => getLastMessageId(db, chatId),
     registerAdapter: (chatId, adapter) => platformRegistry.setAdapter(chatId, adapter),
   });
@@ -166,4 +168,5 @@ export const startApp = async () => {
   logger.log('Edelweiss is running');
 
   await telegram?.runPostStartupTasks();
+  await oneBotHolder.handle?.runPostStartupTasks();
 };

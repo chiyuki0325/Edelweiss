@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed) |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort) |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 29 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -170,13 +170,16 @@ src/
 │   └── index.ts            # Barrel exports
 ├── ingress/                # Platform-agnostic per-chat ordered ingress queue
 │   ├── session-ingress-queue.ts # createSessionIngressQueue: speculative async transform + in-order commit (shared by Telegram + OneBot)
-│   └── session-ingress-queue.test.ts # Ingress queue tests
+│   ├── session-ingress-queue.test.ts # Ingress queue tests
+│   └── message-dedup.ts     # createMessageDedup: platform-agnostic (chatId, messageId) dedup with bounded LRU (shared by Telegram manager + OneBot ingress/history-pull)
 ├── onebot/
 │   ├── index.ts             # OneBot exports + PlatformAdapter factory for Driver send/download hooks
-│   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress wiring, history pull, PlatformAdapter registration
+│   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress wiring, history pull (shared dedup), PlatformAdapter registration, post-startup task assembly
+│   ├── post-startup.ts      # OneBot cold-start alt-text backfill: resolves historical image/animation events lacking alt text, persists attachments, replays affected chats (best-effort)
+│   ├── post-startup.test.ts # OneBot alt-text backfill tests
 │   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client; captures ingress meta at the WS frame entry and forwards raw events
-│   ├── ingress.ts           # createOneBotIngress: per-chat ordered queue + bounded-retry-then-drop transform (adapt + alt-text); attemptWithBudget policy
-│   ├── ingress.test.ts      # OneBot ingress + attemptWithBudget tests
+│   ├── ingress.ts           # createOneBotIngress: per-chat ordered queue + bounded-retry-then-drop transform (adapt + alt-text); attemptWithBudget policy; shared-dedup gating
+│   ├── ingress.test.ts      # OneBot ingress + attemptWithBudget + dedup tests
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
 │   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; OneBotIngressMeta capture, applies entry-time timestamps
 │   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
@@ -325,6 +328,10 @@ The queue is fail-closed. If the head event's transform does not succeed, that c
 **Telegram**: the queue's `transform` runs `hydrateAttachments` (image/animation/custom-emoji-to-text + thumbnails); adaptation itself is pure. The shared queue retries a failing transform **forever** — safe because Telegram fileIds stay valid indefinitely.
 
 **OneBot** (`src/onebot/ingress.ts`): unlike Telegram, OneBot **adaptation does network** (`getGroupMemberInfo`, image URL `fetch` for sticker/animation classification), so the WS server forwards *raw* events plus ingress meta and the queue's `transform` runs adaptation **and** alt-text resolution. Notice events adapt synchronously at enqueue (no network) and are keyed by chatId there. Because QQ media URLs / file references **expire**, infinite retry could wedge a chat permanently; instead OneBot wraps the message transform in `attemptWithBudget` — a terminable, never-fail-open exponential-backoff retry bounded by a wall-clock budget (`transformBudgetMs`, default 90s). On budget exhaustion the **whole event is dropped before persist/pipeline** (never admitted with degraded/empty alt text), so the commit cursor keeps advancing and live ingress stays consistent with cold-start replay (the event simply never exists in DCP on either path). `resolveOneBotImageAltText` is fail-closed — it throws on download/LLM failure so the bounded-retry governs it. Historical replay backfill in `startup.ts` stays best-effort (alt-text failures are caught and logged, not fatal), mirroring Telegram's async cold-start hydration.
+
+**OneBot message dedup + history/live race**: OneBot uses the platform-agnostic `createMessageDedup` (`src/ingress/message-dedup.ts`, the same set-based bounded-LRU dedup Telegram's manager uses) keyed by `(chatId, message_id)`. A **single** dedup instance is created in `startOneBot` and shared by two paths: live ingress (`createOneBotIngress.enqueue`, message events only — notices have no stable per-message identity) and the cold-start `get_group_msg_history` pull. The WS server must be listening — and may already be delivering live frames — before history can be pulled, so a message arriving in that overlap window would otherwise be persisted twice (once live, once from history). Deduping across both paths by reserving `(chatId, message_id)` on first sighting closes the race without buffering or pausing live ingress: whichever path calls `tryAdd` first wins, the other skips. Dedup is consulted *before* the queue (live) and *before* adaptation (history pull).
+
+**OneBot cold-start alt-text backfill** (`src/onebot/post-startup.ts`): images/animations that entered the DB while image-to-text was disabled (or whose live resolution was dropped by the bounded-retry budget) carry no alt text. After `startOneBot` completes its history pull, the orchestrator calls `handle.runPostStartupTasks()` (alongside Telegram's), which walks persisted history per whitelisted OneBot chat, re-resolves uncached image/animation/sticker attachments via `resolveOneBotImageAltText`, persists the mutated attachments back with `updateEventAttachments`, then re-hydrates and replays affected chats. Unlike Telegram (which queries alt text from the cache at render time), OneBot bakes resolved alt text directly into persisted event attachments, so the backfill must persist attachments back. Best-effort per CLAUDE.md: download/LLM failures (frequently expired QQ media) are caught and logged, never fatal.
 
 ### Dual Telegram Client
 

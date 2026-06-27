@@ -1,20 +1,4 @@
-export const createMessageDedup = (maxSize = 10000) => {
-  const seen = new Set<string>();
-  const queue: string[] = [];
-
-  return {
-    tryAdd(chatId: string, messageId: number): boolean {
-      const key = `${chatId}:${messageId}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      queue.push(key);
-      while (queue.length > maxSize) {
-        const old = queue.shift()!;
-        seen.delete(old);
-      }
-      return true;
-    },
-  };
-};
+// Dedup logic is platform-agnostic and shared with OneBot; the implementation
+// lives in src/ingress/message-dedup.ts. Re-exported here so existing Telegram
+// imports (telegram/message barrel) keep working.
+export { createMessageDedup } from '../../ingress/message-dedup';

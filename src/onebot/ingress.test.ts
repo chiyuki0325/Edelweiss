@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { attemptWithBudget, createOneBotIngress } from './ingress';
 import type { OneBotIngressDeps } from './ingress';
-import type { OneBotNoticeEvent } from './types';
+import type { OneBotMessageEvent, OneBotNoticeEvent } from './types';
 import type { CanonicalIMEvent } from '../adaption-types';
 import { setupLogger, useLogger } from '../config/logger';
+import { createMessageDedup } from '../ingress/message-dedup';
 
 setupLogger();
 
@@ -74,6 +75,7 @@ const baseDeps = (overrides: Partial<OneBotIngressDeps>): OneBotIngressDeps => (
   onDriverEvent: () => {},
   setOfflineMode: () => {},
   sendPlatformMessage: () => Promise.resolve(),
+  dedup: createMessageDedup(),
   ...overrides,
 });
 
@@ -86,7 +88,24 @@ const noticeRecall = (groupId: number, messageId: number): OneBotNoticeEvent => 
   message_id: messageId,
 });
 
+const groupMessage = (groupId: number, messageId: number, text = 'hi'): OneBotMessageEvent => ({
+  post_type: 'message',
+  message_type: 'group',
+  time: Math.floor(Date.now() / 1000),
+  self_id: 1,
+  user_id: 42,
+  group_id: groupId,
+  message_id: messageId,
+  message: [{ type: 'text', data: { text } }],
+  raw_message: text,
+  sender: { user_id: 42, nickname: 'alice' },
+});
+
 const meta = () => ({ receivedAtMs: Date.now(), utcOffsetMin: 0 });
+
+// Minimal API stub: text-only messages never touch the network, but
+// transformMessage still calls getApi() and throws if it returns null.
+const stubApi = () => ({} as NonNullable<ReturnType<OneBotIngressDeps['getApi']>>);
 
 describe('createOneBotIngress', () => {
   it('commits notice events through the queue and applies ingress meta', async () => {
@@ -118,5 +137,46 @@ describe('createOneBotIngress', () => {
 
     await vi.waitFor(() => expect(persisted).toHaveLength(1));
     expect(persisted[0]!.chatId).toBe('200');
+  });
+
+  it('admits a message only once when the same (chatId, messageId) is enqueued twice', async () => {
+    const persisted: CanonicalIMEvent[] = [];
+    const ingress = createOneBotIngress(baseDeps({
+      getApi: stubApi,
+      persistEvent: event => persisted.push(event),
+    }));
+
+    ingress.enqueue(groupMessage(100, 7), meta());
+    ingress.enqueue(groupMessage(100, 7), meta());
+
+    await vi.waitFor(() => expect(persisted).toHaveLength(1));
+    // Settle to prove the duplicate never commits a second event.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.type).toBe('message');
+  });
+
+  it('lets the cold-start history pull skip a message the live path already reserved', async () => {
+    const persisted: CanonicalIMEvent[] = [];
+    // A single shared dedup models the startup wiring: live ingress and the
+    // history pull consult the same instance, so the overlap window commits once.
+    const dedup = createMessageDedup();
+    const ingress = createOneBotIngress(baseDeps({
+      getApi: stubApi,
+      persistEvent: event => persisted.push(event),
+      dedup,
+    }));
+
+    ingress.enqueue(groupMessage(100, 7), meta());
+    await vi.waitFor(() => expect(persisted).toHaveLength(1));
+
+    // History pull reaches the same message — its tryAdd returns false, so the
+    // caller filters it out and never re-enqueues it.
+    expect(dedup.tryAdd('100', 7)).toBe(false);
+
+    // A genuinely new message from either path is still admitted.
+    expect(dedup.tryAdd('100', 8)).toBe(true);
+    ingress.enqueue(groupMessage(100, 9), meta());
+    await vi.waitFor(() => expect(persisted).toHaveLength(2));
   });
 });

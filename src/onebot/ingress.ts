@@ -5,6 +5,7 @@ import { resolveOneBotImageAltText } from './image-to-text';
 import type { OneBotApiClient } from './server';
 import type { OneBotMessageEvent, OneBotNoticeEvent } from './types';
 import type { CanonicalBlockedMessageEvent, CanonicalIMEvent, CanonicalMessageEvent } from '../adaption-types';
+import type { MessageDedup } from '../ingress/message-dedup';
 import { createSessionIngressQueue } from '../ingress/session-ingress-queue';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
@@ -89,6 +90,10 @@ export interface OneBotIngressDeps {
   setOfflineMode: (chatId: string, offline: boolean) => void;
   sendPlatformMessage: (chatId: string, text: string) => Promise<void>;
   transformBudgetMs?: number;
+  // Shared with the cold-start history pull so a message arriving in the overlap
+  // window (live WS already open while get_group_msg_history is still running) is
+  // only admitted once. Whichever path reserves (chatId, messageId) first wins.
+  dedup: MessageDedup;
 }
 
 export interface OneBotIngress {
@@ -188,6 +193,11 @@ export const createOneBotIngress = (deps: OneBotIngressDeps): OneBotIngress => {
 
       const chatId = oneBotMessageChatId(raw);
       if (!deps.isWhitelisted(chatId)) return;
+      // Dedup only message events (notices are deletes/services with no stable
+      // per-message identity to persist). A message seen via the live WS during
+      // the cold-start history pull window must not also be admitted from
+      // get_group_msg_history, and vice versa.
+      if (!deps.dedup.tryAdd(chatId, raw.message_id)) return;
       queue.enqueue({ chatId, raw, meta });
     },
   };
