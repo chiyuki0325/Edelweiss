@@ -115,7 +115,7 @@ In the theoretical model, `render(IC) → RC` with no extra parameters. In pract
 
 Compaction summary is NOT a Rendering concern — the Driver prepends the summary at merge time when assembling the final LLM API request. Rendering is unaware of compaction semantics; it only receives a cursor timestamp for filtering.
 
-**Current implementation**: late binding lives in the Driver. `injectLateBindingPrompt()` appends a final synthetic user message containing probe / mention / reply state. Rendering does not receive late-binding data; `RenderParams` only carries the compact cursor and bot identity.
+**Current implementation**: late binding lives in the Driver. `injectLateBindingPrompt()` appends a final synthetic user message containing mention / reply state. Rendering does not receive late-binding data; `RenderParams` only carries the compact cursor and bot identity.
 
 These are all provided by the Driver or computed at call time — there is no persistent "SessionState" entity in the theoretical model. Notably, Rendering does NOT need to know about TR positions — it serializes IC nodes sequentially (each carrying `receivedAtMs`), and the Driver groups RC segments into user messages based on TR `requestedAtMs` timestamps during merge.
 
@@ -163,7 +163,6 @@ Earlier design explored BotTurnEvent as an InternalEvent flowing back through Pr
 - Manages tool call loop with interrupt + re-schedule on new external messages (see §Tool Call Loop Interleaving below)
 - Standard append-only LLM client with restart consistency
 - **Dual provider**: OpenAI Chat Completions (`openai-chat`) and OpenAI Responses API (`responses`), selected per-model via `apiFormat` config
-- **Probe gate**: cheap pre-check model decides whether to respond in group chats when not explicitly mentioned
 - **Compaction**: dual water mark (trigger at `maxContextTokens`, retain `workingWindowTokens`). Compaction state stored in dedicated `compactions` table (append-only). Compact cursor passed to Rendering for viewport filtering.
 
 ### Provider-Specific Metadata (in TRs only)
@@ -320,7 +319,7 @@ None of these reasoning field names are part of the official OpenAI Chat Complet
 The Driver uses alien-signals (signal/computed/effect) for reactive scheduling. Per-chat state is modeled as signals:
 
 - `rc: signal<RenderedContext>` — latest RC snapshot, updated by `handleEvent`
-- `lastProcessedMs: signal<number>` — timestamp of last TR or probe, updated on persist
+- `lastProcessedMs: signal<number>` — timestamp of last TR, updated on persist
 - `running: signal<boolean>` — whether a step loop is active
 - `failedRc: signal<RenderedContext | null>` — failure latch, cleared on new RC
 - `compactionMeta: signal<CompactionSessionMeta | null>` — loaded from DB on scope creation, updated on compaction

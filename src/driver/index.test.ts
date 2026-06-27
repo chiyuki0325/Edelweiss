@@ -55,10 +55,6 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     maxContextEstTokens: 100_000,
     workingWindowEstTokens: 50_000,
   },
-  probe: {
-    enabled: false,
-    model: endpoint,
-  },
   subagents: {
     enabled: false,
     model: endpoint,
@@ -131,10 +127,8 @@ const createTestDriver = (
 }, {
   loadTurnResponses: async () => [],
   persistTurnResponse: async () => {},
-  persistProbeResponse: async () => {},
   sendMessage: async () => ({ messageId: 1, date: 1 }),
   loadCompaction: () => null,
-  loadLastProbeTime: () => 0,
   persistCompaction: () => {},
   setCompactCursor: () => undefined,
   runtimeConfig,

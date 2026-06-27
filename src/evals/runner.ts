@@ -175,8 +175,6 @@ const buildEntries = async (
   if (scenario.lateBinding !== false) {
     const lateBinding = await renderLateBindingPrompt({
       timeNow: scenario.lateBinding?.timeNow ?? new Date().toISOString(),
-      isProbeEnabled: scenario.lateBinding?.isProbeEnabled,
-      isProbing: scenario.lateBinding?.isProbing,
       isMentioned: scenario.lateBinding?.isMentioned,
       isReplied: scenario.lateBinding?.isReplied,
       recentSendMessageHumanLikenessXml: scenario.lateBinding?.recentSendMessageHumanLikenessXml,

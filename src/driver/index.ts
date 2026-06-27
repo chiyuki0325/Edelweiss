@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import type { Logger } from '@guiiai/logg';
 import { computed, effect, signal } from 'alien-signals';
 
-import { callLlm, type ToolSchema } from './call-llm';
 import { runCompaction } from './compaction';
 import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, latestExternalEventMs, latestInterruptingExternalEventMs, wasToolLoopInterrupted } from './context';
 import { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
@@ -14,7 +13,7 @@ import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
-import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, ProbeResponseV2, TurnResponseV2 } from './types';
+import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
@@ -38,24 +37,16 @@ const localTimeNow = (): string => {
 export { mergeContext } from './merge';
 export { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 export type { DriverConfig } from './types';
-export type { TurnResponseV2, ProbeResponseV2 } from './types';
+export type { TurnResponseV2 } from './types';
 export type { ProviderFormat } from '../llm/types';
 
 const MAX_STEPS = Infinity;
 
-const toToolSchema = (t: CahciuaTool): ToolSchema => ({
-  name: t.function.name,
-  parameters: t.function.parameters,
-  ...(t.function.description ? { description: t.function.description } : {}),
-});
-
 export const createDriver = (config: DriverConfig, deps: {
   loadTurnResponses: (chatId: string, afterMs?: number, agentId?: string) => Promise<TurnResponseV2[]>;
   persistTurnResponse: (chatId: string, tr: TurnResponseV2) => Promise<void>;
-  persistProbeResponse: (chatId: string, probe: ProbeResponseV2) => Promise<void>;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number, attachments?: SendMessageAttachment[]) => Promise<{ messageId: number; date: number }>;
   loadCompaction: (chatId: string) => CompactionSessionMeta | null;
-  loadLastProbeTime: (chatId: string) => number;
   persistCompaction: (chatId: string, meta: CompactionSessionMeta) => void;
   setCompactCursor: (chatId: string, cursorMs: number) => RenderedContext | undefined;
   runtimeConfig: RuntimeConfig;
@@ -106,9 +97,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
   const getLastProcessedTime = async (chatId: string): Promise<number> => {
     const trs = await deps.loadTurnResponses(chatId);
-    const lastTr = trs.length > 0 ? trs[trs.length - 1]!.requestedAtMs : 0;
-    const lastProbe = deps.loadLastProbeTime(chatId);
-    return Math.max(lastTr, lastProbe);
+    return trs.length > 0 ? trs[trs.length - 1]!.requestedAtMs : 0;
   };
 
   const chatScopes = new Map<string, {
@@ -416,8 +405,6 @@ export const createDriver = (config: DriverConfig, deps: {
             ));
           }
           const tools: CahciuaTool[] = [...sharedTools, ...subagentTools, ...skillTools];
-          // Probe should not see subagent tools — it only needs to decide silence vs activation.
-          const probeTools: CahciuaTool[] = [...sharedTools, ...skillTools];
 
           const system = await renderSystemPrompt({
             currentChannel: chatConfig.platform,
@@ -440,8 +427,6 @@ export const createDriver = (config: DriverConfig, deps: {
           // --- Compute mention/reply/interrupt state from RC + TRs ---
           const rcVal = rcAtStart;
           const isInterrupted = wasToolLoopInterrupted(trs);
-          const lastMentionedAtMs = rcVal.reduce((max, seg) =>
-            (seg.mentionsMe || seg.repliesToMe || seg.isRuntimeEvent) ? Math.max(max, seg.receivedAtMs) : max, 0);
           const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
           const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
           const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
@@ -457,61 +442,8 @@ export const createDriver = (config: DriverConfig, deps: {
             activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
           };
 
-          // --- Probe gate ---
-          // Skip probe if: mentioned, replied to, runtime event, or tool loop was interrupted.
-          // In those cases go straight to primary model.
-          if (chatConfig.probe.enabled && !isInterrupted) {
-            const needsProbe = lastMentionedAtMs <= lastProcessedMs();
-
-            if (needsProbe) {
-              log.withFields({ chatId, lastMentionedAtMs, lastProcessedMs: lastProcessedMs() }).log('Running probe');
-
-              const probeEntries = [...ctx.entries];
-              injectLateBindingPrompt(probeEntries, await renderLateBindingPrompt({
-                ...lateBindingParams, isProbeEnabled: true, isProbing: true,
-              }));
-
-              const probeRequestedAt = Date.now();
-              const probeResult = await callLlm(
-                chatConfig.probe.model, probeEntries, system,
-                probeTools.map(toToolSchema),
-                { log, label: `probe:${chatId}`, maxImagesAllowed: chatConfig.probe.model.maxImagesAllowed },
-              );
-
-              const hasToolCalls = probeResult.entries.some(
-                e => e.kind === 'message' && e.role === 'assistant'
-                  && e.parts.some(
-                    p => p.kind === 'toolCall' && p.name !== 'dismiss_message'
-                    /* dismiss_message calls are not considered activations */,
-                  ),
-              );
-
-              const usage = probeResult.usage;
-
-              log.withFields({ chatId, usage, hasToolCalls }).log('Probe result');
-
-              await deps.persistProbeResponse(chatId, {
-                requestedAtMs: probeRequestedAt,
-                entries: probeResult.entries,
-                inputTokens: probeResult.usage.inputTokens,
-                outputTokens: probeResult.usage.outputTokens,
-                modelName: chatConfig.probe.model.model,
-                isActivated: hasToolCalls,
-                createdAt: Date.now(),
-              });
-
-              lastProcessedMs(probeRequestedAt);
-
-              if (!hasToolCalls) {
-                log.withFields({ chatId }).log('Probe: model chose silence');
-                return;
-              }
-              log.withFields({ chatId }).log('Probe: tool calls detected, activating primary model');
-            }
-          }
-
           injectLateBindingPrompt(ctx.entries, await renderLateBindingPrompt({
-            ...lateBindingParams, isProbeEnabled: chatConfig.probe.enabled, isProbing: false,
+            ...lateBindingParams,
           }));
 
           const runner = getOrCreateRunner(chatConfig.primaryModel);

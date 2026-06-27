@@ -171,18 +171,9 @@ describe('primary-late-binding.velin.md', () => {
     assertNoVueSyntaxLeak(rendered);
   });
 
-  it('renders activated state', async () => {
-    const rendered = await renderLateBinding({
-      timeNow: '2025-01-01T00:00:00Z',
-      isProbeEnabled: true, isProbing: false,
-    });
-    expect(rendered).toContain('decided to act');
-  });
-
   it('renders mentioned state', async () => {
     const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isMentioned: true });
     expect(rendered).toContain('mentioned');
-    expect(rendered).not.toContain('decided to act');
   });
 
   it('renders replied state', async () => {

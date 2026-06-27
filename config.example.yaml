@@ -8,13 +8,6 @@ models:
     # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
     # reasoningEffort: "xhigh"
     # forceToolCall: false             # force the model to always call a tool
-  probe:
-    apiBaseUrl: ""
-    apiKey: ""
-    model: "claude-haiku-4-5"
-    # timeoutSec: 60                 # optional: abort requests that stream for too long
-    # maxImagesAllowed: 10     # optional: Gemini Flash allows max 10 images
-
 telegram:
   botToken: ""
   apiId: 0
@@ -56,13 +49,6 @@ chats:
       maxContextEstTokens: 512000    # high water mark: trigger compaction when estimated context exceeds this
       workingWindowEstTokens: 8000   # low water mark: how many estimated tokens of raw content to retain after compaction
       # model: "primary"           # optional: override model for compaction calls (defaults to chat model)
-    # Probe: use a small/cheap model to decide whether to respond in group chats.
-    # When the bot is not @'d or replied to, the probe model runs first. If it
-    # chooses silence (no tool calls), the primary model is skipped entirely.
-    # If it produces tool calls, the primary model is activated for the real response.
-    probe:
-      enabled: false
-      model: "probe"              # references a key in models
     imageToText:
       enabled: false
       model: "primary"            # references a key in models

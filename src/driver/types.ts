@@ -11,16 +11,6 @@ export interface TurnResponseV2 {
   agentId?: string;
 }
 
-export interface ProbeResponseV2 {
-  requestedAtMs: number;
-  entries: ConversationEntry[];
-  inputTokens: number;
-  outputTokens: number;
-  modelName: string;
-  isActivated: boolean;
-  createdAt: number;
-}
-
 export interface DriverConfig {
   chatIds: string[];
   resolveChatConfig: (chatId: string) => ResolvedChatConfig;

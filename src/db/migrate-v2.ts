@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { probeResponses, probeResponsesV2, turnResponses, turnResponsesV2 } from './schema';
+import { turnResponses, turnResponsesV2 } from './schema';
 import type { ChatCompletionsEntry } from '../unified-api/chat-types';
 import {
   migrateChatEntries,
@@ -25,28 +25,26 @@ const migrateRowEntries = (provider: string, data: unknown): ConversationEntry[]
 };
 
 /**
- * One-shot backfill of turn_responses/probe_responses → v2 tables.
+ * One-shot backfill of turn_responses → turn_responses_v2.
  * Runs inside a single transaction; any failure rolls back and rethrows.
- * Skipped if v2 tables already contain rows.
+ * Skipped if the v2 table already contains rows.
  */
 export const migrateV1ToV2 = async (db: DB, logger: Logger): Promise<void> => {
   const log = logger.withContext('migrate-v2');
 
   const v2TurnCount = db.select({ c: sql<number>`count(*)` }).from(turnResponsesV2).get()?.c ?? 0;
-  const v2ProbeCount = db.select({ c: sql<number>`count(*)` }).from(probeResponsesV2).get()?.c ?? 0;
-  if (v2TurnCount > 0 || v2ProbeCount > 0) {
+  if (v2TurnCount > 0) {
     log.log('v2 tables already populated — skipping backfill');
     return;
   }
 
   const v1Turns = db.select().from(turnResponses).all();
-  const v1Probes = db.select().from(probeResponses).all();
-  if (v1Turns.length === 0 && v1Probes.length === 0) {
+  if (v1Turns.length === 0) {
     log.log('no v1 rows — skipping backfill');
     return;
   }
 
-  log.withFields({ turns: v1Turns.length, probes: v1Probes.length }).log('Backfilling v1 → v2');
+  log.withFields({ turns: v1Turns.length }).log('Backfilling v1 → v2');
 
   const turnInserts = await Promise.all(v1Turns.map(async row => ({
     chatId: row.chatId,
@@ -57,20 +55,8 @@ export const migrateV1ToV2 = async (db: DB, logger: Logger): Promise<void> => {
     modelName: '',
   })));
 
-  const probeInserts = await Promise.all(v1Probes.map(async row => ({
-    chatId: row.chatId,
-    requestedAt: row.requestedAt,
-    entries: await codec.stringify(migrateRowEntries(row.provider, row.data)),
-    inputTokens: row.inputTokens,
-    outputTokens: row.outputTokens,
-    modelName: '',
-    isActivated: row.isActivated,
-    createdAt: row.createdAt,
-  })));
-
   db.transaction(tx => {
     for (const t of turnInserts) tx.insert(turnResponsesV2).values(t).run();
-    for (const p of probeInserts) tx.insert(probeResponsesV2).values(p).run();
   });
 
   log.log('Backfill complete');

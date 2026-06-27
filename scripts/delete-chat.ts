@@ -24,8 +24,6 @@ const tables: { name: string; column: string }[] = [
   { name: 'turn_responses_v2', column: 'chat_id' },
   { name: 'subagents', column: 'chat_id' },
   { name: 'subagent_messages', column: 'chat_id' },
-  { name: 'probe_responses', column: 'chat_id' },
-  { name: 'probe_responses_v2', column: 'chat_id' },
   { name: 'compactions', column: 'chat_id' },
 ];
 

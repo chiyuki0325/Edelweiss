@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, probeResponsesV2, subagentMessages, subagents, turnResponsesV2, users } from './schema';
+import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, subagentMessages, subagents, turnResponsesV2, users } from './schema';
 import type {
   CanonicalAttachment,
   CanonicalBlockedMessageEvent,
@@ -13,7 +13,7 @@ import type {
   CanonicalServiceEvent,
 } from '../adaption-types';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
-import type { CompactionSessionMeta, ProbeResponseV2, TurnResponseV2 } from '../driver/types';
+import type { CompactionSessionMeta, TurnResponseV2 } from '../driver/types';
 import type { ImageAltTextRecord } from '../media/image-to-text';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
@@ -529,32 +529,6 @@ export const loadCompaction = (db: DB, chatId: string): CompactionSessionMeta | 
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
   };
-};
-
-// --- Probe response storage ---
-
-export const persistProbeResponse = async (db: DB, chatId: string, probe: ProbeResponseV2): Promise<void> => {
-  const entriesJson = await codec.stringify(probe.entries);
-  db.insert(probeResponsesV2).values({
-    chatId,
-    requestedAt: probe.requestedAtMs,
-    entries: entriesJson,
-    inputTokens: probe.inputTokens,
-    outputTokens: probe.outputTokens,
-    modelName: probe.modelName,
-    isActivated: probe.isActivated,
-    createdAt: probe.createdAt,
-  }).run();
-};
-
-export const loadLastProbeTime = (db: DB, chatId: string): number => {
-  const row = db.select({ requestedAt: probeResponsesV2.requestedAt })
-    .from(probeResponsesV2)
-    .where(eq(probeResponsesV2.chatId, chatId))
-    .orderBy(desc(probeResponsesV2.id))
-    .limit(1)
-    .get();
-  return row?.requestedAt ?? 0;
 };
 
 const reconstructImageAltTextRecord = (row: typeof imageAltTexts.$inferSelect): ImageAltTextRecord => ({

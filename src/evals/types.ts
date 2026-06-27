@@ -37,8 +37,6 @@ export interface EvalPromptVariant {
 
 export interface EvalLateBindingParams {
   timeNow?: string;
-  isProbeEnabled?: boolean;
-  isProbing?: boolean;
   isMentioned?: boolean;
   isReplied?: boolean;
   recentSendMessageHumanLikenessXml?: string;

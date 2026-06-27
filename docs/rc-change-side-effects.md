@@ -259,7 +259,6 @@ Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterru
 - 如果需要回复，但没有“打断性”的外部聊天消息，例如 RuntimeEvent，Driver 不走 debounce，直接启动 LLM call。
 - `executeLlmCall()` 会清掉 debounce timer，并停止 typing polling。
 - 它读取当前 RC、TR、compaction summary，组装上下文。
-- 如果 probe 开启，先跑 probe；probe 结果会写入 DB，并更新 `lastProcessedMs`。
 - 主模型运行后，每一步结果会通过 `persistTurnResponse()` 写入 DB，并更新 `lastProcessedMs`。
 - 工具调用可能继续产生副作用，比如发消息、下载文件、启动后台任务。
 

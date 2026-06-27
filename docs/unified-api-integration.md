@@ -20,7 +20,7 @@
 ┌──────────────────────────────────────────────────────┐
 │ 业务层（仅操作 ConversationEntry[]，IR）              │
 │   runner · context · merge · compaction              │
-│   send-message-human-likeness · probe 分析           │
+│   send-message-human-likeness · DB 存取              │
 │   DB 存取                                             │
 └──────────────────────────────────────────────────────┘
 ```
@@ -37,7 +37,7 @@
 
 | 文件 | 动作 |
 |---|---|
-| `src/db/schema.ts` | 新增 `turn_responses_v2` / `probe_responses_v2` 表 |
+| `src/db/schema.ts` | 新增 `turn_responses_v2` 表 |
 | `drizzle/XXXX_create_v2_tables.sql` | 建表 SQL |
 | `src/db/persistence.ts` | 改 persist/load 签名返回 IR，加启动迁移函数 |
 | `src/db/migrate-v2.ts`（新）| v1→v2 回填逻辑 |
@@ -89,14 +89,7 @@
 - 实现时若发现 unified-api 没做，停下来商量
   （当前决策：不动 unified-api）。
 
-### D5. probe_responses 也 v2
-- 原因：schema 统一、便于查询/分析，
-  启动迁移逻辑复用 TR v2 的。
-- probe 只写不读，除了 `turn_responses` 被
-  `send-message-human-likeness.ts` 扫用于 late-binding prompt
-  外，`probe_responses` 没有读取方。
-
-### D6. 启动时一次性回填（不是 SQL migration 做）
+### D5. 启动时一次性回填（不是 SQL migration 做）
 - 建表由 drizzle SQL 负责（只有 CREATE TABLE + 索引）。
 - 数据搬运由 TS 启动钩子做：
   ```
@@ -109,10 +102,9 @@
   }
   ```
 - **单事务**包住全部回填（SQLite 单库事务，行数可控）。
-- probe v2 同逻辑。
 - v1 表**保留不 drop**，留档备查/回滚。
 
-### D7. v2 表 shape
+### D6. v2 表 shape
 
 ```sql
 CREATE TABLE turn_responses_v2 (
@@ -127,19 +119,6 @@ CREATE TABLE turn_responses_v2 (
 CREATE INDEX turn_responses_v2_chat_requested_idx
   ON turn_responses_v2 (chat_id, requested_at);
 
-CREATE TABLE probe_responses_v2 (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  requested_at INTEGER NOT NULL,
-  entries TEXT NOT NULL,
-  input_tokens INTEGER NOT NULL,
-  output_tokens INTEGER NOT NULL,
-  model_name TEXT NOT NULL DEFAULT '',
-  is_activated INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX probe_responses_v2_chat_idx
-  ON probe_responses_v2 (chat_id);
 ```
 
 **列变化**（相对 v1）：
@@ -149,23 +128,22 @@ CREATE INDEX probe_responses_v2_chat_idx
 - `reasoning_signature_compat` → `model_name`
 - 从 v1 回填的行 `model_name = ''`（空串视作 mismatch，
   读时一律 strip reasoning）。
-- probe v2 也保留 `model_name`（方便查询）。
 
-### D8. 业务层强制 IR
+### D7. 业务层强制 IR
 - 边界如「架构边界」图所示。
 - `send-message-human-likeness.ts` 重写：扫 `ConversationEntry[]`，
   找 `OutputMessage.parts` 里 `kind:'toolCall' && name:'send_message'`，
   配对后续 `ToolResult(callId)` 的 `payload` 看 `ok:true`，
   提取 `args` JSON 里的 `text`。
 
-### D9. Anthropic 原生路径本次一起做
+### D8. Anthropic 原生路径本次一起做
 - 新增 `src/driver/streaming-messages.ts`。
 - config 增加 `apiFormat: 'anthropic-messages'`。
 - HTTP 客户端不关心 provider 差异，header/URL 按 provider
   透传到 fetch，不做封装抽象。
 - **重要**：`ProviderFormat` 不进 DB，只在 config 和 runner 分发处。
 
-### D10. Sharp async handler
+### D9. Sharp async handler
 codec handler 允许 async，`sharp(Buffer.from(base64))` 用 `async v => sharp(...)` 形式。sharp 构造同步 + lazy decode，`await` 无实际开销。
 
 ### D11. 删除 reasoningSignatureCompat
@@ -233,7 +211,6 @@ drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/startup/index
 | 迁移 helper | `src/unified-api/migrations.ts` | 全 |
 | codec（async handler）| `src/unified-api/codec.ts` | 14-18 |
 | RC 类型 | `src/rendering/types.ts` | 9-40 |
-| probe writer | `src/driver/index.ts` | 350-355 |
 | send-message 评估入口 | `src/driver/index.ts` | 295 |
 
 ## 7. 讨论历史摘要
@@ -245,7 +222,6 @@ drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/startup/index
 - reasoning 用 model_name 替代 compat。
 - trim 在 IR 上简化。
 - 含图 tool result 归 unified-api。
-- probe 也 v2。
 - 一次性回填。
 - v2 shape 确认，compat → model_name。
 - 业务层禁见 wire。
@@ -256,7 +232,6 @@ drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/startup/index
 - v1 不 drop,留档。
 - 回填单事务。
 - v2 回填行 model_name 留空。
-- probe v2 也存 model_name。
 - HTTP client 透传 header,不抽象。
 
 **轮 4**（用户进一步决策）：
@@ -271,7 +246,7 @@ drizzle migrator 跑完后、driver/pipeline 启动之前,在 `src/startup/index
 - 不双写,只写 v2。
 - drizzle migration 一个文件,两张表一起建。
 - codec 实例放 `src/db/codec.ts`,通过 `createCodec` 建并注册 Sharp。
-- 全量清理 compat:primaryModel / probeModel / compactionModel / sanitize*ForTR 全删。
+- 全量清理 compat:primaryModel / compactionModel / sanitize*ForTR 全删。
 - `loadTurnResponses` 新签名返回 `TurnResponseV2[]`(含 `entries`/`modelName`)。`composeContext` 收 `TurnResponseV2[]` + 当前 modelName,mismatch 时 `stripReasoning`。
 - merge 逻辑不变,操作对象换成 IR。
 - RC → IR:多段连续 RC 合并成一条 InputMessage(role:'user')。

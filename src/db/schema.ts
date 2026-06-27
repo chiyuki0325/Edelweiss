@@ -4,8 +4,6 @@ import type { CanonicalAttachment, CanonicalForwardInfo, CanonicalUser, ContentN
 import type { RuntimeEventData } from '../runtime-event';
 import type { Attachment, ForwardInfo, MessageEntity, TelegramReactionSnapshotEntry } from '../telegram/message/types';
 
-type AnyMsg = Record<string, any>;
-
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   firstName: text('first_name').notNull(),
@@ -161,20 +159,6 @@ export const subagentMessages = sqliteTable('subagent_messages', {
   index('subagent_messages_chat_to_idx').on(table.chatId, table.toAgentId),
 ]);
 
-export const probeResponsesV2 = sqliteTable('probe_responses_v2', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  chatId: text('chat_id').notNull(),
-  requestedAt: integer('requested_at').notNull(),
-  entries: text('entries').notNull(),
-  inputTokens: integer('input_tokens').notNull(),
-  outputTokens: integer('output_tokens').notNull(),
-  modelName: text('model_name').notNull().default(''),
-  isActivated: integer('is_activated', { mode: 'boolean' }).notNull().default(false),
-  createdAt: integer('created_at').notNull(),
-}, table => [
-  index('probe_responses_v2_chat_idx').on(table.chatId),
-]);
-
 export const compactions = sqliteTable('compactions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   chatId: text('chat_id').notNull(),
@@ -186,21 +170,6 @@ export const compactions = sqliteTable('compactions', {
   createdAt: integer('created_at').notNull(),
 }, table => [
   index('compactions_chat_id_idx').on(table.chatId),
-]);
-
-export const probeResponses = sqliteTable('probe_responses', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  chatId: text('chat_id').notNull(),
-  requestedAt: integer('requested_at').notNull(),
-  provider: text('provider').notNull(),
-  data: text('data', { mode: 'json' }).notNull().$type<AnyMsg[]>(),
-  inputTokens: integer('input_tokens').notNull(),
-  outputTokens: integer('output_tokens').notNull(),
-  reasoningSignatureCompat: text('reasoning_signature_compat').default(''),
-  isActivated: integer('is_activated', { mode: 'boolean' }).notNull().default(false),
-  createdAt: integer('created_at').notNull(),
-}, table => [
-  index('probe_responses_chat_idx').on(table.chatId),
 ]);
 
 export const imageAltTexts = sqliteTable('image_alt_texts', {

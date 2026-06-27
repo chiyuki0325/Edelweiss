@@ -10,7 +10,7 @@ import { createBackgroundTaskManager } from '../background-task/manager';
 import { getChatIds, loadConfig, resolveBackgroundTasks, resolveChatConfig, resolveModel, resolveRuntime } from '../config/config';
 import { useLogger } from '../config/logger';
 import { loadContacts } from '../contacts';
-import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLastProbeTime, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionSnapshot, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistProbeResponse, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionSnapshot } from '../db';
+import { createDatabase, loadCompaction, loadEvents, loadEventsWithId, loadImageAltTextByHash, loadKnownChatIds, loadLatestMessageContent, loadMessageAttachments, loadMessageFileId, loadMessageReactionSnapshot, loadTurnResponses, lookupChatId, persistCompaction, persistEvent, persistImageAltText, persistMessage, persistMessageDelete, persistMessageEdit, persistTurnResponse, runMigrations, updateEventAttachments, upsertMessageReactionSnapshot } from '../db';
 import { createDriver } from '../driver';
 import { createAnimationToTextResolver } from '../media/animation-to-text';
 import { emojiCacheKey } from '../media/custom-emoji-to-text';
@@ -453,12 +453,10 @@ export const buildContainer = (): Container => {
     }, {
       loadTurnResponses: (chatId, afterMs, agentId) => loadTurnResponses(db, chatId, afterMs, agentId),
       persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, tr),
-      persistProbeResponse: (chatId, probe) => persistProbeResponse(db, chatId, probe),
       sendMessage: telegram
         ? (chatId, text, replyToMessageId, attachments) => telegram.driverHooks.sendMessage(chatId, text, replyToMessageId, attachments)
         : async () => { throw new Error('send_message not available: no Telegram configured'); },
       loadCompaction: chatId => loadCompaction(db, chatId),
-      loadLastProbeTime: chatId => loadLastProbeTime(db, chatId),
       persistCompaction: (chatId, meta) => persistCompaction(db, chatId, meta),
       setCompactCursor: (chatId, cursorMs) => pipeline.setCompactCursor(chatId, cursorMs),
       runtimeConfig,

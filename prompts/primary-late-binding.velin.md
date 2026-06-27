@@ -3,8 +3,6 @@ import { computed } from 'vue'
 
 const props = defineProps({
   timeNow: { type: String, required: true },
-  isProbeEnabled: { type: Boolean, default: false },
-  isProbing: { type: Boolean, default: false },
   isMentioned: { type: Boolean, default: false },
   isReplied: { type: Boolean, default: false },
   recentSendMessageHumanLikenessXml: { type: String, default: '' },
@@ -37,12 +35,7 @@ Reminder: call `send_message` to speak (multiple calls = multiple messages). <te
 Your previous tool call sequence was interrupted by new messages. Review the new messages, then continue with your intended tool calls if still appropriate.
 
 </template>
-<template v-if="isProbeEnabled && !isProbing">
-
-You have already decided to act after deliberation. Make your tool calls now.
-
-</template>
-<template v-else-if="isMentioned">
+<template v-if="isMentioned">
 
 You were mentioned — you will likely want to respond.
 

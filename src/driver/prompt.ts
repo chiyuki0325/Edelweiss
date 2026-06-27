@@ -61,8 +61,6 @@ export const renderSubagentSystemPrompt = async (params: {
 
 export const renderLateBindingPrompt = async (params: {
   timeNow: string;
-  isProbeEnabled?: boolean;
-  isProbing?: boolean;
   isMentioned?: boolean;
   isReplied?: boolean;
   recentSendMessageHumanLikenessXml?: string;

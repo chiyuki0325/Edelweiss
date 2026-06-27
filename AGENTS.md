@@ -23,10 +23,10 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates, fetch reaction actors via userbot for count-only updates |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, probe_responses, probe_responses_v2, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 29 migrations |
+| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, blocked-message placeholders as deleted messages, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, Telegram-only `react_message`, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), probe/activate gate (small model decides silence vs activation), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), manual tool execution, Telegram-only `react_message`, per-step TR persistence (v2 schema), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -123,7 +123,7 @@ src/
 │   ├── shared.ts           # Shared helpers (image extraction, text assembly)
 │   └── index.ts            # Barrel exports
 ├── driver/                 # Driver: RC + TRs → LLM API calls
-│   ├── types.ts            # TurnResponseV2, ProbeResponseV2, DriverConfig, CompactionConfig, CompactionSessionMeta, PlatformAdapter
+│   ├── types.ts            # TurnResponseV2, DriverConfig, CompactionConfig, CompactionSessionMeta, PlatformAdapter
 │   ├── context.ts          # Pure functions: context composition (ConversationEntry[]), token trimming, reasoning sanitization, working window cursor
 │   ├── context.test.ts     # Context composition tests
 │   ├── merge.ts            # mergeContext(RC, TRs) → ContextChunk[] — timestamp-ordered interleave
@@ -163,10 +163,10 @@ src/
 │   └── index.ts            # Public eval harness exports
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
-│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, probeResponses, probeResponsesV2, imageAltTexts, subagents, subagentMessages, backgroundTasks, messageReactionSnapshots tables
-│   ├── persistence.ts      # CRUD: persistEvent, persistTurnResponseV2, persistProbeResponseV2, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponsesV2, loadCompaction, subagent lifecycle, background task persistence
+│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, imageAltTexts, subagents, subagentMessages, backgroundTasks, messageReactionSnapshots tables
+│   ├── persistence.ts      # CRUD: persistEvent, persistTurnResponseV2, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponsesV2, loadCompaction, subagent lifecycle, background task persistence
 │   ├── codec.ts            # ConversationEntry ↔ JSON serialization helpers
-│   ├── migrate-v2.ts       # v1 → v2 data migration (turnResponses → turnResponsesV2, probeResponses → probeResponsesV2)
+│   ├── migrate-v2.ts       # v1 → v2 data migration (turnResponses → turnResponsesV2)
 │   └── index.ts            # Barrel exports
 ├── ingress/                # Platform-agnostic per-chat ordered ingress queue
 │   ├── session-ingress-queue.ts # createSessionIngressQueue: speculative async transform + in-order commit (shared by Telegram + OneBot)
@@ -227,7 +227,7 @@ Top-level directories:
 - `prompts/` — all LLM prompt templates (velin `.velin.md` files), rendered at runtime via `@velin-dev/core`
   - `primary-system.velin.md` — main system prompt for chat LLM calls; **bot tone/style is hardcoded here**
   - `subagent-system.velin.md` — internal helper-agent prompt; intentionally contains no group-chat/platform/end-user concepts
-  - `primary-late-binding.velin.md` — context-aware injection (probe/mention/reply state, recent send_message human-likeness feedback, background task status)
+  - `primary-late-binding.velin.md` — context-aware injection (mention/reply state, recent send_message human-likeness feedback, background task status)
   - `IDENTITY.velin.md` — bot identity / personality definition (loaded by prompt renderer); **bot persona is hardcoded here**
   - `compaction-system.velin.md` — compaction LLM system prompt
   - `compaction-late-binding.velin.md` — compaction LLM user instruction (output format)
@@ -432,7 +432,7 @@ Anthropic and DeepSeek models return reasoning as thinking text + cryptographic 
 Historical TRs keep provider-native tool call IDs exactly as returned. Some providers emit IDs that are valid for themselves but invalid for Anthropic Messages API replay (for example `send_message:103`, which violates `^[A-Za-z0-9_-]+$`). To keep the pipeline simple, `composeContext()` always sanitizes tool call IDs via `sanitizeToolCallIdsForMessagesApi()` after reasoning stripping / tool-result trimming and before token trimming:
 - assistant `tool_calls[].id` and matching tool `tool_call_id` are remapped to `[A-Za-z0-9_-]` only
 - remapping is deterministic within one request and collision-safe (`foo:1` and `foo?1` become `foo_1` and `foo_1_2`)
-- storage stays raw — `turn_responses_v2` and `probe_responses_v2` are never rewritten
+- storage stays raw — `turn_responses_v2` rows are never rewritten
 
 ### Debug Dumps
 
@@ -465,8 +465,6 @@ TRs are stored in `turn_responses_v2` table as provider-agnostic `ConversationEn
 
 The old `turn_responses` table (provider-raw format with `provider` and `reasoning_signature_compat` columns) is deprecated. Data is migrated to v2 via `src/db/migrate-v2.ts`.
 
-Probe responses likewise use a v2 `probe_responses_v2` table with the same IR-based `entries` column plus `is_activated` and `created_at`.
-
 Same-provider reads are zero-conversion through the codec. Cross-provider reads use the unified API's bidirectional converters.
 
 ### Anti-Injection
@@ -477,7 +475,7 @@ User content in the rendered context is fenced with XML structure. Identity info
 
 - System prompt is static and positioned first.
 - Chat history is append-only within an epoch.
-- **Current**: Dynamic action hints (probe / mention / reply state, conditional `human-likeness` feedback) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`. The `human-likeness` section is functionally derived from the current successful `send_message` tool-call history at render time; it flags up to 6 configurable patterns (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages — each independently toggleable via `humanLikeness` config), and is omitted entirely when no enabled checks fire.
+- **Current**: Dynamic action hints (mention / reply state, conditional `human-likeness` feedback) are injected by the Driver as a final synthetic user message via `injectLateBindingPrompt()`. The `human-likeness` section is functionally derived from the current successful `send_message` tool-call history at render time; it flags up to 6 configurable patterns (markdown-heavy formatting, newlines, trailing periods, punctuation-heavy short messages — each independently toggleable via `humanLikeness` config), and is omitted entirely when no enabled checks fire.
 - **Planned**: Richer dynamic content (memory recall, cross-session awareness) should continue to be injected by the Driver through a more structured late-binding mechanism.
 - Compaction creates epoch boundaries — see [Context Compaction](#context-compaction) below.
 
@@ -487,7 +485,7 @@ Before any actual provider request is sent, the Driver applies a final request-l
 - `toChatCompletionsInput()`: converts `ConversationEntry[]` into Chat Completions API messages — moves image-bearing tool results into follow-up user messages prefixed with `The result of tool <name>`, keeping text/image ordering intact while preserving contiguous tool-result blocks.
 - `toResponsesInput()`: converts into Responses API input items.
 - `toMessagesInput()`: converts into Anthropic Messages API messages — parses `ToolCallPart.args` JSON strings into `input` objects, normalizes opaque-only reasoning to `redacted_thinking` blocks.
-- Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps, probes, or compaction calls.
+- Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps or compaction calls.
 
 `read_image` supports attachment file-id and local filesystem path modes.
 
@@ -538,7 +536,7 @@ Toggles are per-chat (deep-merged with `default` like all other config). Defined
 
 **Reasoning** (`reasoning.ts`): `stripReasoning()` removes all reasoning blocks from `ConversationEntry[]` when crossing provider families.
 
-**Migrations** (`migrations.ts`): decodes historical v1 `turn_responses` and `probe_responses` JSON into `ConversationEntry[]`.
+**Migrations** (`migrations.ts`): decodes historical v1 `turn_responses` JSON into `ConversationEntry[]`.
 
 **IR invariants** (hold across all producers/consumers):
 - `ToolResult` is a user-side entry — never appears in `from-*Output` responses
@@ -608,45 +606,6 @@ Compaction proactively summarizes historical conversation context to prevent LLM
 - `model` (string, optional): override model for compaction LLM calls (references a key in the `models` registry). Defaults to `llm.model`.
 
 **Empty content sanitization**: Anthropic Messages API rejects assistant messages with empty `content` (empty string, null, or pure-thinking entries with no content/tool_calls). `composeContext` sanitizes these: empty or null `content` is deleted; empty-shell assistant messages (no content, no tool_calls) are filtered out entirely. This applies to all providers for consistency.
-
-### Probe / Activate Gate
-
-In group chats, most messages don't require a bot response. To avoid wasting tokens on the primary (large) model, the Driver supports a **probe gate**: when the bot hasn't been recently @'d or replied to, a small/cheap probe model runs first. If the probe chooses silence (no tool calls), the primary model is skipped. If the probe produces tool calls (intent to act), its result is discarded and the primary model is activated with the same context.
-
-**Terminology**:
-- **Probe model**: small/cheap model configured independently (`probe` config section)
-- **Primary model**: the main `llm` section model
-- **Probe**: single-step LLM call with no tool execution, result stored but not acted upon
-- **Activate**: probe detected tool calls → discard probe, run primary model step loop
-
-**Flow** (in Driver reply effect, after debounce):
-1. Compose context (same as normal flow)
-2. Check `needsProbe`: `probe.enabled && lastMentionedAtMs <= lastTrTimeMs`
-   - `lastMentionedAtMs`: max `receivedAtMs` of RC segments with `mentionsMe` or `repliesToMe` set
-   - `mentionsMe`: RC segment's source message content contains a `<mention>` node targeting bot's userId
-   - `repliesToMe`: RC segment's source message replies to a bot message
-3. If probe needed: call LLM with probe model (same context, same tools, single call — supports both `openai-chat` and `responses` API formats)
-   - No tool calls → persist probe response (`is_activated=false`), return (bot stays silent)
-   - Has tool calls → persist probe response (`is_activated=true`), fall through to primary step loop
-4. If probe not needed (bot was mentioned/replied to): skip probe, run primary step loop directly
-
-**Probe responses** are stored in `probe_responses_v2` table (not in `turn_responses_v2`). They do not participate in `composeContext` — probe TRs never enter the LLM context. They exist purely for debugging and analysis.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | INTEGER PK | autoincrement |
-| chat_id | TEXT NOT NULL | indexed |
-| requested_at | INTEGER NOT NULL | millisecond timestamp |
-| entries | TEXT (JSON) NOT NULL | `ConversationEntry[]` in unified IR |
-| input_tokens | INTEGER NOT NULL | token stats |
-| output_tokens | INTEGER NOT NULL | token stats |
-| model_name | TEXT NOT NULL DEFAULT '' | probe model used |
-| is_activated | INTEGER NOT NULL DEFAULT 0 | whether probe triggered primary activation |
-| created_at | INTEGER NOT NULL | millisecond timestamp |
-
-**Config** (`probe` section in `config.yaml`):
-- `enabled` (boolean, default `false`): whether to use probe gate
-- `model`: probe model (references a key in the `models` registry)
 
 ### Image To Text
 

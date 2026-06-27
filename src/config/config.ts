@@ -44,10 +44,6 @@ const ChatConfigSchema = v.object({
     workingWindowEstTokens: v.optional(v.number(), 8000),
     model: v.optional(v.string()),
   }), {}),
-  probe: v.optional(v.object({
-    enabled: v.optional(v.boolean(), false),
-    model: v.optional(v.string(), ''),
-  }), {}),
   subagents: v.optional(v.object({
     enabled: v.optional(v.boolean(), true),
     model: v.optional(v.string(), ''),
@@ -114,10 +110,6 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
   compaction: v.partial(v.object({
     maxContextEstTokens: v.number(),
     workingWindowEstTokens: v.number(),
-    model: v.string(),
-  })),
-  probe: v.partial(v.object({
-    enabled: v.boolean(),
     model: v.string(),
   })),
   subagents: v.partial(v.object({
@@ -229,7 +221,6 @@ export interface ResolvedChatConfig {
   primaryApiFormat: ProviderFormat;
   systemFiles: { filename: string; content: string }[];
   compaction: CompactionConfig;
-  probe: { enabled: boolean; model: LlmEndpoint };
   subagents: {
     enabled: boolean;
     model: LlmEndpoint;
@@ -317,10 +308,6 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     compaction: {
       ...merged.compaction,
       model: merged.compaction.model ? resolveModel(config, merged.compaction.model) : undefined,
-    },
-    probe: {
-      enabled: merged.probe.enabled,
-      model: merged.probe.model ? resolveModel(config, merged.probe.model) : primaryModel,
     },
     subagents: {
       enabled: merged.subagents.enabled,
