@@ -18,6 +18,7 @@ import type {
   OneBotNoticeEvent,
 } from './types';
 import type { CanonicalUser } from '../adaption-types';
+import { httpGetBuffer, redactSecrets, registerHttpSecret } from '../http';
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -26,6 +27,13 @@ interface PendingCall {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+// Group member info is cached to avoid re-issuing get_group_member_info on every
+// mention. TTL lets renames / card changes eventually propagate; the cap bounds
+// memory for long-running processes. 10 min balances RPC savings against staleness.
+const GROUP_MEMBER_TTL_MS = 10 * 60_000;
+const GROUP_MEMBER_CACHE_MAX = 5_000;
 
 export interface OneBotApiClient {
   sendMessage(chatId: string, segments: OneBotMessageSegment[], replyTo?: string): Promise<{ messageId: string }>;
@@ -36,6 +44,75 @@ export interface OneBotApiClient {
   /** Get 20 messages from the specified chat */
   fetchMessages(chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]>;
 }
+
+interface GroupMemberCacheEntry {
+  user: CanonicalUser;
+  expiresAtMs: number;
+}
+
+export interface GroupMemberCacheOptions {
+  ttlMs?: number;
+  maxSize?: number;
+  now?: () => number;
+}
+
+// Result cache for get_group_member_info with three properties the bare
+// Record<string, CanonicalUser> lacked: inflight de-dup (concurrent lookups of
+// the same key share one RPC), TTL refresh (renames / card changes eventually
+// propagate), and a bounded LRU (memory stays flat over long uptimes). Mirrors
+// the packTitleCache + packTitleInflight pattern in telegram/manager.ts.
+export const createGroupMemberCache = (
+  fetcher: (groupId: string, userId: string) => Promise<CanonicalUser>,
+  options: GroupMemberCacheOptions = {},
+) => {
+  const ttlMs = options.ttlMs ?? GROUP_MEMBER_TTL_MS;
+  const maxSize = options.maxSize ?? GROUP_MEMBER_CACHE_MAX;
+  const now = options.now ?? Date.now;
+
+  const cache = new Map<string, GroupMemberCacheEntry>();
+  const inflight = new Map<string, Promise<CanonicalUser>>();
+
+  const touch = (key: string, entry: GroupMemberCacheEntry) => {
+    // Map preserves insertion order; delete+set moves the key to the most-recent
+    // end so eviction removes the genuinely least-recently-used entry.
+    cache.delete(key);
+    cache.set(key, entry);
+    while (cache.size > maxSize) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  };
+
+  return {
+    get: async (groupId: string, userId: string): Promise<CanonicalUser> => {
+      const key = `${groupId}:${userId}`;
+
+      const cached = cache.get(key);
+      if (cached && cached.expiresAtMs > now()) {
+        touch(key, cached);
+        return cached.user;
+      }
+
+      const existing = inflight.get(key);
+      if (existing) return await existing;
+
+      const task = (async () => {
+        const user = await fetcher(groupId, userId);
+        touch(key, { user, expiresAtMs: now() + ttlMs });
+        return user;
+      })();
+
+      inflight.set(key, task);
+      try {
+        return await task;
+      } finally {
+        // Always drop the inflight entry so a rejected promise is never cached.
+        inflight.delete(key);
+      }
+    },
+  };
+};
 
 const createApiClient = (
   ws: WebSocket,
@@ -76,8 +153,6 @@ const createApiClient = (
     pendingCalls.clear();
   });
 
-  const resolvedGroupMember: Record<string, CanonicalUser> = {};
-
   const call = <T>(action: string, params: Record<string, unknown>): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const echo = randomUUID();
@@ -91,6 +166,14 @@ const createApiClient = (
       const request: OneBotApiRequest = { action, params, echo };
       ws.send(JSON.stringify(request));
     });
+
+  const groupMemberCache = createGroupMemberCache(async (groupId, userId) => {
+    const result = await call<{ nickname: string; card: string }>('get_group_member_info', {
+      group_id: parseInt(groupId, 10),
+      user_id: parseInt(userId, 10),
+    });
+    return adaptUser(parseInt(userId, 10), result.nickname, result.card);
+  });
 
   return {
     sendMessage: async (chatId, segments, replyTo) => {
@@ -117,11 +200,9 @@ const createApiClient = (
       const isImage = imageExts.test(file);
       const action = isImage ? 'get_image' : 'get_file';
 
-      const downloadFromUrl = async (url: string): Promise<Buffer> => {
-        const resp = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return Buffer.from(await resp.arrayBuffer());
-      };
+      // httpGetBuffer routes through src/http.ts so any HttpError thrown here
+      // masks registered secrets (e.g. accessToken) that may appear in the URL.
+      const downloadFromUrl = (url: string): Promise<Buffer> => httpGetBuffer(url, DOWNLOAD_TIMEOUT_MS);
 
       const result = await call<OneBotGetFileResult>(action, { file });
 
@@ -144,22 +225,11 @@ const createApiClient = (
       if (result.url)
         return await downloadFromUrl(result.url);
 
-      throw new Error(`Cannot download file: ${action} returned no url for "${file.slice(0, 80)}"`);
+      throw new Error(redactSecrets(`Cannot download file: ${action} returned no url for "${file.slice(0, 80)}"`));
     },
 
-    getGroupMemberInfo: async (groupId: string, userId: string): Promise<CanonicalUser> => {
-      const key = `${groupId}:${userId}`;
-      if (resolvedGroupMember[key]) return resolvedGroupMember[key];
-
-      const result = await call<{ nickname: string; card: string }>('get_group_member_info', {
-        group_id: parseInt(groupId, 10),
-        user_id: parseInt(userId, 10),
-      });
-
-      const user = adaptUser(parseInt(userId, 10), result.nickname, result.card);
-      resolvedGroupMember[key] = user;
-      return user;
-    },
+    getGroupMemberInfo: (groupId: string, userId: string): Promise<CanonicalUser> =>
+      groupMemberCache.get(groupId, userId),
 
     fetchMessages: async (chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]> => {
       const isGroup = !chatId.startsWith('private:');
@@ -196,6 +266,10 @@ export const createOneBotServer = (
   deps: OneBotServerDeps,
 ): OneBotServer => {
   const { log } = deps;
+
+  // Mask the access token in any HttpError raised by the unified http client
+  // (download URLs may carry it). Equal-length redaction; safe to call repeatedly.
+  if (config.accessToken) registerHttpSecret(config.accessToken);
 
   let api: OneBotApiClient | null = null;
   let selfId: string | null = null;
