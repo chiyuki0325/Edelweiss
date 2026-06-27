@@ -259,6 +259,9 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
               let truncated = wasTruncated;
               if (final.length > BASH_MAX_OUTPUT) {
                 final = final.slice(0, BASH_MAX_OUTPUT);
+                // Don't split a surrogate pair — step back if the last char is a high surrogate.
+                if (final.length > 0 && (final.charCodeAt(final.length - 1) & 0xFC00) === 0xD800)
+                  final = final.slice(0, -1);
                 truncated = true;
               }
               const exitCode = error ? (error as NodeJS.ErrnoException & { code?: string | number }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
