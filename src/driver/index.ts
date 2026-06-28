@@ -13,6 +13,8 @@ import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
+import { createSchedulerState } from './turn-state';
+import type { ChatScope } from './turn-state';
 import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -100,13 +102,7 @@ export const createDriver = (config: DriverConfig, deps: {
     return trs.length > 0 ? trs[trs.length - 1]!.requestedAtMs : 0;
   };
 
-  const chatScopes = new Map<string, {
-    rc: ReturnType<typeof signal<RenderedContext>>;
-    offline: ReturnType<typeof signal<boolean>>;
-    extendDebounce: () => void;
-    notifyTyping: () => void;
-    cleanup: () => void;
-  }>();
+  const chatScopes = new Map<string, ChatScope>();
 
   const getOrCreateScope = (chatId: string) => {
     const existing = chatScopes.get(chatId);
@@ -122,6 +118,7 @@ export const createDriver = (config: DriverConfig, deps: {
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
     const running = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
+    const scheduler = createSchedulerState();
 
     // --- Skills state ---
     // Always all skills are available to preserve prefix consistency across epochs.
@@ -171,18 +168,9 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const { initialDelayMs, typingExtendMs, maxDelayMs } = chatConfig.debounce;
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-    let maxDelayTimer: ReturnType<typeof setTimeout> | undefined;
-    let debounceWaiting = false;
-    let activeRunRc: RenderedContext | null = null;
-    let activeRunInterruptCursorMs = 0;
-    let activeRunInterruptedByInput = false;
-    let startNextDebounceWithExtendDelay = false;
-    let replyBatchDeadlineMs: number | null = null;
-
     const clearDebounceTimers = () => {
-      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
-      if (maxDelayTimer) { clearTimeout(maxDelayTimer); maxDelayTimer = undefined; }
+      if (scheduler.debounceTimer) { clearTimeout(scheduler.debounceTimer); scheduler.debounceTimer = undefined; }
+      if (scheduler.maxDelayTimer) { clearTimeout(scheduler.maxDelayTimer); scheduler.maxDelayTimer = undefined; }
     };
 
     const wakeMain = () => {
@@ -191,26 +179,26 @@ export const createDriver = (config: DriverConfig, deps: {
     };
 
     const hasInterruptingInputDuringActiveRun = (rcVal = rc()) => {
-      const interruptAfterMs = Math.max(lastProcessedMs(), activeRunInterruptCursorMs);
-      return activeRunRc != null
-        && rcVal !== activeRunRc
+      const interruptAfterMs = Math.max(lastProcessedMs(), scheduler.activeRunInterruptCursorMs);
+      return scheduler.activeRunRc != null
+        && rcVal !== scheduler.activeRunRc
         && latestInterruptingExternalEventMs(rcVal, interruptAfterMs) != null;
     };
 
     const ensureReplyBatchDeadline = () => {
-      replyBatchDeadlineMs ??= Date.now() + maxDelayMs;
-      return replyBatchDeadlineMs;
+      scheduler.replyBatchDeadlineMs ??= Date.now() + maxDelayMs;
+      return scheduler.replyBatchDeadlineMs;
     };
 
     const replyBatchRemainingMs = () =>
       Math.max(0, ensureReplyBatchDeadline() - Date.now());
 
     const isReplyBatchDeadlineExpired = () =>
-      replyBatchDeadlineMs != null && Date.now() >= replyBatchDeadlineMs;
+      scheduler.replyBatchDeadlineMs != null && Date.now() >= scheduler.replyBatchDeadlineMs;
 
     const markActiveRunInterruptedByInput = () => {
-      activeRunInterruptedByInput = true;
-      startNextDebounceWithExtendDelay = true;
+      scheduler.activeRunInterruptedByInput = true;
+      scheduler.startNextDebounceWithExtendDelay = true;
       ensureReplyBatchDeadline();
     };
 
@@ -347,16 +335,16 @@ export const createDriver = (config: DriverConfig, deps: {
     const executeLlmCall = () => {
       if (running()) return;
       clearDebounceTimers();
-      if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-      debounceWaiting = false;
+      if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+      scheduler.debounceWaiting = false;
 
       // Capture offline state: if this call was triggered in offline mode
       // (by an explicit mention/reply), auto-return to online when done.
       const wasOffline = offline();
       const rcAtStart = rc();
-      activeRunRc = rcAtStart;
-      activeRunInterruptCursorMs = latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs();
-      activeRunInterruptedByInput = false;
+      scheduler.activeRunRc = rcAtStart;
+      scheduler.activeRunInterruptCursorMs = latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs();
+      scheduler.activeRunInterruptedByInput = false;
       running(true);
 
       void (async () => {
@@ -370,10 +358,10 @@ export const createDriver = (config: DriverConfig, deps: {
           if (!ctx) return;
 
           const stepAbortController = new AbortController();
-          abortManager.current = stepAbortController;
+          scheduler.abortController = stepAbortController;
           if (hasInterruptingInputDuringActiveRun() && !isReplyBatchDeadlineExpired()) {
             markActiveRunInterruptedByInput();
-            abortManager.current = null;
+            scheduler.abortController = null;
             return;
           }
 
@@ -486,11 +474,11 @@ export const createDriver = (config: DriverConfig, deps: {
           log.withError(err).error('LLM call failed');
           failedRc(rcAtStart);
         } finally {
-          if (!activeRunInterruptedByInput)
-            replyBatchDeadlineMs = null;
-          activeRunRc = null;
-          activeRunInterruptCursorMs = 0;
-          activeRunInterruptedByInput = false;
+          if (!scheduler.activeRunInterruptedByInput)
+            scheduler.replyBatchDeadlineMs = null;
+          scheduler.activeRunRc = null;
+          scheduler.activeRunInterruptCursorMs = 0;
+          scheduler.activeRunInterruptedByInput = false;
           running(false);
           if (wasOffline) {
             offline(false);
@@ -500,16 +488,14 @@ export const createDriver = (config: DriverConfig, deps: {
       })();
     };
 
-    let lastTypingAtMs = 0;
-
     const TYPING_VALIDITY_MS = 6000;
 
     // Checked at debounce timer expiry: if typing occurred within the validity
     // window, extend instead of firing. maxDelayTimer bypasses this check.
     const debounceTimerCallback = () => {
-      if (debounceWaiting && Date.now() - lastTypingAtMs < TYPING_VALIDITY_MS && !isReplyBatchDeadlineExpired()) {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, replyBatchRemainingMs()));
+      if (scheduler.debounceWaiting && Date.now() - scheduler.lastTypingAtMs < TYPING_VALIDITY_MS && !isReplyBatchDeadlineExpired()) {
+        if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
+        scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, replyBatchRemainingMs()));
         return;
       }
       executeLlmCall();
@@ -517,18 +503,18 @@ export const createDriver = (config: DriverConfig, deps: {
 
     // Exposed to handleTyping — extends the debounce window if waiting.
     const extendDebounce = () => {
-      if (!debounceWaiting || running()) return;
+      if (!scheduler.debounceWaiting || running()) return;
       const remainingMs = replyBatchRemainingMs();
       if (remainingMs <= 0) {
         executeLlmCall();
         return;
       }
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
+      if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
+      scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
     };
 
     const notifyTyping = () => {
-      lastTypingAtMs = Date.now();
+      scheduler.lastTypingAtMs = Date.now();
       extendDebounce();
     };
 
@@ -540,66 +526,66 @@ export const createDriver = (config: DriverConfig, deps: {
       const isRunning = running();
 
       if (isRunning) {
-        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
-        debounceWaiting = false;
+        scheduler.debounceWaiting = false;
         // New chat messages arrived while a call is running — abort the current
         // call. Runtime events wake the next turn but do not interrupt the
         // in-flight model/tool loop.
         if (hasInterruptingInputDuringActiveRun(rcVal) && !isReplyBatchDeadlineExpired()) {
           markActiveRunInterruptedByInput();
-          if (abortManager.current) {
-            abortManager.current.abort(new Error('New messages arrived, aborting current call'));
-            abortManager.current = null;
+          if (scheduler.abortController) {
+            scheduler.abortController.abort(new Error('New messages arrived, aborting current call'));
+            scheduler.abortController = null;
           }
         }
         return;
       }
 
       if (!needsReply()) {
-        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
-        debounceWaiting = false;
-        startNextDebounceWithExtendDelay = false;
-        replyBatchDeadlineMs = null;
+        scheduler.debounceWaiting = false;
+        scheduler.startNextDebounceWithExtendDelay = false;
+        scheduler.replyBatchDeadlineMs = null;
         return;
       }
 
       // needsReply is true and we're not running.
       const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rcVal, lastProcessedMs()) != null;
       if (!hasInterruptingExternalInput) {
-        if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
         clearDebounceTimers();
-        debounceWaiting = false;
-        startNextDebounceWithExtendDelay = false;
-        replyBatchDeadlineMs = null;
+        scheduler.debounceWaiting = false;
+        scheduler.startNextDebounceWithExtendDelay = false;
+        scheduler.replyBatchDeadlineMs = null;
         executeLlmCall();
         return;
       }
 
-      if (!debounceWaiting) {
+      if (!scheduler.debounceWaiting) {
         // First trigger — start debounce with initialDelayMs + hard cap.
         // If this turn was just interrupted by a new message, treat that
         // message like an in-flight debounce extension.
-        const debounceDelayMs = startNextDebounceWithExtendDelay ? typingExtendMs : initialDelayMs;
-        startNextDebounceWithExtendDelay = false;
+        const debounceDelayMs = scheduler.startNextDebounceWithExtendDelay ? typingExtendMs : initialDelayMs;
+        scheduler.startNextDebounceWithExtendDelay = false;
         const remainingMs = replyBatchRemainingMs();
         if (remainingMs <= 0) {
           executeLlmCall();
           return;
         }
         const effectiveDebounceDelayMs = Math.min(debounceDelayMs, remainingMs);
-        debounceWaiting = true;
+        scheduler.debounceWaiting = true;
         deps.onDebounceStateChange?.(chatId, true);
-        debounceTimer = setTimeout(debounceTimerCallback, effectiveDebounceDelayMs);
-        maxDelayTimer = setTimeout(executeLlmCall, remainingMs);
+        scheduler.debounceTimer = setTimeout(debounceTimerCallback, effectiveDebounceDelayMs);
+        scheduler.maxDelayTimer = setTimeout(executeLlmCall, remainingMs);
         log.withFields({
           chatId,
           debounceDelayMs: effectiveDebounceDelayMs,
           initialDelayMs,
           typingExtendMs,
           maxDelayMs,
-          replyBatchDeadlineMs,
+          replyBatchDeadlineMs: scheduler.replyBatchDeadlineMs,
         }).log('Debounce started');
       } else {
         // RC changed while waiting (new message) — extend debounce timer,
@@ -609,8 +595,8 @@ export const createDriver = (config: DriverConfig, deps: {
           executeLlmCall();
           return;
         }
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
+        if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
+        scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
       }
     });
 
@@ -689,17 +675,33 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const cleanup = () => {
-      if (debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
+      if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
       clearDebounceTimers();
       if (compactionTimer) clearTimeout(compactionTimer);
-      abortManager.current = null;
+      scheduler.abortController = null;
       disposeCursorEffect();
       disposeReplyEffect();
       disposeCompactionEffect();
     };
 
-    const abortManager = { current: null as AbortController | null };
-    const entry = { rc, offline, extendDebounce, notifyTyping, cleanup, abortManager };
+    const entry: ChatScope = {
+      chatId,
+      chatConfig,
+      rc,
+      offline,
+      running,
+      lastProcessedMs,
+      failedRc,
+      mailbox,
+      subagents: subagentManager,
+      allSkills,
+      compactionMeta,
+      scheduler,
+      activeTurn: null,
+      extendDebounce,
+      notifyTyping,
+      cleanup,
+    };
     chatScopes.set(chatId, entry);
     return entry;
   };

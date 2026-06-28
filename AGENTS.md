@@ -139,6 +139,8 @@ src/
 │   ├── pseudo-commands.ts  # Built-in bash pseudo commands: chat_info and skill_info
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (7 configurable checks)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
+│   ├── turn-state.ts      # Explicit ChatScope / SchedulerState / TurnState / capability types for driver turn-loop refactors
+│   ├── turn-state.test.ts # Driver turn/scheduler default-state tests
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── index.test.ts      # Driver reactive scheduling/debounce tests
 │   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, load_skill, subagent communication, background-task helpers
