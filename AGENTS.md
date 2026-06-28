@@ -65,7 +65,9 @@ src/
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
 ├── container/              # Dependency injection composition root (tsyringe, factory-registration mode)
 │   ├── tokens.ts           # Phantom-typed InjectionToken registry (TOKENS) + grouped provider interfaces (ChatPolicy, AltTextPolicy, FeatureSets, DescriptionSemaphores, OneBotHolder)
-│   └── index.ts            # buildContainer(): registers every create*(deps) factory as a memoized singleton; lazy get(TOKEN) closures dissolve the Driver↔Telegram/OneBot and resolver↔manager cycles
+│   ├── registrar.ts        # Registrar interface shared by deps/ registration functions
+│   ├── index.ts            # buildContainer(): async; fs.readdirSync scans deps/, dynamic import() calls each export default function(registrar) in sorted order
+│   └── deps/               # One file per register(TOKENS.X, ...) call; each exports default function(registrar). Add/remove a file to change registrations — no manual module list
 ├── startup/                # Platform-neutral application startup orchestration
 │   ├── index.ts            # startApp(): builds container, runs async-only steps (v2 migration, cold-start replay, OneBot WS await, lifecycle/shutdown)
 │   ├── chat-selection.ts   # Startup chat selection helpers (configured replay whitelist / in-memory residency checks)
@@ -287,12 +289,12 @@ The composition root is a **tsyringe** container built in `src/container/index.t
 
 Rules when touching the graph:
 - **Tokens** live in `src/container/tokens.ts`. Each is a phantom-typed `Token<T>` (`{ sym: Symbol }`) — the symbol is the runtime key; `T` only flows through the typed `register`/`get` helpers. Add a token there before registering a new graph node.
-- **Registration** uses `register(TOKEN, c => createX(...))` in `buildContainer()`. Every factory is wrapped in the local `singleton()` helper. tsyringe's `FactoryProvider` does **not** cache, and its built-in `instanceCachingFactory` mis-handles `undefined`; some optional platform nodes legitimately resolve to `undefined`, so we memoize with an explicit presence flag.
+- **Registration** is split per-token: each `register(TOKENS.X, ...)` call lives in `src/container/deps/` as an `export default function(registrar)`. `buildContainer()` uses `fs.readdirSync` + dynamic `import()` to auto-discover and call them — no manual module list to maintain. Every factory is wrapped in the local `singleton()` helper. tsyringe's `FactoryProvider` does **not** cache, and its built-in `instanceCachingFactory` mis-handles `undefined`; some optional platform nodes legitimately resolve to `undefined`, so we memoize with an explicit presence flag.
 - **Tokens should represent real runtime boundaries.** Do not replace a giant deps object with one equally giant token. Split platform construction into focused nodes such as manager, event sink, live handlers, driver hooks, and post-startup tasks when those parts have different dependency shapes.
 - **Circular edges are broken by lazy resolution, not forward-ref hacks.** Hook closures call `get(TOKENS.DRIVER)` at invocation time, for example `onDriverEvent: (id, rc) => get(TOKENS.DRIVER).handleEvent(id, rc)`. The Telegram custom-emoji resolver reads the manager through a lazy getter (`get telegram() { return get(TOKENS.TELEGRAM_MANAGER); }`), which avoids resolving the full Telegram startup handle while the resolver is being built. The old mutable `driverRef` / `ref` / `managerRef` objects are gone.
 - **Optional platform roots stay optional only at the root.** `TOKENS.TELEGRAM_MANAGER` and `TOKENS.TELEGRAM` may resolve to `undefined` when Telegram is not configured. Downstream Telegram-specific nodes (`TELEGRAM_DRIVER_HOOKS`, `TELEGRAM_LIVE_HANDLERS`, `TELEGRAM_POST_STARTUP_TASKS`) assume a manager exists; the `TELEGRAM` aggregator checks the manager before resolving them.
 - **`reflect-metadata`** must be imported before `tsyringe` loads. It is imported at the top of `src/index.ts` (entry point) and `src/container/index.ts`.
-- **Async construction stays in the orchestrator.** `buildContainer()` only registers synchronous factories. Async startup steps — `migrateV1ToV2`, cold-start replay, `startOneBot` (awaits a WS client), lifecycle/shutdown — live in `src/startup/index.ts`, which resolves nodes from the container and runs them. OneBot's handle is held in an `OneBotHolder` token the orchestrator populates after the await.
+- **Async construction stays in the orchestrator.** `buildContainer()` is `async` (dynamic imports) but the factory functions it registers are still synchronous. Async startup steps — `migrateV1ToV2`, cold-start replay, `startOneBot` (awaits a WS client), lifecycle/shutdown — live in `src/startup/index.ts`, which `await buildContainer()` then resolves nodes from the container and runs them. OneBot's handle is held in an `OneBotHolder` token the orchestrator populates after the await.
 - `buildContainer()` returns a **child container** (`rootContainer.createChildContainer()`) so tests get isolation.
 
 ### DCP Layers Are Pure Functions

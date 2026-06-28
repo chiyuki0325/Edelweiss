@@ -10,7 +10,7 @@ import { contentToPlainText } from '../telegram/adaption';
 import { normalizeStickerSetMetadata } from '../telegram/pack-title';
 
 export const startApp = async () => {
-  const { get } = buildContainer();
+  const { get } = await buildContainer();
 
   const logger = get(TOKENS.LOGGER);
   const config = get(TOKENS.CONFIG);
