@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import type { Logger } from '@guiiai/logg';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { pruneLengthLimitFailures } from './runner';
+const mocks = vi.hoisted(() => ({
+  callLlm: vi.fn(),
+}));
+
+vi.mock('./call-llm', () => ({
+  callLlm: mocks.callLlm,
+}));
+
+import { createRunner, pruneLengthLimitFailures } from './runner';
+import type { CahciuaTool } from './tools';
+import type { Usage } from '../llm/types';
 import type { ConversationEntry } from '../unified-api/types';
 
 const MSG = (overrides: Partial<Extract<ConversationEntry, { kind: 'message' }>> = {}): ConversationEntry => ({
@@ -38,6 +49,83 @@ const TR = (callId: string, payload: string, requiresFollowUp = true): Conversat
 const LENGTH_ERROR = JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' });
 const OK_RESULT = JSON.stringify({ ok: true, message_id: '42' });
 const OTHER_ERROR = JSON.stringify({ ok: false, error: 'Some other error' });
+
+const usage: Usage = {
+  inputTokens: 1,
+  outputTokens: 2,
+  cacheCreationTokens: -1,
+  cacheReadTokens: -1,
+};
+
+const log = {
+  withFields: () => log,
+  withError: () => log,
+  log: () => {},
+  error: () => {},
+} as unknown as Logger;
+
+beforeEach(() => {
+  mocks.callLlm.mockReset();
+});
+
+describe('runOneStep', () => {
+  it('combines model output with executed tool results', async () => {
+    const assistantMessage = MSG({ parts: [TC('test_tool', 'tc1', '{"value":1}')] });
+    mocks.callLlm.mockResolvedValueOnce({
+      entries: [assistantMessage],
+      usage,
+    });
+
+    const tool: CahciuaTool = {
+      type: 'function',
+      function: {
+        name: 'test_tool',
+        parameters: {
+          type: 'object',
+          properties: { value: { type: 'number' } },
+          required: ['value'],
+        },
+      },
+      validate: () => ({ valid: true, errors: [] }),
+      execute: vi.fn(() => ({ content: 'tool ok', requiresFollowUp: false })),
+    };
+
+    const runner = createRunner({
+      apiBaseUrl: 'https://llm.example.test',
+      apiKey: 'test-key',
+      model: 'test-model',
+    });
+
+    const step = await runner.runOneStep([], {
+      chatId: 'chat',
+      system: 'system',
+      tools: [tool],
+      log,
+    }, 1);
+
+    expect(mocks.callLlm).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'test-model' }),
+      [],
+      'system',
+      [expect.objectContaining({ name: 'test_tool' })],
+      expect.objectContaining({ label: 'step:1', dumpId: 'chat' }),
+    );
+    expect(tool.execute).toHaveBeenCalledWith({ value: 1 }, { toolCallId: 'tc1' });
+    expect(step).toMatchObject({
+      usage,
+      hasToolCalls: true,
+      stepEntries: [
+        assistantMessage,
+        {
+          kind: 'toolResult',
+          callId: 'tc1',
+          payload: 'tool ok',
+          requiresFollowUp: false,
+        },
+      ],
+    });
+  });
+});
 
 describe('pruneLengthLimitFailures', () => {
   it('passes through entries unchanged when no failures and not pending', () => {

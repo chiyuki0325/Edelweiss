@@ -7,6 +7,7 @@ import { executeToolCall, extractToolCalls } from './tools';
 import type { Usage } from '../llm/types';
 import type {
   ConversationEntry,
+  ToolCallPart,
   ToolResult,
 } from '../unified-api/types';
 
@@ -150,6 +151,13 @@ export interface ExecutedStep {
   hasToolCalls: boolean;
 }
 
+export interface ModelStepOutput {
+  entries: ConversationEntry[];
+  toolCalls: ToolCallPart[];
+  usage: Usage;
+  requestedAtMs: number;
+}
+
 export interface StepLoopParams extends StepExecutorParams {
   entries: ConversationEntry[];
   maxSteps: number;
@@ -170,11 +178,11 @@ const toToolSchema = (t: CahciuaTool): ToolSchema => ({
 });
 
 export const createRunner = (config: RunnerConfig) => {
-  const runOneStep = async (
+  const callModelStep = async (
     workingEntries: ConversationEntry[],
     params: StepExecutorParams,
     step: number,
-  ): Promise<ExecutedStep> => {
+  ): Promise<ModelStepOutput> => {
     const stepRequestedAt = Date.now();
     const toolSchemas = params.tools.map(toToolSchema);
 
@@ -201,8 +209,8 @@ export const createRunner = (config: RunnerConfig) => {
 
       if (!config.forceToolCall) break;
 
-      const hasTools = result.entries.length > 0 && extractToolCalls(result.entries).length > 0;
-      if (hasTools) break;
+      const toolCalls = extractToolCalls(result.entries);
+      if (toolCalls.length > 0) break;
 
       if (attempt < MAX_FORCE_TOOL_RETRIES) {
         params.log.withFields({
@@ -211,19 +219,46 @@ export const createRunner = (config: RunnerConfig) => {
       }
     }
 
-    if (result!.entries.length === 0)
-      return { stepEntries: [], usage, requestedAtMs: stepRequestedAt, hasToolCalls: false };
+    return {
+      entries: result!.entries,
+      toolCalls: extractToolCalls(result!.entries),
+      usage,
+      requestedAtMs: stepRequestedAt,
+    };
+  };
 
-    const toolCalls = extractToolCalls(result!.entries);
+  const executeToolStep = async (
+    toolCalls: ToolCallPart[],
+    params: StepExecutorParams,
+  ): Promise<ToolResult[]> => {
     const toolResults: ToolResult[] = [];
     for (const tc of toolCalls)
       toolResults.push(await executeToolCall(tc.callId, tc.name, tc.args, params.tools, params.log));
+    return toolResults;
+  };
+
+  const runOneStep = async (
+    workingEntries: ConversationEntry[],
+    params: StepExecutorParams,
+    step: number,
+  ): Promise<ExecutedStep> => {
+    const modelOutput = await callModelStep(workingEntries, params, step);
+    if (modelOutput.entries.length === 0) {
+      return {
+        stepEntries: [],
+        usage: modelOutput.usage,
+        requestedAtMs: modelOutput.requestedAtMs,
+        hasToolCalls: false,
+      };
+    }
+
+    const toolResults = await executeToolStep(modelOutput.toolCalls, params);
 
     return {
-      stepEntries: [...result.entries, ...toolResults],
-      usage,
-      requestedAtMs: stepRequestedAt,
-      hasToolCalls: toolCalls.length > 0,
+      stepEntries: [...modelOutput.entries, ...toolResults],
+      usage: modelOutput.usage,
+      requestedAtMs: modelOutput.requestedAtMs,
+      hasToolCalls: modelOutput.toolCalls.length > 0,
     };
   };
 
@@ -274,5 +309,5 @@ export const createRunner = (config: RunnerConfig) => {
     }
   };
 
-  return { runOneStep, runStepLoop };
+  return { callModelStep, executeToolStep, runOneStep, runStepLoop };
 };
