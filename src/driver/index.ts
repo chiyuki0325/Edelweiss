@@ -5,6 +5,7 @@ import { runCompaction } from './compaction';
 import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, latestExternalEventMs, latestInterruptingExternalEventMs, wasToolLoopInterrupted } from './context';
 import { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 import { createRunner, pruneLengthLimitFailures } from './runner';
+import { createDriverScheduler } from './scheduler';
 import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
@@ -166,10 +167,7 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const { initialDelayMs, typingExtendMs, maxDelayMs } = chatConfig.debounce;
-    const clearDebounceTimers = () => {
-      if (scheduler.debounceTimer) { clearTimeout(scheduler.debounceTimer); scheduler.debounceTimer = undefined; }
-      if (scheduler.maxDelayTimer) { clearTimeout(scheduler.maxDelayTimer); scheduler.maxDelayTimer = undefined; }
-    };
+    const schedulerController = createDriverScheduler(scheduler, { maxDelayMs });
 
     const wakeMain = () => {
       if (running()) return;
@@ -183,21 +181,14 @@ export const createDriver = (config: DriverConfig, deps: {
         && latestInterruptingExternalEventMs(rcVal, interruptAfterMs) != null;
     };
 
-    const ensureReplyBatchDeadline = () => {
-      scheduler.replyBatchDeadlineMs ??= Date.now() + maxDelayMs;
-      return scheduler.replyBatchDeadlineMs;
-    };
-
     const replyBatchRemainingMs = () =>
-      Math.max(0, ensureReplyBatchDeadline() - Date.now());
+      schedulerController.replyBatchRemainingMs();
 
     const isReplyBatchDeadlineExpired = () =>
-      scheduler.replyBatchDeadlineMs != null && Date.now() >= scheduler.replyBatchDeadlineMs;
+      schedulerController.isReplyBatchDeadlineExpired();
 
     const markActiveRunInterruptedByInput = () => {
-      scheduler.activeRunInterruptedByInput = true;
-      scheduler.startNextDebounceWithExtendDelay = true;
-      ensureReplyBatchDeadline();
+      schedulerController.markInterruptedByInput();
     };
 
     const createSendMessageTurnFlags = (turn: TurnState): SendMessageTurnFlags => ({
@@ -480,7 +471,7 @@ export const createDriver = (config: DriverConfig, deps: {
     // Called from timer callbacks to start the async LLM work.
     const executeLlmCall = () => {
       if (running()) return;
-      clearDebounceTimers();
+      schedulerController.clearDebounceTimers();
       if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
       scheduler.debounceWaiting = false;
 
@@ -488,9 +479,10 @@ export const createDriver = (config: DriverConfig, deps: {
       // (by an explicit mention/reply), auto-return to online when done.
       const wasOffline = offline();
       const rcAtStart = rc();
-      scheduler.activeRunRc = rcAtStart;
-      scheduler.activeRunInterruptCursorMs = latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs();
-      scheduler.activeRunInterruptedByInput = false;
+      schedulerController.startActiveRun(
+        rcAtStart,
+        latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs(),
+      );
       running(true);
 
       void (async () => {
@@ -508,11 +500,7 @@ export const createDriver = (config: DriverConfig, deps: {
           log.withError(err).error('LLM call failed');
           failedRc(rcAtStart);
         } finally {
-          if (!scheduler.activeRunInterruptedByInput)
-            scheduler.replyBatchDeadlineMs = null;
-          scheduler.activeRunRc = null;
-          scheduler.activeRunInterruptCursorMs = 0;
-          scheduler.activeRunInterruptedByInput = false;
+          schedulerController.onTurnSettled();
           if (activeTurn) activeTurn.scope.activeTurn = null;
           running(false);
           if (wasOffline) {
@@ -562,8 +550,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
       if (isRunning) {
         if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        clearDebounceTimers();
-        scheduler.debounceWaiting = false;
+        schedulerController.clearWaitingState();
         // New chat messages arrived while a call is running — abort the current
         // call. Runtime events wake the next turn but do not interrupt the
         // in-flight model/tool loop.
@@ -579,10 +566,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
       if (!needsReply()) {
         if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        clearDebounceTimers();
-        scheduler.debounceWaiting = false;
-        scheduler.startNextDebounceWithExtendDelay = false;
-        scheduler.replyBatchDeadlineMs = null;
+        schedulerController.resetIdleBatch();
         return;
       }
 
@@ -590,10 +574,7 @@ export const createDriver = (config: DriverConfig, deps: {
       const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rcVal, lastProcessedMs()) != null;
       if (!hasInterruptingExternalInput) {
         if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        clearDebounceTimers();
-        scheduler.debounceWaiting = false;
-        scheduler.startNextDebounceWithExtendDelay = false;
-        scheduler.replyBatchDeadlineMs = null;
+        schedulerController.resetIdleBatch();
         executeLlmCall();
         return;
       }
@@ -711,7 +692,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
     const cleanup = () => {
       if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-      clearDebounceTimers();
+      schedulerController.clearDebounceTimers();
       if (compactionTimer) clearTimeout(compactionTimer);
       scheduler.abortController = null;
       disposeCursorEffect();
