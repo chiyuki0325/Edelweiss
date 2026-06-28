@@ -14,7 +14,7 @@ import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import { createDefaultTurnCapabilities, createSchedulerState } from './turn-state';
-import type { ChatScope, TurnState } from './turn-state';
+import type { ChatScope, TurnCapabilities, TurnState } from './turn-state';
 import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -203,11 +203,23 @@ export const createDriver = (config: DriverConfig, deps: {
       ensureReplyBatchDeadline();
     };
 
-    const createSharedTools = (includeSendMessage: boolean, reactionEmojis: string[] = []): CahciuaTool[] => {
+    const createSendMessageTurnFlags = (turn: TurnState): SendMessageTurnFlags => ({
+      get wasLengthLimited() {
+        return turn.flags.sendMessageWasLengthLimited;
+      },
+      set wasLengthLimited(value: boolean) {
+        turn.flags.sendMessageWasLengthLimited = value;
+      },
+    });
+
+    const createToolsForCapabilities = (
+      capabilities: TurnCapabilities,
+      reactionEmojis: string[] = [],
+      sendMessageTurnFlags?: SendMessageTurnFlags,
+    ): CahciuaTool[] => {
       const platform = deps.getPlatformAdapter?.(chatId);
       const tools: CahciuaTool[] = [];
-      if (includeSendMessage) {
-        const sendMessageTurnFlags: SendMessageTurnFlags = { wasLengthLimited: false };
+      if (capabilities.canSendMessage) {
         tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
           log.withFields({
             chatId,
@@ -222,15 +234,16 @@ export const createDriver = (config: DriverConfig, deps: {
           const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
           return { messageId: String(sent.messageId) };
         }, sendMessageTurnFlags));
+      }
+      if (capabilities.canDismissMessage)
         tools.push(createDismissMessageTool());
-        if (chatConfig.platform === 'telegram' && deps.sendReaction && reactionEmojis.length > 0) {
-          tools.push(createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
-            const numericMessageId = Number(messageId);
-            if (!Number.isInteger(numericMessageId) || numericMessageId <= 0)
-              throw new Error(`Invalid Telegram message id for react_message: ${messageId}`);
-            await deps.sendReaction!(chatId, numericMessageId, emoji);
-          }));
-        }
+      if (capabilities.canReact && chatConfig.platform === 'telegram' && deps.sendReaction && reactionEmojis.length > 0) {
+        tools.push(createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
+          const numericMessageId = Number(messageId);
+          if (!Number.isInteger(numericMessageId) || numericMessageId <= 0)
+            throw new Error(`Invalid Telegram message id for react_message: ${messageId}`);
+          await deps.sendReaction!(chatId, numericMessageId, emoji);
+        }));
       }
 
       const downloadAttachment = createAttachmentDownloader({
@@ -241,22 +254,26 @@ export const createDriver = (config: DriverConfig, deps: {
         platformAdapter: platform,
       });
 
-      tools.push(createBashTool(deps.runtimeConfig, {
-        startTask: deps.backgroundTask.startTask,
-        sessionId: chatId,
-        backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
-        compactOutput: chatConfig.tools.bash.compactOutput,
-        pseudoCommands: {
-          chatId,
-          currentChannel: chatConfig.platform,
-          ...(chatConfig.skills?.folder ? { skillsFolder: resolve(chatConfig.skills.folder) } : {}),
-          skills: allSkills,
-        },
-      }));
-      tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
-      if (chatConfig.tools.webFetch)
+      if (capabilities.canUseBash) {
+        tools.push(createBashTool(deps.runtimeConfig, {
+          startTask: deps.backgroundTask.startTask,
+          sessionId: chatId,
+          backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
+          compactOutput: chatConfig.tools.bash.compactOutput,
+          pseudoCommands: {
+            chatId,
+            currentChannel: chatConfig.platform,
+            ...(chatConfig.skills?.folder ? { skillsFolder: resolve(chatConfig.skills.folder) } : {}),
+            skills: allSkills,
+          },
+        }));
+      }
+      if (capabilities.canUseWebSearch)
+        tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
+      if (capabilities.canUseWebFetch && chatConfig.tools.webFetch)
         tools.push(createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch)));
-      tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));
+      if (capabilities.canDownloadFile)
+        tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));
 
       const readFileCmd = deps.runtimeConfig.readFile;
       const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
@@ -280,28 +297,32 @@ export const createDriver = (config: DriverConfig, deps: {
         }
         : undefined;
 
-      tools.push(createReadImageTool({
-        downloadAttachment,
-        readFile: async path => {
-          const { execFile } = await import('node:child_process');
-          return await new Promise<Buffer>((resolve, reject) => {
-            const child = execFile(
-              readFileCmd[0]!,
-              [...readFileCmd.slice(1), path],
-              { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
-              (error, stdout) => {
-                if (error) reject(new Error(`Failed to read file: ${error.message}`));
-                else resolve(stdout as unknown as Buffer);
-              },
-            );
-            child.stdin?.end();
-          });
-        },
-        resolveImageToText,
-      }));
-      tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
-      tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
-      tools.push(createSleepTool());
+      if (capabilities.canReadImage) {
+        tools.push(createReadImageTool({
+          downloadAttachment,
+          readFile: async path => {
+            const { execFile } = await import('node:child_process');
+            return await new Promise<Buffer>((resolve, reject) => {
+              const child = execFile(
+                readFileCmd[0]!,
+                [...readFileCmd.slice(1), path],
+                { timeout: 60_000, maxBuffer: deps.runtimeConfig.readFileSizeLimit, encoding: 'buffer' as any },
+                (error, stdout) => {
+                  if (error) reject(new Error(`Failed to read file: ${error.message}`));
+                  else resolve(stdout as unknown as Buffer);
+                },
+              );
+              child.stdin?.end();
+            });
+          },
+          resolveImageToText,
+        }));
+      }
+      if (capabilities.canUseBackgroundTasks) {
+        tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
+        tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
+        tools.push(createSleepTool());
+      }
       return tools;
     };
 
@@ -324,7 +345,7 @@ export const createDriver = (config: DriverConfig, deps: {
         context: state.context,
         expectedOutput: state.expectedOutput,
       }),
-      createTools: () => createSharedTools(false),
+      createTools: () => createToolsForCapabilities(createDefaultTurnCapabilities('subagent')),
       persistStep: async (agentId, stepEntries, usage, requestedAtMs) => {
         await deps.persistTurnResponse(chatId, {
           requestedAtMs,
@@ -405,10 +426,14 @@ export const createDriver = (config: DriverConfig, deps: {
         }
       }
 
-      const sharedTools = createSharedTools(true, turn.reactionEmojis);
-      const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
+      turn.capabilities.canReact = chatConfig.platform === 'telegram' && turn.reactionEmojis.length > 0;
+      turn.capabilities.canStartSubagent = chatConfig.subagents.enabled;
+      turn.capabilities.canMessageSubagent = chatConfig.subagents.enabled;
+
+      const sharedTools = createToolsForCapabilities(turn.capabilities, turn.reactionEmojis, createSendMessageTurnFlags(turn));
+      const subagentTools = turn.capabilities.canStartSubagent ? subagentManager.mainTools() : [];
       const skillTools: CahciuaTool[] = [];
-      if (allSkills.size > 0) {
+      if (turn.capabilities.canLoadSkill && allSkills.size > 0) {
         turn.loadedSkills = extractLoadedSkillNames(turn.entries);
         skillTools.push(createLoadSkillTool(
           () => allSkills,
