@@ -13,8 +13,8 @@ import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createLoadSkillTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
-import { createSchedulerState } from './turn-state';
-import type { ChatScope } from './turn-state';
+import { createDefaultTurnCapabilities, createSchedulerState } from './turn-state';
+import type { ChatScope, TurnState } from './turn-state';
 import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { ActiveTaskInfo } from '../background-task/types';
@@ -304,6 +304,13 @@ export const createDriver = (config: DriverConfig, deps: {
       return tools;
     };
 
+    let nextTurnId = 1;
+    const getScope = (): ChatScope => {
+      const current = chatScopes.get(chatId);
+      if (!current) throw new Error(`Driver scope missing for chat ${chatId}`);
+      return current;
+    };
+
     const subagentManager = createSubagentManager({
       chatId,
       mailbox,
@@ -331,6 +338,160 @@ export const createDriver = (config: DriverConfig, deps: {
       log,
     });
 
+    const createMainTurn = (
+      rcAtStart: RenderedContext,
+      abortController: AbortController,
+      wasOfflineAtStart: boolean,
+    ): TurnState => ({
+      id: `main-${Date.now()}-${nextTurnId++}`,
+      kind: 'main',
+      chatId,
+      agentId: 'main',
+      scope: getScope(),
+      model: chatConfig.primaryModel,
+      rcAtStart,
+      trs: [],
+      entries: [],
+      system: '',
+      tools: [],
+      step: 1,
+      maxSteps: MAX_STEPS,
+      pendingPrune: false,
+      abortController,
+      capabilities: createDefaultTurnCapabilities('main'),
+      loadedSkills: new Set(),
+      reactionEmojis: [],
+      flags: {
+        wasOfflineAtStart,
+        interruptedByInput: false,
+        sendMessageWasLengthLimited: false,
+        modelStayedSilent: false,
+      },
+    });
+
+    const prepareMainTurn = async (turn: TurnState): Promise<boolean> => {
+      // Read compaction state from signal — no DB query.
+      const cursor = cursorMs();
+      const sum = summary();
+
+      const trs = await loadTRs(chatId, cursor);
+      const ctx = composeContext(turn.rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, turn.model.model, sum);
+      if (!ctx) return false;
+
+      turn.trs = trs;
+      turn.entries = ctx.entries;
+      turn.scope.activeTurn = turn;
+      scheduler.abortController = turn.abortController;
+      if (hasInterruptingInputDuringActiveRun() && !isReplyBatchDeadlineExpired()) {
+        markActiveRunInterruptedByInput();
+        turn.flags.interruptedByInput = true;
+        scheduler.abortController = null;
+        return false;
+      }
+
+      log.withFields({
+        chatId,
+        entries: turn.entries.length,
+        estimatedTokens: ctx.estimatedTokens,
+      }).log('Triggering LLM call');
+
+      if (chatConfig.platform === 'telegram' && deps.refreshAllowedReactionEmojis) {
+        try {
+          turn.reactionEmojis = await deps.refreshAllowedReactionEmojis(chatId);
+        } catch (err) {
+          log.withError(err).withFields({ chatId }).warn('Failed to refresh Telegram reaction emojis');
+          turn.reactionEmojis = deps.getAllowedReactionEmojis?.(chatId) ?? [];
+        }
+      }
+
+      const sharedTools = createSharedTools(true, turn.reactionEmojis);
+      const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
+      const skillTools: CahciuaTool[] = [];
+      if (allSkills.size > 0) {
+        turn.loadedSkills = extractLoadedSkillNames(turn.entries);
+        skillTools.push(createLoadSkillTool(
+          () => allSkills,
+          name => { turn.loadedSkills.add(name); },
+          name => turn.loadedSkills.has(name),
+        ));
+      }
+      turn.tools = [...sharedTools, ...subagentTools, ...skillTools];
+
+      turn.system = await renderSystemPrompt({
+        currentChannel: chatConfig.platform,
+        modelName: chatConfig.primaryModel.model,
+        forceToolCall: chatConfig.primaryModel.forceToolCall,
+        systemFiles: chatConfig.systemFiles,
+        hasLoadSkillTool: allSkills.size > 0,
+        hasSubagentTools: chatConfig.subagents.enabled,
+        hasReactTool: chatConfig.platform === 'telegram' && turn.reactionEmojis.length > 0,
+        availableReactionEmojis: turn.reactionEmojis,
+        availableSkills: [...allSkills.values()]
+          .map(s => ({
+            id: s.name,
+            ...(s.format === 'custom-v2' && s.title ? { title: s.title } : {}),
+            description: s.description,
+            usage: s.usage,
+          })),
+      });
+
+      const isInterrupted = wasToolLoopInterrupted(turn.trs);
+      const isMentioned = turn.rcAtStart.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
+      const isReplied = turn.rcAtStart.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
+      const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
+        collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
+      );
+
+      injectLateBindingPrompt(turn.entries, await renderLateBindingPrompt({
+        timeNow: localTimeNow(),
+        forceToolCall: chatConfig.primaryModel.forceToolCall,
+        isMentioned,
+        isReplied,
+        recentSendMessageHumanLikenessXml,
+        isInterrupted,
+        activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
+      }));
+
+      return true;
+    };
+
+    const runPreparedMainTurn = async (turn: TurnState): Promise<void> => {
+      const runner = getOrCreateRunner(turn.model);
+      await runner.runStepLoop({
+        signal: turn.abortController.signal,
+        chatId,
+        entries: turn.entries,
+        system: turn.system,
+        tools: turn.tools,
+        maxSteps: turn.maxSteps,
+        maxImagesAllowed: turn.model.maxImagesAllowed,
+        onStepComplete: async (stepEntries, usage, requestedAtMs) => {
+          await deps.persistTurnResponse(chatId, {
+            requestedAtMs,
+            entries: stepEntries,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            modelName: turn.model.model,
+          });
+          lastProcessedMs(requestedAtMs);
+        },
+        checkInterrupt: () => {
+          if (rc() === turn.rcAtStart) return false;
+          const hasPendingExternalInput = latestExternalEventMs(rc(), lastProcessedMs()) != null;
+          if (!hasPendingExternalInput) return false;
+          if (latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
+            const hasPendingRuntimeEvent = rc().some(seg =>
+              seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
+            if (isReplyBatchDeadlineExpired()) return hasPendingRuntimeEvent;
+            markActiveRunInterruptedByInput();
+          }
+          return true;
+        },
+        pullExternalEntries: () => mailbox.flush('main'),
+        log,
+      });
+    };
+
     // Called from timer callbacks to start the async LLM work.
     const executeLlmCall = () => {
       if (running()) return;
@@ -348,126 +509,14 @@ export const createDriver = (config: DriverConfig, deps: {
       running(true);
 
       void (async () => {
+        let activeTurn: TurnState | null = null;
         try {
-          // Read compaction state from signal — no DB query.
-          const cursor = cursorMs();
-          const sum = summary();
-
-          const trs = await loadTRs(chatId, cursor);
-          const ctx = composeContext(rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, chatConfig.primaryModel.model, sum);
-          if (!ctx) return;
-
           const stepAbortController = new AbortController();
-          scheduler.abortController = stepAbortController;
-          if (hasInterruptingInputDuringActiveRun() && !isReplyBatchDeadlineExpired()) {
-            markActiveRunInterruptedByInput();
-            scheduler.abortController = null;
-            return;
-          }
-
-          log.withFields({
-            chatId,
-            entries: ctx.entries.length,
-            estimatedTokens: ctx.estimatedTokens,
-          }).log('Triggering LLM call');
-
-          let reactionEmojis: string[] = [];
-          if (chatConfig.platform === 'telegram' && deps.refreshAllowedReactionEmojis) {
-            try {
-              reactionEmojis = await deps.refreshAllowedReactionEmojis(chatId);
-            } catch (err) {
-              log.withError(err).withFields({ chatId }).warn('Failed to refresh Telegram reaction emojis');
-              reactionEmojis = deps.getAllowedReactionEmojis?.(chatId) ?? [];
-            }
-          }
-
-          const sharedTools = createSharedTools(true, reactionEmojis);
-          const subagentTools = chatConfig.subagents.enabled ? subagentManager.mainTools() : [];
-          const skillTools: CahciuaTool[] = [];
-          if (allSkills.size > 0) {
-            const loadedSkills = extractLoadedSkillNames(ctx.entries);
-            skillTools.push(createLoadSkillTool(
-              () => allSkills,
-              name => { loadedSkills.add(name); },
-              name => loadedSkills.has(name),
-            ));
-          }
-          const tools: CahciuaTool[] = [...sharedTools, ...subagentTools, ...skillTools];
-
-          const system = await renderSystemPrompt({
-            currentChannel: chatConfig.platform,
-            modelName: chatConfig.primaryModel.model,
-            forceToolCall: chatConfig.primaryModel.forceToolCall,
-            systemFiles: chatConfig.systemFiles,
-            hasLoadSkillTool: allSkills.size > 0,
-            hasSubagentTools: chatConfig.subagents.enabled,
-            hasReactTool: chatConfig.platform === 'telegram' && reactionEmojis.length > 0,
-            availableReactionEmojis: reactionEmojis,
-            availableSkills: [...allSkills.values()]
-              .map(s => ({
-                id: s.name,
-                ...(s.format === 'custom-v2' && s.title ? { title: s.title } : {}),
-                description: s.description,
-                usage: s.usage,
-              })),
-          });
-
-          // --- Compute mention/reply/interrupt state from RC + TRs ---
-          const rcVal = rcAtStart;
-          const isInterrupted = wasToolLoopInterrupted(trs);
-          const isMentioned = rcVal.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
-          const isReplied = rcVal.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
-          const recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
-            collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
-          );
-
-          const lateBindingParams = {
-            timeNow: localTimeNow(),
-            forceToolCall: chatConfig.primaryModel.forceToolCall,
-            isMentioned, isReplied,
-            recentSendMessageHumanLikenessXml,
-            isInterrupted,
-            activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
-          };
-
-          injectLateBindingPrompt(ctx.entries, await renderLateBindingPrompt({
-            ...lateBindingParams,
-          }));
-
-          const runner = getOrCreateRunner(chatConfig.primaryModel);
-          await runner.runStepLoop({
-            signal: stepAbortController.signal,
-            chatId,
-            entries: ctx.entries,
-            system,
-            tools,
-            maxSteps: MAX_STEPS,
-            maxImagesAllowed: chatConfig.primaryModel.maxImagesAllowed,
-            onStepComplete: async (stepEntries, usage, requestedAtMs) => {
-              await deps.persistTurnResponse(chatId, {
-                requestedAtMs,
-                entries: stepEntries,
-                inputTokens: usage.inputTokens,
-                outputTokens: usage.outputTokens,
-                modelName: chatConfig.primaryModel.model,
-              });
-              lastProcessedMs(requestedAtMs);
-            },
-            checkInterrupt: () => {
-              if (rc() === rcAtStart) return false;
-              const hasPendingExternalInput = latestExternalEventMs(rc(), lastProcessedMs()) != null;
-              if (!hasPendingExternalInput) return false;
-              if (latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
-                const hasPendingRuntimeEvent = rc().some(seg =>
-                  seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
-                if (isReplyBatchDeadlineExpired()) return hasPendingRuntimeEvent;
-                markActiveRunInterruptedByInput();
-              }
-              return true;
-            },
-            pullExternalEntries: () => mailbox.flush('main'),
-            log,
-          });
+          const turn = createMainTurn(rcAtStart, stepAbortController, wasOffline);
+          activeTurn = turn;
+          const prepared = await prepareMainTurn(turn);
+          if (!prepared) return;
+          await runPreparedMainTurn(turn);
         } catch (err) {
           // No retry or backoff — a failed call is recorded via failedRc and
           // only re-attempted when new external messages produce a fresh RC.
@@ -479,6 +528,7 @@ export const createDriver = (config: DriverConfig, deps: {
           scheduler.activeRunRc = null;
           scheduler.activeRunInterruptCursorMs = 0;
           scheduler.activeRunInterruptedByInput = false;
+          if (activeTurn) activeTurn.scope.activeTurn = null;
           running(false);
           if (wasOffline) {
             offline(false);
