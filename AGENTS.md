@@ -145,6 +145,7 @@ src/
 │   ├── index.test.ts      # Driver reactive scheduling/debounce tests
 │   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, load_skill, subagent communication, background-task helpers
 │   ├── tools.test.ts       # Tool capability tests
+│   ├── tool-providers.ts   # Capability-driven Driver tool assembly providers
 │   ├── subagents/          # Subagent runtime: isolated helper manager, mailbox, lifecycle/types, communication/finalize tools
 │   │   ├── types.ts        # AgentId, SubagentState, AgentMessage, SubagentStatus
 │   │   ├── manager.ts      # SubagentManager: lifecycle, step loop, mailbox dispatch
