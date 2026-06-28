@@ -132,7 +132,7 @@ src/
 │   ├── merge.test.ts       # Merge logic tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
 │   ├── call-llm.ts         # Unified LLM call dispatcher (openai-chat / responses / anthropic-messages)
-│   ├── runner.ts           # LLM step loop: triple-provider SSE streaming + manual tool execution
+│   ├── runner.ts           # LLM step executor: triple-provider SSE streaming + manual tool execution; legacy runStepLoop kept for subagents/evals
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map

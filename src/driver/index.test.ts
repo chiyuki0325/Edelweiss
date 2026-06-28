@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   renderLateBindingPrompt: vi.fn(async () => 'late-binding'),
   renderSubagentSystemPrompt: vi.fn(async () => 'subagent-system'),
   renderSystemPrompt: vi.fn(async () => 'system'),
-  runStepLoop: vi.fn(),
+  runOneStep: vi.fn(),
 }));
 
 vi.mock('./prompt', () => ({
@@ -20,7 +20,8 @@ vi.mock('./prompt', () => ({
 }));
 
 vi.mock('./runner', () => ({
-  createRunner: vi.fn(() => ({ runStepLoop: mocks.runStepLoop })),
+  createRunner: vi.fn(() => ({ runOneStep: mocks.runOneStep })),
+  pruneLengthLimitFailures: (entries: unknown[], pendingPrune: boolean) => ({ pruned: entries, pendingPrune }),
 }));
 
 setupLogger();
@@ -152,7 +153,7 @@ describe('createDriver debounce scheduling', () => {
     mocks.renderLateBindingPrompt.mockClear();
     mocks.renderSubagentSystemPrompt.mockClear();
     mocks.renderSystemPrompt.mockClear();
-    mocks.runStepLoop.mockReset();
+    mocks.runOneStep.mockReset();
   });
 
   afterEach(() => {
@@ -167,14 +168,14 @@ describe('createDriver debounce scheduling', () => {
       firstRunFinished = resolve;
     });
 
-    mocks.runStepLoop.mockImplementation(async params => {
+    mocks.runOneStep.mockImplementation(async (_working, params) => {
       runCount++;
       if (runCount === 1) {
         await waitForAbort(params.signal);
         firstRunFinished();
-        return;
+        return { stepEntries: [], usage, requestedAtMs: 0, hasToolCalls: false };
       }
-      await params.onStepComplete([], usage, Date.now());
+      return { stepEntries: [], usage, requestedAtMs: Date.now(), hasToolCalls: false };
     });
 
     const driver = createTestDriver({
@@ -190,21 +191,21 @@ describe('createDriver debounce scheduling', () => {
       driver.handleEvent('chat', rc(100));
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(0);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(1);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(1);
 
       driver.handleEvent('chat', rc(100, 200));
-      const firstCall = mocks.runStepLoop.mock.calls[0]![0] as { signal: AbortSignal };
+      const firstCall = mocks.runOneStep.mock.calls[0]![1] as { signal: AbortSignal };
       expect(firstCall.signal.aborted).toBe(true);
       await firstRunStopped;
       await vi.advanceTimersByTimeAsync(0);
       expect(debounceStates.at(-1)).toEqual({ chatId: 'chat', isDebouncing: true });
 
       await vi.advanceTimersByTimeAsync(199);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(1);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(1);
       await vi.advanceTimersByTimeAsync(0);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(2);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(2);
     } finally {
       driver.stop();
     }
@@ -214,18 +215,17 @@ describe('createDriver debounce scheduling', () => {
     const secondRun = deferred();
     let runCount = 0;
 
-    mocks.runStepLoop.mockImplementation(async params => {
+    mocks.runOneStep.mockImplementation(async (_working, params) => {
       runCount++;
       if (runCount === 1) {
         await waitForAbort(params.signal);
-        return;
+        return { stepEntries: [], usage, requestedAtMs: 0, hasToolCalls: false };
       }
       if (runCount === 2) {
         await secondRun.promise;
-        await params.onStepComplete([], usage, Date.now());
-        return;
+        return { stepEntries: [], usage, requestedAtMs: Date.now(), hasToolCalls: false };
       }
-      await params.onStepComplete([], usage, Date.now());
+      return { stepEntries: [], usage, requestedAtMs: Date.now(), hasToolCalls: false };
     });
 
     const driver = createTestDriver({
@@ -239,28 +239,28 @@ describe('createDriver debounce scheduling', () => {
       driver.handleEvent('chat', rc(100));
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(0);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(1);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(1);
 
       driver.handleEvent('chat', rc(100, 200));
-      const firstCall = mocks.runStepLoop.mock.calls[0]![0] as { signal: AbortSignal };
+      const firstCall = mocks.runOneStep.mock.calls[0]![1] as { signal: AbortSignal };
       expect(firstCall.signal.aborted).toBe(true);
 
       // The first message's maxDelayMs deadline is still t+3000. The
       // interrupted retry must not wait a fresh typingExtendMs window.
       await vi.advanceTimersByTimeAsync(1999);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(1);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(1);
       await vi.advanceTimersByTimeAsync(0);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(2);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(2);
 
-      const secondCall = mocks.runStepLoop.mock.calls[1]![0] as { signal: AbortSignal };
+      const secondCall = mocks.runOneStep.mock.calls[1]![1] as { signal: AbortSignal };
       driver.handleEvent('chat', rc(100, 200, 300));
       expect(secondCall.signal.aborted).toBe(false);
 
       secondRun.resolve();
       await vi.advanceTimersByTimeAsync(0);
-      expect(mocks.runStepLoop).toHaveBeenCalledTimes(2);
+      expect(mocks.runOneStep).toHaveBeenCalledTimes(2);
     } finally {
       driver.stop();
     }

@@ -134,13 +134,25 @@ export const pruneLengthLimitFailures = (
 
 export interface RunnerConfig extends LlmCallConfig {}
 
-export interface StepLoopParams {
+export interface StepExecutorParams {
   chatId: string;
-  entries: ConversationEntry[];
   system: string;
   tools: CahciuaTool[];
-  maxSteps: number;
   maxImagesAllowed?: number;
+  signal?: AbortSignal;
+  log: Logger;
+}
+
+export interface ExecutedStep {
+  stepEntries: ConversationEntry[];
+  usage: Usage;
+  requestedAtMs: number;
+  hasToolCalls: boolean;
+}
+
+export interface StepLoopParams extends StepExecutorParams {
+  entries: ConversationEntry[];
+  maxSteps: number;
   onStepComplete: (
     stepEntries: ConversationEntry[],
     usage: Usage,
@@ -149,8 +161,6 @@ export interface StepLoopParams {
   checkInterrupt: () => boolean;
   pullExternalEntries?: () => ConversationEntry[] | Promise<ConversationEntry[]>;
   shouldStop?: () => boolean;
-  signal?: AbortSignal;
-  log: Logger;
 }
 
 const toToolSchema = (t: CahciuaTool): ToolSchema => ({
@@ -162,14 +172,9 @@ const toToolSchema = (t: CahciuaTool): ToolSchema => ({
 export const createRunner = (config: RunnerConfig) => {
   const runOneStep = async (
     workingEntries: ConversationEntry[],
-    params: StepLoopParams,
+    params: StepExecutorParams,
     step: number,
-  ): Promise<{
-    stepEntries: ConversationEntry[];
-    usage: Usage;
-    requestedAtMs: number;
-    hasToolCalls: boolean;
-  }> => {
+  ): Promise<ExecutedStep> => {
     const stepRequestedAt = Date.now();
     const toolSchemas = params.tools.map(toToolSchema);
 
@@ -269,5 +274,5 @@ export const createRunner = (config: RunnerConfig) => {
     }
   };
 
-  return { runStepLoop };
+  return { runOneStep, runStepLoop };
 };
