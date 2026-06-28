@@ -147,48 +147,10 @@ export const createDriver = (config: DriverConfig, deps: {
       if (newRC) rc(newRC);
     });
 
-    // --- Main LLM reply effect with debounce ---
-    // When new external messages arrive, start a debounce timer (initialDelayMs).
-    // New messages or typing events reset it to typingExtendMs. A hard cap
-    // (maxDelayMs) is a batch deadline that survives LLM-call interruptions.
-    // Before the deadline, new messages abort the in-flight call and reschedule
-    // with typingExtendMs; after it, the current call is allowed to finish.
-    const needsReply = computed(() => {
-      const rcVal = rc();
-      if (rcVal.length === 0) return false;
-      if (rcVal === failedRc()) return false;
-      if (offline()) {
-        // In offline mode, only trigger on explicit @mention or reply-to-bot
-        const after = lastProcessedMs();
-        return rcVal.some(seg =>
-          !seg.isMyself && (!!seg.mentionsMe || !!seg.repliesToMe) && seg.receivedAtMs > after);
-      }
-      return latestExternalEventMs(rcVal, lastProcessedMs()) != null;
-    });
-
     const { initialDelayMs, typingExtendMs, maxDelayMs } = chatConfig.debounce;
-    const schedulerController = createDriverScheduler(scheduler, { maxDelayMs });
 
     const wakeMain = () => {
-      if (running()) return;
-      executeLlmCall();
-    };
-
-    const hasInterruptingInputDuringActiveRun = (rcVal = rc()) => {
-      const interruptAfterMs = Math.max(lastProcessedMs(), scheduler.activeRunInterruptCursorMs);
-      return scheduler.activeRunRc != null
-        && rcVal !== scheduler.activeRunRc
-        && latestInterruptingExternalEventMs(rcVal, interruptAfterMs) != null;
-    };
-
-    const replyBatchRemainingMs = () =>
-      schedulerController.replyBatchRemainingMs();
-
-    const isReplyBatchDeadlineExpired = () =>
-      schedulerController.isReplyBatchDeadlineExpired();
-
-    const markActiveRunInterruptedByInput = () => {
-      schedulerController.markInterruptedByInput();
+      schedulerController.wake();
     };
 
     const createSendMessageTurnFlags = (turn: TurnState): SendMessageTurnFlags => ({
@@ -304,12 +266,10 @@ export const createDriver = (config: DriverConfig, deps: {
 
       turn.trs = trs;
       turn.entries = ctx.entries;
-      turn.scope.activeTurn = turn;
-      scheduler.abortController = turn.abortController;
-      if (hasInterruptingInputDuringActiveRun() && !isReplyBatchDeadlineExpired()) {
-        markActiveRunInterruptedByInput();
+      if (schedulerController.hasInterruptingInputDuringActiveRun() && !schedulerController.isReplyBatchDeadlineExpired()) {
+        schedulerController.markActiveRunInterruptedByInput();
         turn.flags.interruptedByInput = true;
-        scheduler.abortController = null;
+        schedulerController.clearAbortController(turn.abortController);
         return false;
       }
 
@@ -445,13 +405,13 @@ export const createDriver = (config: DriverConfig, deps: {
           if (hasPendingExternalInput && latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
             const hasPendingRuntimeEvent = rc().some(seg =>
               seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
-            if (isReplyBatchDeadlineExpired()) {
+            if (schedulerController.isReplyBatchDeadlineExpired()) {
               if (hasPendingRuntimeEvent) {
                 log.withFields({ chatId, step }).log('Turn interrupted by new messages');
                 break;
               }
             } else {
-              markActiveRunInterruptedByInput();
+              schedulerController.markActiveRunInterruptedByInput();
               turn.flags.interruptedByInput = true;
               log.withFields({ chatId, step }).log('Turn interrupted by new messages');
               break;
@@ -470,20 +430,9 @@ export const createDriver = (config: DriverConfig, deps: {
 
     // Called from timer callbacks to start the async LLM work.
     const executeLlmCall = () => {
-      if (running()) return;
-      schedulerController.clearDebounceTimers();
-      if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-      scheduler.debounceWaiting = false;
-
-      // Capture offline state: if this call was triggered in offline mode
-      // (by an explicit mention/reply), auto-return to online when done.
-      const wasOffline = offline();
-      const rcAtStart = rc();
-      schedulerController.startActiveRun(
-        rcAtStart,
-        latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs()) ?? lastProcessedMs(),
-      );
-      running(true);
+      const turnStart = schedulerController.beginTurn();
+      if (!turnStart) return;
+      const { rcAtStart, wasOffline } = turnStart;
 
       void (async () => {
         let activeTurn: TurnState | null = null;
@@ -491,17 +440,29 @@ export const createDriver = (config: DriverConfig, deps: {
           const stepAbortController = new AbortController();
           const turn = createMainTurn(rcAtStart, stepAbortController, wasOffline);
           activeTurn = turn;
+          turn.scope.activeTurn = turn;
+          schedulerController.attachAbortController(stepAbortController);
           const prepared = await prepareMainTurn(turn);
           if (!prepared) return;
           await runPreparedMainTurn(turn);
         } catch (err) {
-          // No retry or backoff — a failed call is recorded via failedRc and
-          // only re-attempted when new external messages produce a fresh RC.
-          log.withError(err).error('LLM call failed');
-          failedRc(rcAtStart);
+          if (activeTurn?.abortController.signal.aborted || activeTurn?.flags.interruptedByInput || scheduler.activeRunInterruptedByInput) {
+            if (activeTurn) activeTurn.flags.interruptedByInput = true;
+            log.withFields({ chatId }).log('LLM call aborted by newer input');
+          } else {
+            // No retry or backoff — a failed call is recorded via failedRc and
+            // only re-attempted when new external messages produce a fresh RC.
+            log.withError(err).error('LLM call failed');
+            schedulerController.markFailed(rcAtStart);
+          }
         } finally {
           schedulerController.onTurnSettled();
-          if (activeTurn) activeTurn.scope.activeTurn = null;
+          if (activeTurn) {
+            schedulerController.clearAbortController(activeTurn.abortController);
+            activeTurn.scope.activeTurn = null;
+          } else {
+            schedulerController.clearAbortController();
+          }
           running(false);
           if (wasOffline) {
             offline(false);
@@ -511,109 +472,21 @@ export const createDriver = (config: DriverConfig, deps: {
       })();
     };
 
-    const TYPING_VALIDITY_MS = 6000;
-
-    // Checked at debounce timer expiry: if typing occurred within the validity
-    // window, extend instead of firing. maxDelayTimer bypasses this check.
-    const debounceTimerCallback = () => {
-      if (scheduler.debounceWaiting && Date.now() - scheduler.lastTypingAtMs < TYPING_VALIDITY_MS && !isReplyBatchDeadlineExpired()) {
-        if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
-        scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, replyBatchRemainingMs()));
-        return;
-      }
-      executeLlmCall();
-    };
-
-    // Exposed to handleTyping — extends the debounce window if waiting.
-    const extendDebounce = () => {
-      if (!scheduler.debounceWaiting || running()) return;
-      const remainingMs = replyBatchRemainingMs();
-      if (remainingMs <= 0) {
-        executeLlmCall();
-        return;
-      }
-      if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
-      scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
-    };
-
-    const notifyTyping = () => {
-      scheduler.lastTypingAtMs = Date.now();
-      extendDebounce();
-    };
-
-    // The effect reads rc() directly (not just needsReply) so that it re-runs
-    // when RC changes even if needsReply stays true — this triggers debounce
-    // extension on new messages arriving during the wait period.
-    const disposeReplyEffect = effect(() => {
-      const rcVal = rc();
-      const isRunning = running();
-
-      if (isRunning) {
-        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        schedulerController.clearWaitingState();
-        // New chat messages arrived while a call is running — abort the current
-        // call. Runtime events wake the next turn but do not interrupt the
-        // in-flight model/tool loop.
-        if (hasInterruptingInputDuringActiveRun(rcVal) && !isReplyBatchDeadlineExpired()) {
-          markActiveRunInterruptedByInput();
-          if (scheduler.abortController) {
-            scheduler.abortController.abort(new Error('New messages arrived, aborting current call'));
-            scheduler.abortController = null;
-          }
-        }
-        return;
-      }
-
-      if (!needsReply()) {
-        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        schedulerController.resetIdleBatch();
-        return;
-      }
-
-      // needsReply is true and we're not running.
-      const hasInterruptingExternalInput = latestInterruptingExternalEventMs(rcVal, lastProcessedMs()) != null;
-      if (!hasInterruptingExternalInput) {
-        if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-        schedulerController.resetIdleBatch();
-        executeLlmCall();
-        return;
-      }
-
-      if (!scheduler.debounceWaiting) {
-        // First trigger — start debounce with initialDelayMs + hard cap.
-        // If this turn was just interrupted by a new message, treat that
-        // message like an in-flight debounce extension.
-        const debounceDelayMs = scheduler.startNextDebounceWithExtendDelay ? typingExtendMs : initialDelayMs;
-        scheduler.startNextDebounceWithExtendDelay = false;
-        const remainingMs = replyBatchRemainingMs();
-        if (remainingMs <= 0) {
-          executeLlmCall();
-          return;
-        }
-        const effectiveDebounceDelayMs = Math.min(debounceDelayMs, remainingMs);
-        scheduler.debounceWaiting = true;
-        deps.onDebounceStateChange?.(chatId, true);
-        scheduler.debounceTimer = setTimeout(debounceTimerCallback, effectiveDebounceDelayMs);
-        scheduler.maxDelayTimer = setTimeout(executeLlmCall, remainingMs);
-        log.withFields({
-          chatId,
-          debounceDelayMs: effectiveDebounceDelayMs,
-          initialDelayMs,
-          typingExtendMs,
-          maxDelayMs,
-          replyBatchDeadlineMs: scheduler.replyBatchDeadlineMs,
-        }).log('Debounce started');
-      } else {
-        // RC changed while waiting (new message) — extend debounce timer,
-        // maxDelayTimer stays unchanged as the hard cap.
-        const remainingMs = replyBatchRemainingMs();
-        if (remainingMs <= 0) {
-          executeLlmCall();
-          return;
-        }
-        if (scheduler.debounceTimer) clearTimeout(scheduler.debounceTimer);
-        scheduler.debounceTimer = setTimeout(debounceTimerCallback, Math.min(typingExtendMs, remainingMs));
-      }
+    const schedulerController = createDriverScheduler({
+      chatId,
+      rc,
+      offline,
+      running,
+      lastProcessedMs,
+      failedRc,
+      scheduler,
+    }, {
+      initialDelayMs,
+      typingExtendMs,
+      maxDelayMs,
+      startTurn: executeLlmCall,
+      onDebounceStateChange: deps.onDebounceStateChange,
+      log,
     });
 
     // --- Independent compaction effect ---
@@ -691,12 +564,9 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     const cleanup = () => {
-      if (scheduler.debounceWaiting) deps.onDebounceStateChange?.(chatId, false);
-      schedulerController.clearDebounceTimers();
+      schedulerController.stop();
       if (compactionTimer) clearTimeout(compactionTimer);
-      scheduler.abortController = null;
       disposeCursorEffect();
-      disposeReplyEffect();
       disposeCompactionEffect();
     };
 
@@ -714,8 +584,8 @@ export const createDriver = (config: DriverConfig, deps: {
       compactionMeta,
       scheduler,
       activeTurn: null,
-      extendDebounce,
-      notifyTyping,
+      extendDebounce: () => schedulerController.extendDebounce(),
+      notifyTyping: () => schedulerController.notifyTyping(),
       cleanup,
     };
     chatScopes.set(chatId, entry);

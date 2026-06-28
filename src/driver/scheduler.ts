@@ -1,14 +1,20 @@
-import type { SchedulerState } from './turn-state';
+import type { Logger } from '@guiiai/logg';
+import { computed, effect } from 'alien-signals';
+
+import { latestExternalEventMs, latestInterruptingExternalEventMs } from './context';
+import type { DriverSignal, SchedulerState } from './turn-state';
 import type { RenderedContext } from '../rendering/types';
 
-export interface DriverSchedulerOptions {
+const TYPING_VALIDITY_MS = 6000;
+
+export interface SchedulerStateControllerOptions {
   maxDelayMs: number;
   now?: () => number;
 }
 
-export const createDriverScheduler = (
+export const createSchedulerStateController = (
   state: SchedulerState,
-  options: DriverSchedulerOptions,
+  options: SchedulerStateControllerOptions,
 ) => {
   const now = options.now ?? Date.now;
 
@@ -78,5 +84,227 @@ export const createDriverScheduler = (
     onTurnSettled,
     clearWaitingState,
     resetIdleBatch,
+  };
+};
+
+export interface DriverSchedulerScope {
+  chatId: string;
+  rc: DriverSignal<RenderedContext>;
+  offline: DriverSignal<boolean>;
+  running: DriverSignal<boolean>;
+  lastProcessedMs: DriverSignal<number>;
+  failedRc: DriverSignal<RenderedContext | null>;
+  scheduler: SchedulerState;
+}
+
+export interface DriverSchedulerOptions {
+  initialDelayMs: number;
+  typingExtendMs: number;
+  maxDelayMs: number;
+  startTurn: () => void;
+  onDebounceStateChange?: (chatId: string, isDebouncing: boolean) => void;
+  log: Logger;
+  now?: () => number;
+}
+
+export interface StartedTurnInfo {
+  rcAtStart: RenderedContext;
+  wasOffline: boolean;
+}
+
+export const createDriverScheduler = (
+  scope: DriverSchedulerScope,
+  options: DriverSchedulerOptions,
+) => {
+  const now = options.now ?? Date.now;
+  const state = scope.scheduler;
+  const stateController = createSchedulerStateController(state, {
+    maxDelayMs: options.maxDelayMs,
+    now,
+  });
+
+  const notifyDebounceStopped = (): void => {
+    if (state.debounceWaiting)
+      options.onDebounceStateChange?.(scope.chatId, false);
+  };
+
+  const needsReply = computed(() => {
+    const rcVal = scope.rc();
+    if (rcVal.length === 0) return false;
+    if (rcVal === scope.failedRc()) return false;
+    if (scope.offline()) {
+      const after = scope.lastProcessedMs();
+      return rcVal.some(seg =>
+        !seg.isMyself && (!!seg.mentionsMe || !!seg.repliesToMe) && seg.receivedAtMs > after);
+    }
+    return latestExternalEventMs(rcVal, scope.lastProcessedMs()) != null;
+  });
+
+  const hasInterruptingInputDuringActiveRun = (rcVal = scope.rc()): boolean => {
+    const interruptAfterMs = Math.max(scope.lastProcessedMs(), state.activeRunInterruptCursorMs);
+    return state.activeRunRc != null
+      && rcVal !== state.activeRunRc
+      && latestInterruptingExternalEventMs(rcVal, interruptAfterMs) != null;
+  };
+
+  const abortActiveRunForInput = (): void => {
+    stateController.markInterruptedByInput();
+    if (state.abortController) {
+      state.abortController.abort(new Error('New messages arrived, aborting current call'));
+      state.abortController = null;
+    }
+  };
+
+  const startTurn = (): void => {
+    options.startTurn();
+  };
+
+  const debounceTimerCallback = (): void => {
+    if (
+      state.debounceWaiting
+      && now() - state.lastTypingAtMs < TYPING_VALIDITY_MS
+      && !stateController.isReplyBatchDeadlineExpired()
+    ) {
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+      state.debounceTimer = setTimeout(
+        debounceTimerCallback,
+        Math.min(options.typingExtendMs, stateController.replyBatchRemainingMs()),
+      );
+      return;
+    }
+    startTurn();
+  };
+
+  const extendDebounce = (): void => {
+    if (!state.debounceWaiting || scope.running()) return;
+    const remainingMs = stateController.replyBatchRemainingMs();
+    if (remainingMs <= 0) {
+      startTurn();
+      return;
+    }
+    if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    state.debounceTimer = setTimeout(
+      debounceTimerCallback,
+      Math.min(options.typingExtendMs, remainingMs),
+    );
+  };
+
+  const notifyTyping = (): void => {
+    state.lastTypingAtMs = now();
+    extendDebounce();
+  };
+
+  const disposeReplyEffect = effect(() => {
+    const rcVal = scope.rc();
+    const isRunning = scope.running();
+
+    if (isRunning) {
+      notifyDebounceStopped();
+      stateController.clearWaitingState();
+      if (
+        hasInterruptingInputDuringActiveRun(rcVal)
+        && !stateController.isReplyBatchDeadlineExpired()
+      ) {
+        abortActiveRunForInput();
+      }
+      return;
+    }
+
+    if (!needsReply()) {
+      notifyDebounceStopped();
+      stateController.resetIdleBatch();
+      return;
+    }
+
+    const hasInterruptingExternalInput =
+      latestInterruptingExternalEventMs(rcVal, scope.lastProcessedMs()) != null;
+    if (!hasInterruptingExternalInput) {
+      notifyDebounceStopped();
+      stateController.resetIdleBatch();
+      startTurn();
+      return;
+    }
+
+    if (!state.debounceWaiting) {
+      const debounceDelayMs = state.startNextDebounceWithExtendDelay
+        ? options.typingExtendMs
+        : options.initialDelayMs;
+      state.startNextDebounceWithExtendDelay = false;
+      const remainingMs = stateController.replyBatchRemainingMs();
+      if (remainingMs <= 0) {
+        startTurn();
+        return;
+      }
+      const effectiveDebounceDelayMs = Math.min(debounceDelayMs, remainingMs);
+      state.debounceWaiting = true;
+      options.onDebounceStateChange?.(scope.chatId, true);
+      state.debounceTimer = setTimeout(debounceTimerCallback, effectiveDebounceDelayMs);
+      state.maxDelayTimer = setTimeout(startTurn, remainingMs);
+      options.log.withFields({
+        chatId: scope.chatId,
+        debounceDelayMs: effectiveDebounceDelayMs,
+        initialDelayMs: options.initialDelayMs,
+        typingExtendMs: options.typingExtendMs,
+        maxDelayMs: options.maxDelayMs,
+        replyBatchDeadlineMs: state.replyBatchDeadlineMs,
+      }).log('Debounce started');
+    } else {
+      const remainingMs = stateController.replyBatchRemainingMs();
+      if (remainingMs <= 0) {
+        startTurn();
+        return;
+      }
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+      state.debounceTimer = setTimeout(
+        debounceTimerCallback,
+        Math.min(options.typingExtendMs, remainingMs),
+      );
+    }
+  });
+
+  const beginTurn = (): StartedTurnInfo | null => {
+    if (scope.running()) return null;
+    stateController.clearDebounceTimers();
+    notifyDebounceStopped();
+    state.debounceWaiting = false;
+
+    const wasOffline = scope.offline();
+    const rcAtStart = scope.rc();
+    stateController.startActiveRun(
+      rcAtStart,
+      latestInterruptingExternalEventMs(rcAtStart, scope.lastProcessedMs()) ?? scope.lastProcessedMs(),
+    );
+    scope.running(true);
+    return { rcAtStart, wasOffline };
+  };
+
+  const attachAbortController = (abortController: AbortController): void => {
+    state.abortController = abortController;
+  };
+
+  const clearAbortController = (abortController?: AbortController): void => {
+    if (!abortController || state.abortController === abortController)
+      state.abortController = null;
+  };
+
+  const stop = (): void => {
+    notifyDebounceStopped();
+    stateController.clearWaitingState();
+    state.abortController = null;
+    disposeReplyEffect();
+  };
+
+  return {
+    ...stateController,
+    beginTurn,
+    attachAbortController,
+    clearAbortController,
+    extendDebounce,
+    notifyTyping,
+    hasInterruptingInputDuringActiveRun,
+    markActiveRunInterruptedByInput: stateController.markInterruptedByInput,
+    markFailed: (rc: RenderedContext) => scope.failedRc(rc),
+    wake: startTurn,
+    stop,
   };
 };

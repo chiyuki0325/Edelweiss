@@ -1,13 +1,30 @@
+import type { Logger } from '@guiiai/logg';
+import { signal } from 'alien-signals';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createDriverScheduler } from './scheduler';
+import { createDriverScheduler, createSchedulerStateController } from './scheduler';
 import { createSchedulerState } from './turn-state';
+import type { RenderedContext } from '../rendering/types';
 
-describe('createDriverScheduler', () => {
+const testLogger = (): Logger => {
+  const logger = {
+    withFields: vi.fn(() => logger),
+    log: vi.fn(),
+  };
+  return logger as unknown as Logger;
+};
+
+const rc = (...receivedAtMs: number[]): RenderedContext =>
+  receivedAtMs.map(ms => ({
+    receivedAtMs: ms,
+    content: [{ type: 'text' as const, text: `message ${ms}` }],
+  }));
+
+describe('createSchedulerStateController', () => {
   it('anchors reply batch deadline only once when interrupted repeatedly', () => {
     const state = createSchedulerState();
     let now = 1_000;
-    const scheduler = createDriverScheduler(state, {
+    const scheduler = createSchedulerStateController(state, {
       maxDelayMs: 5_000,
       now: () => now,
     });
@@ -24,14 +41,14 @@ describe('createDriverScheduler', () => {
 
   it('clears the deadline only for non-interrupted settled turns', () => {
     const interrupted = createSchedulerState();
-    const interruptedScheduler = createDriverScheduler(interrupted, { maxDelayMs: 100 });
+    const interruptedScheduler = createSchedulerStateController(interrupted, { maxDelayMs: 100 });
     interruptedScheduler.markInterruptedByInput();
     interruptedScheduler.onTurnSettled();
     expect(interrupted.replyBatchDeadlineMs).not.toBeNull();
     expect(interrupted.activeRunInterruptedByInput).toBe(false);
 
     const completed = createSchedulerState();
-    const completedScheduler = createDriverScheduler(completed, { maxDelayMs: 100 });
+    const completedScheduler = createSchedulerStateController(completed, { maxDelayMs: 100 });
     completedScheduler.ensureReplyBatchDeadline();
     completedScheduler.onTurnSettled();
     expect(completed.replyBatchDeadlineMs).toBeNull();
@@ -41,7 +58,7 @@ describe('createDriverScheduler', () => {
     vi.useFakeTimers();
     try {
       const state = createSchedulerState();
-      const scheduler = createDriverScheduler(state, { maxDelayMs: 100 });
+      const scheduler = createSchedulerStateController(state, { maxDelayMs: 100 });
       state.debounceWaiting = true;
       state.debounceTimer = setTimeout(() => {}, 100);
       state.maxDelayTimer = setTimeout(() => {}, 100);
@@ -51,6 +68,85 @@ describe('createDriverScheduler', () => {
       expect(state.debounceWaiting).toBe(false);
       expect(state.debounceTimer).toBeUndefined();
       expect(state.maxDelayTimer).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('createDriverScheduler', () => {
+  it('starts debounced turns through the scheduler controller', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const state = createSchedulerState();
+      const startTurn = vi.fn();
+      const rcSignal = signal<RenderedContext>([]);
+      const scheduler = createDriverScheduler({
+        chatId: 'chat',
+        rc: rcSignal,
+        offline: signal(false),
+        running: signal(false),
+        lastProcessedMs: signal(0),
+        failedRc: signal<RenderedContext | null>(null),
+        scheduler: state,
+      }, {
+        initialDelayMs: 100,
+        typingExtendMs: 50,
+        maxDelayMs: 1_000,
+        startTurn,
+        log: testLogger(),
+      });
+
+      rcSignal(rc(100));
+      expect(state.debounceWaiting).toBe(true);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(startTurn).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startTurn).toHaveBeenCalledTimes(1);
+
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts the active turn when newer interrupting input arrives before the deadline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const state = createSchedulerState();
+      const rcSignal = signal<RenderedContext>([]);
+      const running = signal(false);
+      const scheduler = createDriverScheduler({
+        chatId: 'chat',
+        rc: rcSignal,
+        offline: signal(false),
+        running,
+        lastProcessedMs: signal(0),
+        failedRc: signal<RenderedContext | null>(null),
+        scheduler: state,
+      }, {
+        initialDelayMs: 100,
+        typingExtendMs: 50,
+        maxDelayMs: 1_000,
+        startTurn: vi.fn(),
+        log: testLogger(),
+      });
+
+      rcSignal(rc(100));
+      const started = scheduler.beginTurn();
+      expect(started?.rcAtStart).toHaveLength(1);
+      const abortController = new AbortController();
+      scheduler.attachAbortController(abortController);
+
+      rcSignal(rc(100, 200));
+
+      expect(abortController.signal.aborted).toBe(true);
+      expect(state.startNextDebounceWithExtendDelay).toBe(true);
+      expect(state.replyBatchDeadlineMs).toBe(1_001_000);
+
+      scheduler.stop();
     } finally {
       vi.useRealTimers();
     }

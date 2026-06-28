@@ -948,6 +948,13 @@ testable.
 
 Expected result: `createDriver()` wires scope, scheduler, phases, and features.
 
+Status: completed. `src/driver/scheduler.ts` now owns reply eligibility,
+debounce timers, typing extension, active-run interruption/abort, failed-RC
+writeback, and turn begin/settle state transitions. `createDriver()` keeps the
+same public API and delegates scheduling through the per-scope scheduler
+controller while retaining turn preparation/execution and independent
+compaction wiring.
+
 ### Phase 6: Optional Subagent Unification
 
 - Let subagents create `TurnState` with `kind: 'subagent'`.
@@ -996,4 +1003,3 @@ such as loaded all-skills maps on `ChatScope`.
 - No DB migration is needed.
 - `turn_responses_v2` output remains compatible with existing context
   composition and compaction.
-
