@@ -218,34 +218,6 @@ export const createDriver = (config: DriverConfig, deps: {
       sendMessageTurnFlags?: SendMessageTurnFlags,
     ): CahciuaTool[] => {
       const platform = deps.getPlatformAdapter?.(chatId);
-      const tools: CahciuaTool[] = [];
-      if (capabilities.canSendMessage) {
-        tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
-          log.withFields({
-            chatId,
-            text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
-            replyTo,
-            attachments: attachments?.length ?? 0,
-          }).log('send_message tool called');
-          if (platform) {
-            const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
-            return { messageId: result.messageId };
-          }
-          const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
-          return { messageId: String(sent.messageId) };
-        }, sendMessageTurnFlags));
-      }
-      if (capabilities.canDismissMessage)
-        tools.push(createDismissMessageTool());
-      if (capabilities.canReact && chatConfig.platform === 'telegram' && deps.sendReaction && reactionEmojis.length > 0) {
-        tools.push(createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
-          const numericMessageId = Number(messageId);
-          if (!Number.isInteger(numericMessageId) || numericMessageId <= 0)
-            throw new Error(`Invalid Telegram message id for react_message: ${messageId}`);
-          await deps.sendReaction!(chatId, numericMessageId, emoji);
-        }));
-      }
-
       const downloadAttachment = createAttachmentDownloader({
         chatId,
         loadMessageAttachments: deps.loadMessageAttachments,
@@ -254,8 +226,43 @@ export const createDriver = (config: DriverConfig, deps: {
         platformAdapter: platform,
       });
 
-      if (capabilities.canUseBash) {
-        tools.push(createBashTool(deps.runtimeConfig, {
+      const createChatTools = (): CahciuaTool[] => {
+        const tools: CahciuaTool[] = [];
+        if (capabilities.canSendMessage) {
+          tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
+            log.withFields({
+              chatId,
+              text: text.length > 100 ? `${text.slice(0, 100)}...` : text,
+              replyTo,
+              attachments: attachments?.length ?? 0,
+            }).log('send_message tool called');
+            if (platform) {
+              const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
+              return { messageId: result.messageId };
+            }
+            const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
+            return { messageId: String(sent.messageId) };
+          }, sendMessageTurnFlags));
+        }
+        if (capabilities.canDismissMessage)
+          tools.push(createDismissMessageTool());
+        return tools;
+      };
+
+      const createReactionTools = (): CahciuaTool[] => {
+        if (!capabilities.canReact || chatConfig.platform !== 'telegram' || !deps.sendReaction || reactionEmojis.length === 0)
+          return [];
+        return [createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
+          const numericMessageId = Number(messageId);
+          if (!Number.isInteger(numericMessageId) || numericMessageId <= 0)
+            throw new Error(`Invalid Telegram message id for react_message: ${messageId}`);
+          await deps.sendReaction!(chatId, numericMessageId, emoji);
+        })];
+      };
+
+      const createBashTools = (): CahciuaTool[] => {
+        if (!capabilities.canUseBash) return [];
+        return [createBashTool(deps.runtimeConfig, {
           startTask: deps.backgroundTask.startTask,
           sessionId: chatId,
           backgroundThresholdSec: chatConfig.tools.bash.backgroundThresholdSec,
@@ -266,39 +273,44 @@ export const createDriver = (config: DriverConfig, deps: {
             ...(chatConfig.skills?.folder ? { skillsFolder: resolve(chatConfig.skills.folder) } : {}),
             skills: allSkills,
           },
-        }));
-      }
-      if (capabilities.canUseWebSearch)
-        tools.push(createWebSearchTool(chatConfig.tools.webSearch.tavilyKey));
-      if (capabilities.canUseWebFetch && chatConfig.tools.webFetch)
-        tools.push(createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch)));
-      if (capabilities.canDownloadFile)
-        tools.push(createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig }));
+        })];
+      };
 
-      const readFileCmd = deps.runtimeConfig.readFile;
-      const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
-        ? async (buffer: Buffer, detail: 'low' | 'high') => {
-          const maxEdge = detail === 'high' ? 1024 : 512;
-          const { default: sharp } = await import('sharp');
-          const resized = await sharp(buffer)
-            .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
-            .png()
-            .toBuffer();
-          const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
-          const system = await renderImageToTextSystemPrompt({ caption: '', detail });
-          const model = deps.resolveModel(chatConfig.imageToText.model!);
-          const result = await callDescriptionLlm({
-            model, system,
-            userText: 'Describe this image.',
-            images: [{ url: imageUrl }],
-            log, label: 'read-image',
-          });
-          return result.text.trim();
-        }
-        : undefined;
+      const createWebTools = (): CahciuaTool[] => [
+        ...(capabilities.canUseWebSearch ? [createWebSearchTool(chatConfig.tools.webSearch.tavilyKey)] : []),
+        ...(capabilities.canUseWebFetch && chatConfig.tools.webFetch ? [createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch))] : []),
+      ];
 
-      if (capabilities.canReadImage) {
-        tools.push(createReadImageTool({
+      const createDownloadTools = (): CahciuaTool[] =>
+        capabilities.canDownloadFile
+          ? [createDownloadFileTool({ downloadAttachment, runtime: deps.runtimeConfig })]
+          : [];
+
+      const createReadImageTools = (): CahciuaTool[] => {
+        if (!capabilities.canReadImage) return [];
+        const readFileCmd = deps.runtimeConfig.readFile;
+        const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
+          ? async (buffer: Buffer, detail: 'low' | 'high') => {
+            const maxEdge = detail === 'high' ? 1024 : 512;
+            const { default: sharp } = await import('sharp');
+            const resized = await sharp(buffer)
+              .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+              .png()
+              .toBuffer();
+            const imageUrl = `data:image/png;base64,${resized.toString('base64')}`;
+            const system = await renderImageToTextSystemPrompt({ caption: '', detail });
+            const model = deps.resolveModel(chatConfig.imageToText.model!);
+            const result = await callDescriptionLlm({
+              model, system,
+              userText: 'Describe this image.',
+              images: [{ url: imageUrl }],
+              log, label: 'read-image',
+            });
+            return result.text.trim();
+          }
+          : undefined;
+
+        return [createReadImageTool({
           downloadAttachment,
           readFile: async path => {
             const { execFile } = await import('node:child_process');
@@ -316,14 +328,27 @@ export const createDriver = (config: DriverConfig, deps: {
             });
           },
           resolveImageToText,
-        }));
-      }
-      if (capabilities.canUseBackgroundTasks) {
-        tools.push(createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)));
-        tools.push(createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)));
-        tools.push(createSleepTool());
-      }
-      return tools;
+        })];
+      };
+
+      const createBackgroundTaskTools = (): CahciuaTool[] =>
+        capabilities.canUseBackgroundTasks
+          ? [
+              createKillTaskTool(taskId => deps.backgroundTask.killTask(taskId)),
+              createReadTaskOutputTool((taskId, offset, limit) => deps.backgroundTask.readTaskOutput(taskId, offset, limit)),
+              createSleepTool(),
+            ]
+          : [];
+
+      return [
+        ...createChatTools(),
+        ...createReactionTools(),
+        ...createBashTools(),
+        ...createWebTools(),
+        ...createDownloadTools(),
+        ...createReadImageTools(),
+        ...createBackgroundTaskTools(),
+      ];
     };
 
     let nextTurnId = 1;
