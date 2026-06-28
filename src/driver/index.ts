@@ -14,15 +14,15 @@ import { createToolsForCapabilities } from './tool-providers';
 import type { CapabilityToolProviderDeps } from './tool-providers';
 import { createLoadSkillTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
+import { runTurnStepLoop } from './turn-loop';
 import { createDefaultTurnCapabilities, createSchedulerState } from './turn-state';
-import type { ChatScope, TurnState } from './turn-state';
+import type { ChatScope, CompletedStep, TurnState } from './turn-state';
 import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { LlmEndpoint, ProviderFormat } from '../llm/types';
 import type { RenderedContext } from '../rendering/types';
 import type { Attachment } from '../telegram/message/types';
-import type { ToolResult } from '../unified-api/types';
 
 /** Format current time in local timezone as ISO 8601 with offset (e.g. 2025-03-13T22:30:00+08:00). */
 const localTimeNow = (): string => {
@@ -203,6 +203,7 @@ export const createDriver = (config: DriverConfig, deps: {
       model: chatConfig.subagents.model,
       maxConcurrent: chatConfig.subagents.maxConcurrent,
       maxSteps: chatConfig.subagents.maxSteps,
+      getScope,
       renderSystemPrompt: state => renderSubagentSystemPrompt({
         modelName: chatConfig.subagents.model.model,
         task: state.task,
@@ -345,87 +346,57 @@ export const createDriver = (config: DriverConfig, deps: {
 
     const runPreparedMainTurn = async (turn: TurnState): Promise<void> => {
       const runner = getOrCreateRunner(turn.model);
-      let working = [...turn.entries];
-
-      for (let step = 1; step <= turn.maxSteps; step++) {
-        const externalEntries = mailbox.flush('main');
-        if (externalEntries.length > 0)
-          working = [...working, ...externalEntries];
-
-        const { stepEntries, usage, requestedAtMs, hasToolCalls } = await runner.runOneStep(working, {
-          signal: turn.abortController.signal,
-          chatId,
-          system: turn.system,
-          tools: turn.tools,
-          maxImagesAllowed: turn.model.maxImagesAllowed,
-          log,
-        }, step);
-
-        if (stepEntries.length === 0) {
-          turn.flags.modelStayedSilent = true;
-          log.withFields({ chatId, step }).log('Model chose to stay silent');
+      await runTurnStepLoop(turn, {
+        runner,
+        executorChatId: chatId,
+        log,
+        maxImagesAllowed: turn.model.maxImagesAllowed,
+        pullExternalEntries: () => mailbox.flush('main'),
+        transformStepEntries: (state, entries) => {
+          const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, state.pendingPrune);
+          state.pendingPrune = pendingPrune;
+          return pruned;
+        },
+        persistStep: async (state, step) => {
           await deps.persistTurnResponse(chatId, {
-            requestedAtMs,
-            entries: [],
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            modelName: turn.model.model,
+            requestedAtMs: step.requestedAtMs,
+            entries: step.persistedEntries,
+            inputTokens: step.usage.inputTokens,
+            outputTokens: step.usage.outputTokens,
+            modelName: state.model.model,
           });
-          lastProcessedMs(requestedAtMs);
-          break;
-        }
+          lastProcessedMs(step.requestedAtMs);
+        },
+        shouldContinue: (state, step) => shouldContinueMainTurn(state, step),
+      });
+    };
 
-        const toolResults = stepEntries.filter((e): e is ToolResult => e.kind === 'toolResult');
-        const anyRequiresFollowUp = toolResults.some(tr => tr.requiresFollowUp);
+    const shouldContinueMainTurn = (turn: TurnState, step: CompletedStep): boolean | undefined => {
+      if (!step.hasToolCalls || !step.anyRequiresFollowUp) return undefined;
+      if (rc() === turn.rcAtStart) return undefined;
 
-        log.withFields({
-          chatId, step,
-          hasToolCalls, newEntries: stepEntries.length, usage,
-        }).log('Step completed');
+      const hasPendingExternalInput = latestExternalEventMs(rc(), lastProcessedMs()) != null;
+      if (!hasPendingExternalInput) return undefined;
 
-        const { pruned, pendingPrune } = pruneLengthLimitFailures(stepEntries, turn.pendingPrune);
-        turn.pendingPrune = pendingPrune;
-        await deps.persistTurnResponse(chatId, {
-          requestedAtMs,
-          entries: pruned,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          modelName: turn.model.model,
-        });
-        lastProcessedMs(requestedAtMs);
-
-        if (!hasToolCalls || !anyRequiresFollowUp) {
-          if (hasToolCalls && !anyRequiresFollowUp)
-            log.withFields({ chatId, step }).log('All tool calls completed without follow-up');
-          break;
-        }
-
-        if (rc() !== turn.rcAtStart) {
-          const hasPendingExternalInput = latestExternalEventMs(rc(), lastProcessedMs()) != null;
-          if (hasPendingExternalInput && latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
-            const hasPendingRuntimeEvent = rc().some(seg =>
-              seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
-            if (schedulerController.isReplyBatchDeadlineExpired()) {
-              if (hasPendingRuntimeEvent) {
-                log.withFields({ chatId, step }).log('Turn interrupted by new messages');
-                break;
-              }
-            } else {
-              schedulerController.markActiveRunInterruptedByInput();
-              turn.flags.interruptedByInput = true;
-              log.withFields({ chatId, step }).log('Turn interrupted by new messages');
-              break;
-            }
-          } else if (hasPendingExternalInput) {
-            log.withFields({ chatId, step }).log('Turn interrupted by new messages');
-            break;
+      if (latestInterruptingExternalEventMs(rc(), lastProcessedMs()) != null) {
+        const hasPendingRuntimeEvent = rc().some(seg =>
+          seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
+        if (schedulerController.isReplyBatchDeadlineExpired()) {
+          if (hasPendingRuntimeEvent) {
+            log.withFields({ chatId, step: turn.step }).log('Turn interrupted by new messages');
+            return false;
           }
+          return undefined;
         }
 
-        working = [...working, ...stepEntries];
-        turn.entries = working;
-        turn.step++;
+        schedulerController.markActiveRunInterruptedByInput();
+        turn.flags.interruptedByInput = true;
+        log.withFields({ chatId, step: turn.step }).log('Turn interrupted by new messages');
+        return false;
       }
+
+      log.withFields({ chatId, step: turn.step }).log('Turn interrupted by new messages');
+      return false;
     };
 
     // Called from timer callbacks to start the async LLM work.

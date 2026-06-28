@@ -136,6 +136,8 @@ src/
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── scheduler.ts        # Driver scheduler controller: reply eligibility, debounce/typing timers, active-run interruption, begin/settle state
 │   ├── scheduler.test.ts   # Scheduler state-operation tests
+│   ├── turn-loop.ts        # Shared TurnState step loop used by main turns and subagents; runner.runOneStep remains the step executor
+│   ├── turn-loop.test.ts   # Turn loop raw-vs-persisted entry tests
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
 │   ├── pseudo-commands.ts  # Built-in bash pseudo commands: chat_info and skill_info

@@ -964,6 +964,13 @@ compaction wiring.
 This is optional. The main driver benefits even if subagents keep their current
 manager loop for a while.
 
+Status: completed. `src/driver/turn-loop.ts` now owns the shared `TurnState`
+step lifecycle over `runner.runOneStep()`, including mailbox/external-entry
+injection, raw-vs-persisted step entries, persistence, default follow-up
+continuation, and silent-output handling. Main turns and subagent turns both use
+this loop. Subagents now build `TurnState` with `kind: 'subagent'` while keeping
+their own prompt, tool overrides, status lifecycle, and parent-mailbox behavior.
+
 ## Risks
 
 ### Hidden Control Flow

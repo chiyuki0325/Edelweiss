@@ -5,6 +5,9 @@ import type { ConversationEntry } from '../../unified-api/types';
 import type { RunnerConfig } from '../runner';
 import { createRunner } from '../runner';
 import type { CahciuaTool } from '../tools';
+import { runTurnStepLoop } from '../turn-loop';
+import { createDefaultTurnCapabilities } from '../turn-state';
+import type { ChatScope, TurnState } from '../turn-state';
 import type { AgentMailbox } from './mailbox';
 import { createFinalizeSubagentTool, createMessageMainTool, createMessageSubagentTool, createStartSubagentTool } from './tools';
 import type { AgentId, SubagentState } from './types';
@@ -15,6 +18,7 @@ export interface SubagentManagerDeps {
   model: LlmEndpoint;
   maxConcurrent: number;
   maxSteps: number;
+  getScope: () => ChatScope;
   renderSystemPrompt: (state: SubagentState) => Promise<string>;
   createTools: (subagentId: AgentId) => CahciuaTool[];
   persistStep?: (agentId: AgentId, stepEntries: ConversationEntry[], usage: Usage, requestedAtMs: number) => Promise<void>;
@@ -84,6 +88,36 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
     createFinalizeSubagentTool(toolDeps, agentId),
   ];
 
+  const createSubagentTurn = async (state: SubagentState): Promise<TurnState> => {
+    const scope = deps.getScope();
+    return {
+      id: `${state.id}-${Date.now()}`,
+      kind: 'subagent',
+      chatId: deps.chatId,
+      agentId: state.id,
+      scope,
+      model: deps.model,
+      rcAtStart: scope.rc(),
+      trs: [],
+      entries: state.entries,
+      system: await deps.renderSystemPrompt(state),
+      tools: subagentTools(state.id),
+      step: 1,
+      maxSteps: deps.maxSteps,
+      pendingPrune: false,
+      abortController: new AbortController(),
+      capabilities: createDefaultTurnCapabilities('subagent'),
+      loadedSkills: new Set(),
+      reactionEmojis: [],
+      flags: {
+        wasOfflineAtStart: scope.offline(),
+        interruptedByInput: false,
+        sendMessageWasLengthLimited: false,
+        modelStayedSilent: false,
+      },
+    };
+  };
+
   const runSubagent = async (state: SubagentState): Promise<void> => {
     if (state.running) return;
     state.running = true;
@@ -92,23 +126,18 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
     state.updatedAtMs = Date.now();
 
     try {
-      const system = await deps.renderSystemPrompt(state);
-      const tools = subagentTools(state.id);
-      await runner.runStepLoop({
-        chatId: `${deps.chatId}:${state.id}`,
-        entries: state.entries,
-        system,
-        tools,
-        maxSteps: deps.maxSteps,
-        maxImagesAllowed: deps.model.maxImagesAllowed,
+      const turn = await createSubagentTurn(state);
+      await runTurnStepLoop(turn, {
+        runner,
+        executorChatId: `${deps.chatId}:${state.id}`,
+        maxImagesAllowed: turn.model.maxImagesAllowed,
         pullExternalEntries: () => deps.mailbox.flush(state.id),
         shouldStop: () => state.status === 'finalized' || state.status === 'failed',
-        onStepComplete: async (stepEntries, usage, requestedAtMs) => {
-          state.entries = [...state.entries, ...stepEntries];
-          state.updatedAtMs = requestedAtMs;
-          await deps.persistStep?.(state.id, stepEntries, usage, requestedAtMs);
+        persistStep: async (_, step) => {
+          state.entries = [...state.entries, ...step.persistedEntries];
+          state.updatedAtMs = step.requestedAtMs;
+          await deps.persistStep?.(state.id, step.persistedEntries, step.usage, step.requestedAtMs);
         },
-        checkInterrupt: () => false,
         log: deps.log,
       });
       if (state.status === 'running') state.status = 'idle';
