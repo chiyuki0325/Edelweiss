@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Logger } from '@guiiai/logg';
 
 import type { SkillInfo } from './skills';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createDismissMessageTool, createReactMessageTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { TurnCapabilities } from './turn-state';
 import type { PlatformAdapter } from './types';
@@ -75,7 +75,7 @@ export const createToolsForCapabilities = (
       }, sendMessageTurnFlags));
     }
     if (capabilities.canDismissMessage)
-      tools.push(createDismissMessageTool());
+      tools.push(createStaySilentTool());
     return tools;
   };
 

@@ -25,7 +25,7 @@ describe('createEvalTools', () => {
 
   it('omits load_skill when no skills folder is configured', () => {
     const { tools } = createEvalTools();
-    expect(tools.map(t => t.function.name)).toEqual(['send_message', 'dismiss_message']);
+    expect(tools.map(t => t.function.name)).toEqual(['send_message', 'stay_silent']);
   });
 
   it('prevents duplicate load_skill calls during one eval run', async () => {

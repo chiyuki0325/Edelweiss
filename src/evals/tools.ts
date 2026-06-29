@@ -1,6 +1,6 @@
 import type { EvalCapturedMessage, EvalToolName, EvalToolTrace } from './types';
 import { loadSkillsFromFolder } from '../driver/skills';
-import { createDismissMessageTool, createLoadSkillTool, createSendMessageTool } from '../driver/tools';
+import { createStaySilentTool, createLoadSkillTool, createSendMessageTool } from '../driver/tools';
 import type { CahciuaTool, SendMessageAttachment } from '../driver/tools';
 
 export interface EvalToolsOptions {
@@ -14,7 +14,7 @@ export interface EvalTools {
 }
 
 const defaultEnabledTools = (skillsFolder: string | undefined): EvalToolName[] =>
-  skillsFolder ? ['send_message', 'dismiss_message', 'load_skill'] : ['send_message', 'dismiss_message'];
+  skillsFolder ? ['send_message', 'stay_silent', 'load_skill'] : ['send_message', 'stay_silent'];
 
 export const createEvalTools = (options: EvalToolsOptions = {}): EvalTools => {
   const enabledTools = new Set(options.enabledTools ?? defaultEnabledTools(options.skillsFolder));
@@ -42,8 +42,8 @@ export const createEvalTools = (options: EvalToolsOptions = {}): EvalTools => {
     }));
   }
 
-  if (enabledTools.has('dismiss_message'))
-    tools.push(createDismissMessageTool());
+  if (enabledTools.has('stay_silent'))
+    tools.push(createStaySilentTool());
 
   if (enabledTools.has('load_skill') && options.skillsFolder) {
     const skills = loadSkillsFromFolder(options.skillsFolder);

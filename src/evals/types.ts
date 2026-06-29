@@ -7,7 +7,7 @@ import type { IntermediateContext } from '../projection/types';
 import type { RenderParams } from '../rendering/types';
 import type { ConversationEntry, ToolCallPart } from '../unified-api/types';
 
-export type EvalToolName = 'send_message' | 'dismiss_message' | 'load_skill';
+export type EvalToolName = 'send_message' | 'stay_silent' | 'load_skill';
 
 export type EvalIcSource =
   | string

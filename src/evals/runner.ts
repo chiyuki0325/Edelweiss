@@ -206,7 +206,7 @@ const loadPrompt = async (
     ? [...loadSkillsFromFolder(resolveFrom(baseDir, scenario.skillsFolder)).values()]
     : [];
   const enabledTools = scenario.enabledTools
-    ?? (scenario.skillsFolder ? ['send_message', 'dismiss_message', 'load_skill'] : ['send_message', 'dismiss_message']);
+    ?? (scenario.skillsFolder ? ['send_message', 'stay_silent', 'load_skill'] : ['send_message', 'stay_silent']);
   const params = {
     modelName: endpoint.model,
     currentChannel: 'telegram',
