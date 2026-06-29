@@ -2,7 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import { computed, effect, signal } from 'alien-signals';
 
 import { runCompaction } from './compaction';
-import { composeContext, findWorkingWindowCursor } from './context';
+import { composeContext, findWorkingWindowCursor, wasToolLoopInterrupted } from './context';
 import { createMainTurnFeatures } from './features/main';
 import { renderSubagentSystemPrompt } from './prompt';
 import { createRunner } from './runner';
@@ -115,7 +115,9 @@ export const createDriver = (config: DriverConfig, deps: {
     const mailbox = createAgentMailbox();
     const offline = signal(false);
     const lastProcessedMs = signal(0);
+    const lastTRInterrupted = signal(false);
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
+    void loadTRs(chatId).then(trs => lastTRInterrupted(wasToolLoopInterrupted(trs)));
     const running = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
     const scheduler = createSchedulerState();
@@ -298,6 +300,7 @@ export const createDriver = (config: DriverConfig, deps: {
             persistTurnResponse: deps.persistTurnResponse,
             createCapabilityTools,
             createSendMessageTurnFlags,
+            lastTRInterrupted,
             schedulerController,
             refreshAllowedReactionEmojis: deps.refreshAllowedReactionEmojis,
             getAllowedReactionEmojis: deps.getAllowedReactionEmojis,
@@ -318,6 +321,7 @@ export const createDriver = (config: DriverConfig, deps: {
       offline,
       running,
       lastProcessedMs,
+      lastTRInterrupted,
       failedRc,
       scheduler,
       getActiveTurn: () => chatScopes.get(chatId)?.activeTurn ?? null,

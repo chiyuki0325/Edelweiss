@@ -1,3 +1,4 @@
+import { signal } from 'alien-signals';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMainTurnFeatures } from './main';
@@ -111,6 +112,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
     onTurnSettled: vi.fn(),
   },
   getActiveBackgroundTasks: vi.fn(() => []),
+  lastTRInterrupted: signal(false),
   nowString: () => '2026-01-01T00:00:00+00:00',
 });
 

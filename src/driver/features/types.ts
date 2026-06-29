@@ -26,6 +26,7 @@ export interface MainTurnFeatureDeps {
   offline: DriverSignal<boolean>;
   running: DriverSignal<boolean>;
   lastProcessedMs: DriverSignal<number>;
+  lastTRInterrupted: DriverSignal<boolean>;
   cursorMs: ReadonlySignal<number | undefined>;
   summary: ReadonlySignal<string | undefined>;
   allSkills: Map<string, SkillInfo>;

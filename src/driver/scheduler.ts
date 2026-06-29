@@ -93,6 +93,7 @@ export interface DriverSchedulerScope {
   offline: DriverSignal<boolean>;
   running: DriverSignal<boolean>;
   lastProcessedMs: DriverSignal<number>;
+  lastTRInterrupted: DriverSignal<boolean>;
   failedRc: DriverSignal<RenderedContext | null>;
   scheduler: SchedulerState;
   getActiveTurn?: () => TurnState | null;
@@ -133,6 +134,7 @@ export const createDriverScheduler = (
     const rcVal = scope.rc();
     if (rcVal.length === 0) return false;
     if (rcVal === scope.failedRc()) return false;
+    if (scope.lastTRInterrupted()) return true;
     if (scope.offline()) {
       const after = scope.lastProcessedMs();
       return rcVal.some(seg =>

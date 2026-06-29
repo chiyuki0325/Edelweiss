@@ -90,6 +90,7 @@ describe('createDriverScheduler', () => {
         running: signal(false),
         lastProcessedMs: signal(0),
         failedRc: signal<RenderedContext | null>(null),
+        lastTRInterrupted: signal(false),
         scheduler: state,
       }, {
         initialDelayMs: 100,
@@ -127,6 +128,7 @@ describe('createDriverScheduler', () => {
         running,
         lastProcessedMs: signal(0),
         failedRc: signal<RenderedContext | null>(null),
+        lastTRInterrupted: signal(false),
         scheduler: state,
         getActiveTurn: () => activeTurn,
       }, {
