@@ -1,12 +1,12 @@
-# Cahciua Agent Guide
+# Edelweiss Agent Guide
 
-Reference for contributors working on the Cahciua codebase. Improve code when you touch it; avoid one-off patterns.
+Reference for contributors and coding agents working on the Edelweiss codebase. Improve code when you touch it; avoid one-off patterns.
 
 **Maintenance rule**: When you add, rename, or remove a file, change a key pattern, or complete a milestone — update this file in the same commit. Outdated docs are worse than no docs.
 
-## What Is Cahciua
+## What Is Edelweiss
 
-Cahciua is a Telegram / QQ group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture. DCP constructs LLM context through a three-layer pure-function pipeline:
+Edelweiss is a Telegram / QQ group chat bot built on the **Deterministic Context Pipeline (DCP)** architecture from Cahciua. DCP constructs LLM context through a three-layer pure-function pipeline:
 
 1. **Adaptation**: Platform Event → CanonicalIMEvent (anti-corruption layer).
 2. **Projection**: `IC' = Reducers(IC, CanonicalIMEvent)` — pure-function state machine producing an Intermediate Context (IC).
@@ -390,7 +390,7 @@ MTProto fires `updateEditMessage` for metadata-only changes (link preview loadin
 
 Incoming Telegram reaction updates come from Bot API polling with explicit `allowed_updates: ['message', 'message_reaction', 'message_reaction_count']`. Userbot is still used for reaction capabilities and actor lookup: `messages.getAvailableReactions` provides the global active emoji reaction list, per-chat `availableReactions` from `GetFullChat` / `GetFullChannel` constrains the final `react_message` tool enum, and `messages.getMessageReactionsList` resolves actor lists for `message_reaction_count` updates. Outgoing `react_message` calls use the Bot API `setMessageReaction` endpoint so the visible reaction sender is the real bot account. Custom, premium, and paid reactions are intentionally not exposed to the LLM.
 
-Incoming `message_reaction` updates identify the actor directly and are diffed from Bot API `old_reaction` / `new_reaction`. Incoming `message_reaction_count` updates are aggregate-only, so Cahciua asks userbot for the full `(emoji, sender)` reaction list, stores it per `(chatId, messageId)` in `message_reaction_snapshots`, then diffs that snapshot. Reaction updates emit append-only canonical `reaction` events only for additions. Removals update the snapshot but do not enter IC. If a message has no prior actor snapshot, the first aggregate snapshot seeds state without emitting historical reactions.
+Incoming `message_reaction` updates identify the actor directly and are diffed from Bot API `old_reaction` / `new_reaction`. Incoming `message_reaction_count` updates are aggregate-only, so Edelweiss asks userbot for the full `(emoji, sender)` reaction list, stores it per `(chatId, messageId)` in `message_reaction_snapshots`, then diffs that snapshot. Reaction updates emit append-only canonical `reaction` events only for additions. Removals update the snapshot but do not enter IC. If a message has no prior actor snapshot, the first aggregate snapshot seeds state without emitting historical reactions.
 
 Reaction IC nodes render as passive `<event type="reaction_added" .../>` RC segments. Live reaction ingress updates Pipeline/IC/RC but does not call `driver.handleEvent()`, so reaction storms do not wake or interrupt the LLM. Cold-start replay still passes passive reaction segments to Driver, but `latestExternalEventMs()` and `latestInterruptingExternalEventMs()` ignore `isPassiveEvent`.
 
@@ -398,7 +398,7 @@ Reaction IC nodes render as passive `<event type="reaction_added" .../>` RC segm
 
 ### Sticker Pack Title Normalization
 
-Telegram exposes sticker/custom-emoji packs by raw `set_name` slug. Cahciua keeps that raw slug as `stickerSetId` and resolves the human-readable pack title into `stickerSetName` before messages enter Adaptation. Rendering and prompt generation must treat `stickerSetName` as display title only.
+Telegram exposes sticker/custom-emoji packs by raw `set_name` slug. Edelweiss keeps that raw slug as `stickerSetId` and resolves the human-readable pack title into `stickerSetName` before messages enter Adaptation. Rendering and prompt generation must treat `stickerSetName` as display title only.
 
 Legacy events created before this split may still have raw `set_name` stored in `stickerSetName`. Cold-start replay normalizes those attachments once, persists the upgraded attachment JSON back to `events`, and reuses the same `resolvePackTitle()` path as live ingress and custom-emoji resolution.
 
@@ -784,3 +784,19 @@ The meta snapshot chain (`drizzle/meta/` + `_journal.json`) is the source of tru
 - Keep commits focused and scoped.
 - When a commit changes project structure, key patterns, or completes a milestone, update this file in the same commit.
 - **NEVER commit or push without explicit human instruction.** Always wait for the user to verify changes, run the application, and explicitly request a commit. Unauthorized commits are strictly forbidden.
+
+#### Commit format for coding agents
+
+```
+<type>: <description>
+
+[optional body]
+
+Co-Authored-By: Model Name <coding agent email>
+```
+
+For Claude Code, each commit message must end with a `Co-Authored-By` trailer. The model name should refer to the runtime environment prompts `You are powered by the model <actual model name>`, and should not be assumed to be `Claude Opus 4.8`.
+
+For Codex, each commit message must also end with a `Co-Authored-By` trailer, using the current Codex model identity. For example: `Co-Authored-By: GPT-5.5 <codex@openai.com>`
+
+If this is a port commit, add `Ported from (original repo name) (short commit hash).` after body. For example: `Ported from Cahciua 246d069.` Also. use `--author` to keep original author.
