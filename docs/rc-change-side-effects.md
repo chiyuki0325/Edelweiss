@@ -231,7 +231,7 @@ executeLlmCall() 结束
 - `src/driver/index.ts` 的 `disposeReplyEffect`
 - `src/driver/index.ts` 的 `hasInterruptingInputDuringActiveRun()`
 - `src/driver/index.ts` 创建 `AbortController` 后的复查
-- `src/driver/runner.ts` 的 `runStepLoop()`
+- `src/driver/turn-loop.ts` 的 `runTurnStepLoop()`
 
 发生的事：
 
@@ -242,7 +242,7 @@ executeLlmCall() 结束
 - 打断后下一轮等待使用 `typingExtendMs`，不是重新用 `initialDelayMs`，并且沿用原来的 deadline。
 - 如果新消息正好出现在 `running(true)` 后、`AbortController` 建好前，创建 controller 后会再检查一次，避免漏掉。
 
-Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterrupt()` 会读当前 `rc()`；如果和本轮开始时不同，并且有新的外部事件，就停止继续 tool loop。deadline 到了以后，普通聊天消息不再让这个检查中断当前 loop；RuntimeEvent 仍可在 step 边界唤醒下一轮处理。
+Turn loop 内部还有一步级别的检查：每个 step 持久化后，`InterruptionFeature.shouldContinue` 会读当前 `rc()`；如果和本轮开始时不同，并且有需要下一轮重组上下文的外部事件，就停止继续 tool loop。deadline 到了以后，普通聊天消息不再让这个检查中断当前 loop；RuntimeEvent 仍可在 step 边界唤醒下一轮处理。
 
 这个 deadline 不在 `send_message` 工具里重置。它属于 Driver 调度状态，因为一轮 LLM 可能静默、可能失败、可能调用多个工具，也可能根本不调用 `send_message`。
 
@@ -252,7 +252,7 @@ Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterru
 
 - `src/driver/index.ts` 的 `disposeReplyEffect`
 - `src/driver/index.ts` 的 `executeLlmCall()`
-- `src/driver/runner.ts` 的 `runStepLoop()`
+- `src/driver/turn-loop.ts` 的 `runTurnStepLoop()`
 
 发生的事：
 
@@ -327,6 +327,7 @@ Runner 内部还有一步级别的检查：每个 step 完成后，`checkInterru
 - Pipeline 保存 RC：`src/pipeline.ts`
 - Driver RC signal 与 effects：`src/driver/index.ts`
 - 回复判断辅助函数：`src/driver/context.ts`
-- LLM step loop：`src/driver/runner.ts`
+- LLM step loop：`src/driver/turn-loop.ts`
+- LLM step executor：`src/driver/runner.ts`
 - Telegram typing polling：`src/telegram/manager.ts` + `src/telegram/typing-poll.ts`
 - 后台任务完成产生 RuntimeEvent：`src/background-task/manager.ts`

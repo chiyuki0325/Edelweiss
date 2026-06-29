@@ -193,8 +193,9 @@ closures unless it is purely cache-like.
 ### Step Entries: Raw vs Persisted
 
 There are **two** entry streams per step, and they must not be conflated. The
-current `runner.ts` loop encodes this asymmetry deliberately (see the comment on
-`pruneLengthLimitFailures`):
+current `turn-loop.ts` lifecycle encodes this asymmetry deliberately, with
+`SendMessageFeature.transformStepEntries` delegating to
+`pruneLengthLimitFailures`:
 
 - **Raw step entries** are appended to the in-turn working context
   (`working = [...working, ...stepEntries]`). The model must keep seeing its own
@@ -782,17 +783,19 @@ the turn was interrupted).
 
 ## Step Executor
 
-`src/driver/runner.ts` can be reduced to a step executor. It should no longer
-own the whole loop.
+`src/driver/runner.ts` is reduced to a step executor. It no longer owns the
+whole loop.
 
 Proposed split:
 
-- `callModelStep(turn)`:
+- `callModelStep(...)`:
   - call `callLlm(...)`
   - handle force-tool-call retry
   - return assistant entries and usage
-- `executeToolStep(turn, modelOutput)`:
+- `executeToolStep(...)`:
   - extract tool calls
+  - execute tools
+  - return tool results
   - execute tools
   - return tool results
 - `runOneStep(turn)`:
@@ -924,12 +927,17 @@ Expected result: `executeLlmCall()` becomes mostly orchestration.
 
 ### Phase 3: Reduce Runner to Step Executor
 
-- Split `createRunner().runStepLoop()` into reusable `runOneStep()`.
+- Split `createRunner().runStepLoop()` into reusable step executors.
 - Move persistence, pruning, and continuation decisions to Driver phases.
 - Keep force-tool-call retry inside the model step executor.
 
 Expected result: main Driver owns lifecycle; runner owns provider/model/tool
 step mechanics.
+
+Status: completed. `src/driver/runner.ts` exposes `callModelStep()`,
+`executeToolStep()`, and `runOneStep()` only. The old `runStepLoop()` API was
+removed. Main turns, subagent turns, and eval runs now use
+`src/driver/turn-loop.ts` over explicit `TurnState` objects.
 
 ### Phase 4: Convert Tool Assembly to Capability Providers
 
@@ -952,8 +960,9 @@ Status: completed. `src/driver/scheduler.ts` now owns reply eligibility,
 debounce timers, typing extension, active-run interruption/abort, failed-RC
 writeback, and turn begin/settle state transitions. `createDriver()` keeps the
 same public API and delegates scheduling through the per-scope scheduler
-controller while retaining turn preparation/execution and independent
-compaction wiring.
+controller while retaining independent compaction wiring. The scheduler also
+writes `turn.flags.interruptedByInput` when it observes interrupting input and
+aborts the active turn.
 
 ### Phase 6: Optional Subagent Unification
 
@@ -965,11 +974,43 @@ This is optional. The main driver benefits even if subagents keep their current
 manager loop for a while.
 
 Status: completed. `src/driver/turn-loop.ts` now owns the shared `TurnState`
-step lifecycle over `runner.runOneStep()`, including mailbox/external-entry
-injection, raw-vs-persisted step entries, persistence, default follow-up
-continuation, and silent-output handling. Main turns and subagent turns both use
-this loop. Subagents now build `TurnState` with `kind: 'subagent'` while keeping
-their own prompt, tool overrides, status lifecycle, and parent-mailbox behavior.
+step lifecycle over the runner step executors, including feature `beforeStep`,
+`beforeModelCall`, `afterModelCall`, `afterToolResults`,
+`transformStepEntries`, `persistStep`, `shouldContinue`, raw-vs-persisted step
+entries, default follow-up continuation, and silent-output handling. Main turns
+and subagent turns both use this loop. Subagents now build `TurnState` with
+`kind: 'subagent'` while keeping their own prompt, tool overrides, status
+lifecycle, and parent-mailbox behavior.
+
+### Phase 7: Land Feature Hooks
+
+- Add the concrete `DriverFeature` interface and fixed prepare-phase runner.
+- Wire main turns through named features for context, interruption, reaction
+  refresh, capabilities, tools, skills, human-likeness feedback, prompt
+  rendering, mailbox flushing, send-message pruning, persistence, and logging.
+- Keep features internal and statically assembled per chat scope.
+
+Status: completed. `src/driver/turn-features.ts` defines the concrete hook
+interface and `runPrepareTurnFeatures()`. `src/driver/index.ts` now assembles
+main-turn features instead of a monolithic `prepareMainTurn()`. The design is
+still intentionally not a public plugin API.
+
+### Phase 8: Complete Turn Phases and Preemptive Prepare Abort
+
+- Add `src/driver/turn-phases.ts` as the lifecycle owner for prepare, shared
+  step-loop execution, finish, fail, and cleanup.
+- Route real failures through `failTurn` and route aborts through silent cleanup
+  without marking `failedRc`.
+- Thread the turn `AbortSignal` through prepare hooks and Telegram reaction
+  refresh so a turn can be interrupted while still preparing capabilities.
+- Remove turn-side external-input polling; `InterruptionFeature.shouldContinue`
+  now only handles runtime-event boundary stops.
+
+Status: completed. Main turns are executed by `runTurn()` over
+`createTurnPhases(...)`; lifecycle cleanup and failed-RC writeback are ordinary
+feature hooks. `refreshAllowedReactionEmojis` accepts an optional abort signal
+through the Driver and Telegram hook chain, and evals reuse the same
+`runTurnStepLoop()` as production turns.
 
 ## Risks
 

@@ -76,27 +76,33 @@ const createTurn = (): TurnState => ({
 describe('runTurnStepLoop', () => {
   it('persists transformed entries while continuing with raw entries', async () => {
     const turn = createTurn();
-    const rawEntries = [assistantToolCall('raw thinking'), toolResult('needs follow-up', true)];
+    const rawMessage = assistantToolCall('raw thinking');
+    const rawToolResult = toolResult('needs follow-up', true);
+    const rawEntries = [rawMessage, rawToolResult];
     const persistedEntries = [toolResult('persisted only', true)];
     const seenWorkingLengths: number[] = [];
+    const afterModelCall = vi.fn();
+    const afterToolResults = vi.fn();
     const runner = {
-      runOneStep: vi.fn(async (working: ConversationEntry[]) => {
+      callModelStep: vi.fn(async (working: ConversationEntry[]) => {
         seenWorkingLengths.push(working.length);
         if (seenWorkingLengths.length === 1) {
           return {
-            stepEntries: rawEntries,
+            entries: [rawMessage],
+            toolCalls: [rawMessage.parts[1] as Extract<OutputMessage['parts'][number], { kind: 'toolCall' }>],
             usage,
             requestedAtMs: 100,
-            hasToolCalls: true,
           };
         }
         return {
-          stepEntries: [],
+          entries: [],
+          toolCalls: [],
           usage,
           requestedAtMs: 200,
-          hasToolCalls: false,
         };
       }),
+      executeToolStep: vi.fn(async () =>
+        seenWorkingLengths.length === 1 ? [rawToolResult] : []),
     };
     const persisted: ConversationEntry[][] = [];
 
@@ -104,6 +110,11 @@ describe('runTurnStepLoop', () => {
       runner,
       executorChatId: 'chat',
       log,
+      features: [{
+        name: 'observer',
+        afterModelCall,
+        afterToolResults,
+      }],
       transformStepEntries: () => persistedEntries,
       persistStep: (_, step) => {
         persisted.push(step.persistedEntries);
@@ -114,5 +125,7 @@ describe('runTurnStepLoop', () => {
     expect(persisted).toEqual([persistedEntries, []]);
     expect(turn.entries).toEqual([userText('initial'), ...rawEntries]);
     expect(turn.flags.modelStayedSilent).toBe(true);
+    expect(afterModelCall).toHaveBeenCalledTimes(2);
+    expect(afterToolResults).toHaveBeenCalledTimes(1);
   });
 });

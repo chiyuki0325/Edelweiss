@@ -3,7 +3,8 @@ import { signal } from 'alien-signals';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createDriverScheduler, createSchedulerStateController } from './scheduler';
-import { createSchedulerState } from './turn-state';
+import { createDefaultTurnCapabilities, createSchedulerState } from './turn-state';
+import type { ChatScope, TurnState } from './turn-state';
 import type { RenderedContext } from '../rendering/types';
 
 const testLogger = (): Logger => {
@@ -118,6 +119,7 @@ describe('createDriverScheduler', () => {
       const state = createSchedulerState();
       const rcSignal = signal<RenderedContext>([]);
       const running = signal(false);
+      let activeTurn: TurnState | null = null;
       const scheduler = createDriverScheduler({
         chatId: 'chat',
         rc: rcSignal,
@@ -126,6 +128,7 @@ describe('createDriverScheduler', () => {
         lastProcessedMs: signal(0),
         failedRc: signal<RenderedContext | null>(null),
         scheduler: state,
+        getActiveTurn: () => activeTurn,
       }, {
         initialDelayMs: 100,
         typingExtendMs: 50,
@@ -138,11 +141,38 @@ describe('createDriverScheduler', () => {
       const started = scheduler.beginTurn();
       expect(started?.rcAtStart).toHaveLength(1);
       const abortController = new AbortController();
+      activeTurn = {
+        id: 'turn',
+        kind: 'main',
+        chatId: 'chat',
+        agentId: 'main',
+        scope: {} as ChatScope,
+        model: { apiBaseUrl: '', apiKey: '', model: '' },
+        rcAtStart: started!.rcAtStart,
+        trs: [],
+        entries: [],
+        system: '',
+        tools: [],
+        step: 1,
+        maxSteps: Infinity,
+        pendingPrune: false,
+        abortController,
+        capabilities: createDefaultTurnCapabilities('main'),
+        loadedSkills: new Set(),
+        reactionEmojis: [],
+        flags: {
+          wasOfflineAtStart: false,
+          interruptedByInput: false,
+          sendMessageWasLengthLimited: false,
+          modelStayedSilent: false,
+        },
+      };
       scheduler.attachAbortController(abortController);
 
       rcSignal(rc(100, 200));
 
       expect(abortController.signal.aborted).toBe(true);
+      expect(activeTurn.flags.interruptedByInput).toBe(true);
       expect(state.startNextDebounceWithExtendDelay).toBe(true);
       expect(state.replyBatchDeadlineMs).toBe(1_001_000);
 

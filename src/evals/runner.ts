@@ -19,10 +19,13 @@ import type {
 } from './types';
 import { composeContext, injectLateBindingPrompt } from '../driver/context';
 import { renderLateBindingPrompt } from '../driver/prompt';
-import { createRunner } from '../driver/runner';
+import { createRunner, pruneLengthLimitFailures } from '../driver/runner';
 import { loadSkillsFromFolder } from '../driver/skills';
 import { extractToolCalls } from '../driver/tools';
 import type { CahciuaTool } from '../driver/tools';
+import { runTurnStepLoop } from '../driver/turn-loop';
+import { createDefaultTurnCapabilities } from '../driver/turn-state';
+import type { ChatScope, TurnState } from '../driver/turn-state';
 import type { TurnResponseV2 } from '../driver/types';
 import type { LlmEndpoint, Usage } from '../llm/types';
 import type { IntermediateContext } from '../projection/types';
@@ -53,6 +56,64 @@ const loadEvaluator = async (source: string | EvalEvaluator, baseDir: string): P
   typeof source === 'function'
     ? source
     : await loadDefaultExport<EvalEvaluator>(resolveFrom(baseDir, source));
+
+const runEvalStepLoop = async (params: {
+  runner: ReturnType<typeof createRunner>;
+  chatId: string;
+  entries: ConversationEntry[];
+  system: string;
+  tools: CahciuaTool[];
+  maxSteps: number;
+  maxImagesAllowed?: number;
+  log: Logger;
+  onStepComplete: (entries: ConversationEntry[], usage: Usage) => void;
+}): Promise<void> => {
+  const turn: TurnState = {
+    id: `eval-${params.chatId}`,
+    kind: 'main',
+    chatId: params.chatId,
+    agentId: 'main',
+    scope: {} as ChatScope,
+    model: {
+      apiBaseUrl: '',
+      apiKey: '',
+      model: '',
+    },
+    rcAtStart: [],
+    trs: [],
+    entries: [...params.entries],
+    system: params.system,
+    tools: params.tools,
+    step: 1,
+    maxSteps: params.maxSteps,
+    pendingPrune: false,
+    abortController: new AbortController(),
+    capabilities: createDefaultTurnCapabilities('main'),
+    loadedSkills: new Set(),
+    reactionEmojis: [],
+    flags: {
+      wasOfflineAtStart: false,
+      interruptedByInput: false,
+      sendMessageWasLengthLimited: false,
+      modelStayedSilent: false,
+    },
+  };
+
+  await runTurnStepLoop(turn, {
+    runner: params.runner,
+    executorChatId: params.chatId,
+    maxImagesAllowed: params.maxImagesAllowed,
+    transformStepEntries: (stepTurn, entries) => {
+      const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, stepTurn.pendingPrune);
+      stepTurn.pendingPrune = pendingPrune;
+      return pruned;
+    },
+    persistStep: (_, step) => {
+      params.onStepComplete(step.persistedEntries, step.usage);
+    },
+    log: params.log,
+  });
+};
 
 interface LoadedEvalFixture {
   name: string;
@@ -236,7 +297,8 @@ const runOne = async (params: {
 
   try {
     const runner = createRunner(params.endpoint);
-    await runner.runStepLoop({
+    await runEvalStepLoop({
+      runner,
       chatId: `${params.suite.name}:${params.scenario.name}:${params.icName}:${params.prompt.name}`,
       entries,
       system,
@@ -251,7 +313,6 @@ const runOne = async (params: {
           cacheReadTokens: usage.cacheReadTokens + stepUsage.cacheReadTokens,
         };
       },
-      checkInterrupt: () => false,
       log: params.log,
       maxImagesAllowed: params.endpoint.maxImagesAllowed,
     });

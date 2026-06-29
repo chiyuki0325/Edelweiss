@@ -132,11 +132,14 @@ src/
 │   ├── merge.test.ts       # Merge logic tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
 │   ├── call-llm.ts         # Unified LLM call dispatcher (openai-chat / responses / anthropic-messages)
-│   ├── runner.ts           # LLM step executor: triple-provider SSE streaming + manual tool execution; legacy runStepLoop kept for subagents/evals
+│   ├── runner.ts           # LLM step executor: triple-provider SSE streaming + manual tool execution (callModelStep/executeToolStep/runOneStep only)
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── scheduler.ts        # Driver scheduler controller: reply eligibility, debounce/typing timers, active-run interruption, begin/settle state
 │   ├── scheduler.test.ts   # Scheduler state-operation tests
-│   ├── turn-loop.ts        # Shared TurnState step loop used by main turns and subagents; runner.runOneStep remains the step executor
+│   ├── turn-features.ts    # DriverFeature hook interface + fixed prepare-phase runner
+│   ├── turn-phases.ts      # Turn lifecycle phase runner: prepare, shared step loop, finish/fail/cleanup hook dispatch
+│   ├── turn-phases.test.ts # Turn lifecycle phase tests for abort, skip, failure, and cleanup behavior
+│   ├── turn-loop.ts        # Shared TurnState step loop used by main turns and subagents; runs DriverFeature step hooks around runner step executors
 │   ├── turn-loop.test.ts   # Turn loop raw-vs-persisted entry tests
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
@@ -430,7 +433,7 @@ Commands are registered via `bot.registerCommand()` from `src/telegram/live-hand
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the complete output of one step: assistant response + tool results produced by executing that step's tool calls. When new external chat messages arrive during a tool call loop before the current reply batch deadline, the Driver's `checkInterrupt` detects the RC change and breaks the loop. After the deadline, ordinary new messages stop interrupting the current loop so the bot is not starved by constant chatter. Runtime events (for example background task completion) also break the loop at a step boundary so the next turn can recompose context with the event, but they do **not** abort an in-flight model API request and do **not** wait for debounce when they are the only pending trigger. The reactive effect then re-schedules a new LLM call when interruption is needed, composing fresh context from the latest RC (which now includes the new messages) and all persisted TRs. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
+Each LLM API call = one TR (not the entire loop as one TR). Each TR stores the complete output of one step: assistant response + tool results produced by executing that step's tool calls. When new external chat messages arrive during a tool call loop before the current reply batch deadline, the scheduler aborts the active turn's `AbortController` and the next turn recomposes fresh context. After the deadline, ordinary new messages stop aborting the current loop so the bot is not starved by constant chatter. Runtime events (for example background task completion) do **not** abort an in-flight model API request and do **not** wait for debounce when they are the only pending trigger; `InterruptionFeature.shouldContinue` stops at a step boundary so the next turn can recompose context with the event. New messages' `receivedAtMs` > previous TR's `requestedAtMs` (causality), so they merge correctly after the TR. This is an **interrupt + re-schedule** mechanism, not mid-loop re-rendering — the interrupted loop exits, and a completely new call starts with a fresh step budget and updated system prompt. See `docs/dcp-design.md §Tool Call Loop Interleaving` for merge details.
 
 ### Reasoning Signature Sanitization
 

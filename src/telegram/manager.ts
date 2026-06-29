@@ -84,7 +84,7 @@ export interface TelegramManager {
   startTypingPolling(chatId: string): void;
   stopTypingPolling(chatId: string): void;
   resolvePackTitle(setName: string): Promise<string>;
-  refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
+  refreshAllowedReactionEmojis(chatId: string, signal?: AbortSignal): Promise<string[]>;
   getAllowedReactionEmojis(chatId: string): string[];
   sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
   botUserId: string;
@@ -412,7 +412,7 @@ export const createTelegramManager = (
     fetchMessages: (chatId, opts) => userbot?.fetchMessages(chatId, opts) ?? Promise.resolve([]),
     fetchSpecificMessages: (chatId, ids) => userbot?.fetchSpecificMessages(chatId, ids) ?? Promise.resolve([]),
     resolvePackTitle,
-    refreshAllowedReactionEmojis: chatId => userbot?.refreshAllowedReactionEmojis(chatId) ?? Promise.resolve([]),
+    refreshAllowedReactionEmojis: (chatId, signal) => userbot?.refreshAllowedReactionEmojis(chatId, signal) ?? Promise.resolve([]),
     getAllowedReactionEmojis: chatId => userbot?.getAllowedReactionEmojis(chatId) ?? [],
     sendReaction: (chatId, messageId, emoji) => bot.sendReaction(chatId, messageId, emoji),
     botUserId: bot.botUserId(),

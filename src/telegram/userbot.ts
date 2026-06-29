@@ -34,9 +34,9 @@ export interface UserbotClient {
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
   fetchMessageReactions(chatId: string, messageId: number): Promise<TelegramReactionSnapshotEntry[]>;
   downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
-  refreshAvailableReactionEmojis(): Promise<string[]>;
+  refreshAvailableReactionEmojis(signal?: AbortSignal): Promise<string[]>;
   getAvailableReactionEmojis(): string[];
-  refreshAllowedReactionEmojis(chatId: string): Promise<string[]>;
+  refreshAllowedReactionEmojis(chatId: string, signal?: AbortSignal): Promise<string[]>;
   getAllowedReactionEmojis(chatId: string): string[];
   raw(): TelegramClient;
   getSessionString(): string;
@@ -311,10 +311,12 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     return snapshot;
   };
 
-  const refreshAvailableReactionEmojis = async (): Promise<string[]> => {
+  const refreshAvailableReactionEmojis = async (signal?: AbortSignal): Promise<string[]> => {
+    signal?.throwIfAborted();
     const result = await client.invoke(new Api.messages.GetAvailableReactions({
       hash: availableReactionsHash,
     }));
+    signal?.throwIfAborted();
 
     if (result instanceof Api.messages.AvailableReactionsNotModified)
       return availableReactionEmojis;
@@ -328,18 +330,22 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
 
   const getAvailableReactionEmojis = (): string[] => availableReactionEmojis;
 
-  const refreshAllowedReactionEmojis = async (chatId: string): Promise<string[]> => {
-    const globalEmojis = await refreshAvailableReactionEmojis();
+  const refreshAllowedReactionEmojis = async (chatId: string, signal?: AbortSignal): Promise<string[]> => {
+    signal?.throwIfAborted();
+    const globalEmojis = await refreshAvailableReactionEmojis(signal);
     const peer = await client.getInputEntity(chatId);
+    signal?.throwIfAborted();
     let emojis = globalEmojis;
 
     if (peer instanceof Api.InputPeerChannel) {
       const full = await client.invoke(new Api.channels.GetFullChannel({ channel: peer }));
+      signal?.throwIfAborted();
       const fullChat = full.fullChat;
       if (fullChat instanceof Api.ChannelFull)
         emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);
     } else if (peer instanceof Api.InputPeerChat) {
       const full = await client.invoke(new Api.messages.GetFullChat({ chatId: peer.chatId }));
+      signal?.throwIfAborted();
       const fullChat = full.fullChat;
       if (fullChat instanceof Api.ChatFull)
         emojis = resolveChatAllowedEmojiReactions(fullChat.availableReactions, globalEmojis);

@@ -1,23 +1,25 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { createRunner } from './runner';
+import type { DriverFeature } from './turn-features';
 import type { CompletedStep, TurnState } from './turn-state';
-import type { ConversationEntry, ToolResult } from '../unified-api/types';
+import type { ConversationEntry } from '../unified-api/types';
 
 type Awaitable<T> = T | Promise<T>;
 
 export interface TurnStepLoopParams {
-  runner: Pick<ReturnType<typeof createRunner>, 'runOneStep'>;
+  runner: Pick<ReturnType<typeof createRunner>, 'callModelStep' | 'executeToolStep'>;
   executorChatId: string;
   log: Logger;
   maxImagesAllowed?: number;
+  features?: DriverFeature[];
   pullExternalEntries?: (turn: TurnState) => Awaitable<ConversationEntry[]>;
   shouldStop?: (turn: TurnState) => boolean;
   transformStepEntries?: (
     turn: TurnState,
     entries: ConversationEntry[],
   ) => Awaitable<ConversationEntry[]>;
-  persistStep: (turn: TurnState, step: CompletedStep) => Awaitable<void>;
+  persistStep?: (turn: TurnState, step: CompletedStep) => Awaitable<void>;
   shouldContinue?: (turn: TurnState, step: CompletedStep) => Awaitable<boolean | undefined>;
 }
 
@@ -26,28 +28,57 @@ export const runTurnStepLoop = async (
   params: TurnStepLoopParams,
 ): Promise<void> => {
   let working = [...turn.entries];
+  const features = params.features ?? [];
+  const persistCompletedStep = async (step: CompletedStep): Promise<void> => {
+    await params.persistStep?.(turn, step);
+    for (const feature of features)
+      await feature.persistStep?.(turn, step);
+  };
 
   for (; turn.step <= turn.maxSteps;) {
+    turn.abortController.signal.throwIfAborted();
     const stepNumber = turn.step;
+    for (const feature of features)
+      await feature.beforeStep?.(turn);
+    turn.abortController.signal.throwIfAborted();
+    working = [...turn.entries];
+
     const externalEntries = await params.pullExternalEntries?.(turn) ?? [];
+    turn.abortController.signal.throwIfAborted();
     if (externalEntries.length > 0)
       working = [...working, ...externalEntries];
 
     if (params.shouldStop?.(turn)) break;
 
-    const { stepEntries, usage, requestedAtMs, hasToolCalls } = await params.runner.runOneStep(working, {
+    for (const feature of features)
+      await feature.beforeModelCall?.(turn);
+    turn.abortController.signal.throwIfAborted();
+
+    const stepParams = {
       signal: turn.abortController.signal,
       chatId: params.executorChatId,
       system: turn.system,
       tools: turn.tools,
       maxImagesAllowed: params.maxImagesAllowed,
       log: params.log,
-    }, stepNumber);
+    };
+    const modelOutput = await params.runner.callModelStep(working, stepParams, stepNumber);
+    turn.abortController.signal.throwIfAborted();
+    for (const feature of features)
+      await feature.afterModelCall?.(turn, modelOutput);
+    turn.abortController.signal.throwIfAborted();
+
+    const toolResults = await params.runner.executeToolStep(modelOutput.toolCalls, stepParams);
+    turn.abortController.signal.throwIfAborted();
+    const stepEntries = [...modelOutput.entries, ...toolResults];
+    const usage = modelOutput.usage;
+    const requestedAtMs = modelOutput.requestedAtMs;
+    const hasToolCalls = modelOutput.toolCalls.length > 0;
 
     if (stepEntries.length === 0) {
       turn.flags.modelStayedSilent = true;
       params.log.withFields({ chatId: params.executorChatId, step: stepNumber }).log('Model chose to stay silent');
-      await params.persistStep(turn, {
+      await persistCompletedStep({
         rawEntries: [],
         persistedEntries: [],
         usage,
@@ -58,8 +89,9 @@ export const runTurnStepLoop = async (
       break;
     }
 
-    const toolResults = stepEntries.filter((e): e is ToolResult => e.kind === 'toolResult');
     const anyRequiresFollowUp = toolResults.some(tr => tr.requiresFollowUp);
+    for (const feature of features)
+      await feature.afterToolResults?.(turn, { entries: stepEntries });
 
     params.log.withFields({
       chatId: params.executorChatId,
@@ -69,7 +101,9 @@ export const runTurnStepLoop = async (
       usage,
     }).log('Step completed');
 
-    const persistedEntries = await params.transformStepEntries?.(turn, stepEntries) ?? stepEntries;
+    let persistedEntries = await params.transformStepEntries?.(turn, stepEntries) ?? stepEntries;
+    for (const feature of features)
+      persistedEntries = await feature.transformStepEntries?.(turn, persistedEntries) ?? persistedEntries;
     const completedStep: CompletedStep = {
       rawEntries: stepEntries,
       persistedEntries,
@@ -78,7 +112,7 @@ export const runTurnStepLoop = async (
       hasToolCalls,
       anyRequiresFollowUp,
     };
-    await params.persistStep(turn, completedStep);
+    await persistCompletedStep(completedStep);
 
     if (!hasToolCalls || !anyRequiresFollowUp) {
       if (hasToolCalls && !anyRequiresFollowUp)
@@ -86,7 +120,13 @@ export const runTurnStepLoop = async (
       break;
     }
 
-    if (await params.shouldContinue?.(turn, completedStep) === false)
+    let shouldContinue = await params.shouldContinue?.(turn, completedStep);
+    for (const feature of features) {
+      const opinion = await feature.shouldContinue?.(turn, completedStep);
+      if (opinion !== undefined)
+        shouldContinue = opinion;
+    }
+    if (shouldContinue === false)
       break;
 
     working = [...working, ...completedStep.rawEntries];

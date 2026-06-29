@@ -2,7 +2,7 @@ import type { Logger } from '@guiiai/logg';
 import { computed, effect } from 'alien-signals';
 
 import { latestExternalEventMs, latestInterruptingExternalEventMs } from './context';
-import type { DriverSignal, SchedulerState } from './turn-state';
+import type { DriverSignal, SchedulerState, TurnState } from './turn-state';
 import type { RenderedContext } from '../rendering/types';
 
 const TYPING_VALIDITY_MS = 6000;
@@ -95,6 +95,7 @@ export interface DriverSchedulerScope {
   lastProcessedMs: DriverSignal<number>;
   failedRc: DriverSignal<RenderedContext | null>;
   scheduler: SchedulerState;
+  getActiveTurn?: () => TurnState | null;
 }
 
 export interface DriverSchedulerOptions {
@@ -149,6 +150,9 @@ export const createDriverScheduler = (
 
   const abortActiveRunForInput = (): void => {
     stateController.markInterruptedByInput();
+    const activeTurn = scope.getActiveTurn?.();
+    if (activeTurn)
+      activeTurn.flags.interruptedByInput = true;
     if (state.abortController) {
       state.abortController.abort(new Error('New messages arrived, aborting current call'));
       state.abortController = null;
@@ -301,8 +305,6 @@ export const createDriverScheduler = (
     clearAbortController,
     extendDebounce,
     notifyTyping,
-    hasInterruptingInputDuringActiveRun,
-    markActiveRunInterruptedByInput: stateController.markInterruptedByInput,
     markFailed: (rc: RenderedContext) => scope.failedRc(rc),
     wake: startTurn,
     stop,

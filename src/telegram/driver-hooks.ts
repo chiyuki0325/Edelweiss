@@ -20,7 +20,7 @@ export interface TelegramDriverHooks {
   loadMessageAttachments(chatId: string, messageId: number): Attachment[] | undefined;
   downloadFile(fileId: string): Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
-  refreshAllowedReactionEmojis?: (chatId: string) => Promise<string[]>;
+  refreshAllowedReactionEmojis?: (chatId: string, signal?: AbortSignal) => Promise<string[]>;
   getAllowedReactionEmojis?: (chatId: string) => string[];
   sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
   onDebounceStateChange(chatId: string, isDebouncing: boolean): void;
@@ -157,7 +157,7 @@ export const createTelegramDriverHooks = (deps: TelegramDriverHooksDeps): Telegr
       ? (chatId, messageId) => deps.manager.userbot!.downloadMessageMedia(chatId, messageId)
       : undefined,
     refreshAllowedReactionEmojis: deps.manager.userbot
-      ? chatId => deps.manager.refreshAllowedReactionEmojis(chatId)
+      ? (chatId, signal) => deps.manager.refreshAllowedReactionEmojis(chatId, signal)
       : undefined,
     getAllowedReactionEmojis: deps.manager.userbot
       ? chatId => deps.manager.getAllowedReactionEmojis(chatId)

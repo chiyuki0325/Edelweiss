@@ -178,14 +178,14 @@ RC (user/system messages) needs NO provider metadata. `cache_control` annotation
 
 ### Tool Call Loop Interleaving
 
-Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). When new external chat messages arrive during a tool loop, the Driver's `checkInterrupt` detects the RC change and breaks the loop. The reactive effect then re-schedules a new LLM call, composing fresh context from the latest RC and all persisted TRs. This is an **interrupt + re-schedule** mechanism — the interrupted loop exits completely, and a new call starts with a fresh step budget, updated system prompt, and re-applied token trimming.
+Each LLM API call within a tool call loop produces its own TR (not the entire loop as one TR). When new external chat messages arrive during a tool loop before the reply-batch deadline, the scheduler aborts the active turn's `AbortController`. Runtime events do not abort the in-flight model call; the turn-loop stops at a step boundary through `InterruptionFeature.shouldContinue`. The scheduler then re-schedules a new LLM call when needed, composing fresh context from the latest RC and all persisted TRs. This is an **interrupt + re-schedule** mechanism — the interrupted loop exits completely, and a new call starts with a fresh step budget, updated system prompt, and re-applied token trimming.
 
 New messages' `receivedAtMs` is always > the previous TR's `requestedAtMs` (causality: the message arrived after the API call was sent), so they naturally sort after the TR in the merge.
 
 ```
 TR₁(t=1500): [assistant₁, tool_result₁]  ← API call 1 returns, tool executes, result stored in same TR
                                             new messages arrive at t=2200, 2800
-                                            checkInterrupt detects → loop breaks
+                                            scheduler abort / step-boundary stop
                                             re-schedule triggers new LLM call
 TR₂(t=3500): [assistant₂]                ← API call 2 returns (no tool calls)
 
@@ -325,14 +325,14 @@ The Driver uses alien-signals (signal/computed/effect) for reactive scheduling. 
 - `compactionMeta: signal<CompactionSessionMeta | null>` — loaded from DB on scope creation, updated on compaction
 - `needsReply: computed` — true when new external messages exist after `lastProcessedMs` (and RC is not the same reference as `failedRc`)
 
-An `effect` watches `needsReply` and `running`: when not running and `needsReply` is true, it immediately schedules a step loop via `setTimeout(0)` (to exit the synchronous signal graph). New events update `rc`, which invalidates `needsReply`, which re-triggers the effect. If a loop is running, `checkInterrupt` detects the RC change and breaks the loop; the effect re-fires after `running(false)`.
+An `effect` watches `needsReply` and `running`: when not running and `needsReply` is true, it schedules a debounced turn. New events update `rc`, which invalidates `needsReply`, which re-triggers the effect. If a turn is running, the scheduler may abort its `AbortController` before the reply-batch deadline; runtime events are handled by a step-boundary stop in the turn loop.
 
 ```
 // Simplified reactive graph (actual code in src/driver/index.ts)
 rc(newRC)                    // handleEvent updates signal
   → needsReply recomputes   // computed: latestExternalEventMs(rc, lastProcessedMs) != null
   → effect fires            // schedules setTimeout(0)
-  → composeContext + runStepLoop
+  → composeContext + DriverFeature prepare phases + runTurnStepLoop
   → onStepComplete: persistTR, lastProcessedMs(now)
   → running(false)          // effect re-checks for pending events
 ```

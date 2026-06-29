@@ -158,19 +158,6 @@ export interface ModelStepOutput {
   requestedAtMs: number;
 }
 
-export interface StepLoopParams extends StepExecutorParams {
-  entries: ConversationEntry[];
-  maxSteps: number;
-  onStepComplete: (
-    stepEntries: ConversationEntry[],
-    usage: Usage,
-    requestedAtMs: number,
-  ) => void | Promise<void>;
-  checkInterrupt: () => boolean;
-  pullExternalEntries?: () => ConversationEntry[] | Promise<ConversationEntry[]>;
-  shouldStop?: () => boolean;
-}
-
 const toToolSchema = (t: CahciuaTool): ToolSchema => ({
   name: t.function.name,
   parameters: t.function.parameters,
@@ -262,52 +249,5 @@ export const createRunner = (config: RunnerConfig) => {
     };
   };
 
-  const runStepLoop = async (params: StepLoopParams): Promise<void> => {
-    let working: ConversationEntry[] = [...params.entries];
-    let pendingPrune = false;
-
-    for (let step = 1; step <= params.maxSteps; step++) {
-      if (step > 0 && params.pullExternalEntries) {
-        const externalEntries = await params.pullExternalEntries();
-        if (externalEntries.length > 0)
-          working = [...working, ...externalEntries];
-      }
-      if (params.shouldStop?.()) break;
-
-      const { stepEntries, usage, requestedAtMs, hasToolCalls } =
-        await runOneStep(working, params, step);
-
-      if (stepEntries.length === 0) {
-        params.log.withFields({ chatId: params.chatId, step }).log('Model chose to stay silent');
-        await params.onStepComplete([], usage, requestedAtMs);
-        break;
-      }
-
-      const toolResults = stepEntries.filter((e): e is ToolResult => e.kind === 'toolResult');
-      const anyRequiresFollowUp = toolResults.some(tr => tr.requiresFollowUp);
-
-      params.log.withFields({
-        chatId: params.chatId, step,
-        hasToolCalls, newEntries: stepEntries.length, usage,
-      }).log('Step completed');
-
-      const { pruned, pendingPrune: nextPrune } = pruneLengthLimitFailures(stepEntries, pendingPrune);
-      pendingPrune = nextPrune;
-      await params.onStepComplete(pruned, usage, requestedAtMs);
-
-      if (!hasToolCalls || !anyRequiresFollowUp) {
-        if (hasToolCalls && !anyRequiresFollowUp)
-          params.log.withFields({ chatId: params.chatId, step }).log('All tool calls completed without follow-up');
-        break;
-      }
-      if (params.checkInterrupt()) {
-        params.log.withFields({ chatId: params.chatId, step }).log('Turn interrupted by new messages');
-        break;
-      }
-
-      working = [...working, ...stepEntries];
-    }
-  };
-
-  return { callModelStep, executeToolStep, runOneStep, runStepLoop };
+  return { callModelStep, executeToolStep, runOneStep };
 };
