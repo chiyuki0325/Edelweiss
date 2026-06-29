@@ -396,7 +396,7 @@ export const createDriver = (config: DriverConfig, deps: {
 
             compactionMeta(newMeta);
           } catch (err) {
-            log.withError(err).error('Compaction failed');
+            log.withError(err).withFields({ chatId }).error('Compaction failed');
           } finally {
             compactionRunning = false;
           }
