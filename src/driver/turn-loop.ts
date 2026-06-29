@@ -1,8 +1,9 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { createRunner } from './runner';
-import type { DriverFeature } from './turn-features';
-import type { CompletedStep, TurnState } from './turn-state';
+import type { DriverFeature, TurnContext } from './turn-features';
+import { runFeatureDecision, runFeatureEffects, runFeatureTransform } from './turn-features';
+import type { CompletedStep } from './turn-state';
 import type { ConversationEntry } from '../unified-api/types';
 
 type Awaitable<T> = T | Promise<T>;
@@ -13,45 +14,44 @@ export interface TurnStepLoopParams {
   log: Logger;
   maxImagesAllowed?: number;
   features?: DriverFeature[];
-  pullExternalEntries?: (turn: TurnState) => Awaitable<ConversationEntry[]>;
-  shouldStop?: (turn: TurnState) => boolean;
+  pullExternalEntries?: (ctx: TurnContext) => Awaitable<ConversationEntry[]>;
+  shouldStop?: (ctx: TurnContext) => boolean;
   transformStepEntries?: (
-    turn: TurnState,
+    ctx: TurnContext,
     entries: ConversationEntry[],
   ) => Awaitable<ConversationEntry[]>;
-  persistStep?: (turn: TurnState, step: CompletedStep) => Awaitable<void>;
-  shouldContinue?: (turn: TurnState, step: CompletedStep) => Awaitable<boolean | undefined>;
+  persistStep?: (ctx: TurnContext, step: CompletedStep) => Awaitable<void>;
+  shouldContinue?: (ctx: TurnContext, step: CompletedStep) => Awaitable<boolean | undefined>;
 }
 
 export const runTurnStepLoop = async (
-  turn: TurnState,
+  ctx: TurnContext,
   params: TurnStepLoopParams,
 ): Promise<void> => {
+  const { turn } = ctx;
   let working = [...turn.entries];
   const features = params.features ?? [];
   const persistCompletedStep = async (step: CompletedStep): Promise<void> => {
-    await params.persistStep?.(turn, step);
+    await params.persistStep?.(ctx, step);
     for (const feature of features)
-      await feature.persistStep?.(turn, step);
+      await feature.persistStep?.(ctx, step);
   };
 
   for (; turn.step <= turn.maxSteps;) {
     turn.abortController.signal.throwIfAborted();
     const stepNumber = turn.step;
-    for (const feature of features)
-      await feature.beforeStep?.(turn);
+    await runFeatureEffects(ctx, features, 'beforeStep');
     turn.abortController.signal.throwIfAborted();
     working = [...turn.entries];
 
-    const externalEntries = await params.pullExternalEntries?.(turn) ?? [];
+    const externalEntries = await params.pullExternalEntries?.(ctx) ?? [];
     turn.abortController.signal.throwIfAborted();
     if (externalEntries.length > 0)
       working = [...working, ...externalEntries];
 
-    if (params.shouldStop?.(turn)) break;
+    if (params.shouldStop?.(ctx)) break;
 
-    for (const feature of features)
-      await feature.beforeModelCall?.(turn);
+    await runFeatureEffects(ctx, features, 'beforeModelCall');
     turn.abortController.signal.throwIfAborted();
 
     const stepParams = {
@@ -65,7 +65,7 @@ export const runTurnStepLoop = async (
     const modelOutput = await params.runner.callModelStep(working, stepParams, stepNumber);
     turn.abortController.signal.throwIfAborted();
     for (const feature of features)
-      await feature.afterModelCall?.(turn, modelOutput);
+      await feature.afterModelCall?.(ctx, modelOutput);
     turn.abortController.signal.throwIfAborted();
 
     const toolResults = await params.runner.executeToolStep(modelOutput.toolCalls, stepParams);
@@ -91,7 +91,7 @@ export const runTurnStepLoop = async (
 
     const anyRequiresFollowUp = toolResults.some(tr => tr.requiresFollowUp);
     for (const feature of features)
-      await feature.afterToolResults?.(turn, { entries: stepEntries });
+      await feature.afterToolResults?.(ctx, { entries: stepEntries });
 
     params.log.withFields({
       chatId: params.executorChatId,
@@ -101,9 +101,8 @@ export const runTurnStepLoop = async (
       usage,
     }).log('Step completed');
 
-    let persistedEntries = await params.transformStepEntries?.(turn, stepEntries) ?? stepEntries;
-    for (const feature of features)
-      persistedEntries = await feature.transformStepEntries?.(turn, persistedEntries) ?? persistedEntries;
+    let persistedEntries = await params.transformStepEntries?.(ctx, stepEntries) ?? stepEntries;
+    persistedEntries = await runFeatureTransform(ctx, features, 'transformStepEntries', persistedEntries);
     const completedStep: CompletedStep = {
       rawEntries: stepEntries,
       persistedEntries,
@@ -120,12 +119,8 @@ export const runTurnStepLoop = async (
       break;
     }
 
-    let shouldContinue = await params.shouldContinue?.(turn, completedStep);
-    for (const feature of features) {
-      const opinion = await feature.shouldContinue?.(turn, completedStep);
-      if (opinion !== undefined)
-        shouldContinue = opinion;
-    }
+    let shouldContinue = await params.shouldContinue?.(ctx, completedStep);
+    shouldContinue = await runFeatureDecision(ctx, features, 'shouldContinue', completedStep, shouldContinue);
     if (shouldContinue === false)
       break;
 

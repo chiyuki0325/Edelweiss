@@ -1,17 +1,17 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { createRunner } from './runner';
-import type { DriverFeature } from './turn-features';
-import { runPrepareTurnFeatures, TurnPreparationSkipped } from './turn-features';
+import type { DriverFeature, TurnContext } from './turn-features';
+import { createTurnContext, runFeatureEffects, runPrepareTurnFeatures, TurnPreparationSkipped } from './turn-features';
 import { runTurnStepLoop } from './turn-loop';
 import type { TurnState } from './turn-state';
 
 export interface TurnPhases {
-  prepareTurn(turn: TurnState, signal: AbortSignal): Promise<void>;
-  runSteps(turn: TurnState): Promise<void>;
-  finishTurn(turn: TurnState): Promise<void>;
-  failTurn(turn: TurnState, error: unknown): Promise<void>;
-  cleanupTurn(turn: TurnState): Promise<void>;
+  prepareTurn(ctx: TurnContext): Promise<void>;
+  runSteps(ctx: TurnContext): Promise<void>;
+  finishTurn(ctx: TurnContext): Promise<void>;
+  failTurn(ctx: TurnContext, error: unknown): Promise<void>;
+  cleanupTurn(ctx: TurnContext): Promise<void>;
 }
 
 export interface TurnPhasesParams {
@@ -23,20 +23,12 @@ export interface TurnPhasesParams {
 }
 
 export const createTurnPhases = (params: TurnPhasesParams): TurnPhases => {
-  const runFeatureHook = async (
-    turn: TurnState,
-    hook: 'finishTurn' | 'cleanupTurn',
-  ): Promise<void> => {
-    for (const feature of params.features)
-      await feature[hook]?.(turn);
-  };
-
   return {
-    prepareTurn: async (turn, signal) => {
-      await runPrepareTurnFeatures(turn, params.features, signal);
+    prepareTurn: async ctx => {
+      await runPrepareTurnFeatures(ctx, params.features);
     },
-    runSteps: async turn => {
-      await runTurnStepLoop(turn, {
+    runSteps: async ctx => {
+      await runTurnStepLoop(ctx, {
         runner: params.runner,
         executorChatId: params.executorChatId,
         log: params.log,
@@ -44,15 +36,15 @@ export const createTurnPhases = (params: TurnPhasesParams): TurnPhases => {
         features: params.features,
       });
     },
-    finishTurn: async turn => {
-      await runFeatureHook(turn, 'finishTurn');
+    finishTurn: async ctx => {
+      await runFeatureEffects(ctx, params.features, 'finishTurn');
     },
-    failTurn: async (turn, error) => {
+    failTurn: async (ctx, error) => {
       for (const feature of params.features)
-        await feature.failTurn?.(turn, error);
+        await feature.failTurn?.(ctx, error);
     },
-    cleanupTurn: async turn => {
-      await runFeatureHook(turn, 'cleanupTurn');
+    cleanupTurn: async ctx => {
+      await runFeatureEffects(ctx, params.features, 'cleanupTurn');
     },
   };
 };
@@ -61,16 +53,17 @@ export const runTurn = async (
   turn: TurnState,
   phases: TurnPhases,
 ): Promise<void> => {
-  const signal = turn.abortController.signal;
+  const ctx = createTurnContext(turn);
+  const signal = ctx.signal;
 
   try {
-    await phases.prepareTurn(turn, signal);
+    await phases.prepareTurn(ctx);
     signal.throwIfAborted();
 
-    await phases.runSteps(turn);
+    await phases.runSteps(ctx);
     signal.throwIfAborted();
 
-    await phases.finishTurn(turn);
+    await phases.finishTurn(ctx);
   } catch (err) {
     if (signal.aborted) {
       turn.flags.interruptedByInput = true;
@@ -79,9 +72,9 @@ export const runTurn = async (
     if (err instanceof TurnPreparationSkipped)
       return;
 
-    await phases.failTurn(turn, err);
+    await phases.failTurn(ctx, err);
     throw err;
   } finally {
-    await phases.cleanupTurn(turn);
+    await phases.cleanupTurn(ctx);
   }
 };

@@ -51,8 +51,8 @@ describe('runTurn', () => {
 
     await expect(runTurn(turn, phases)).rejects.toThrow(error);
 
-    expect(phases.failTurn).toHaveBeenCalledWith(turn, error);
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(turn);
+    expect(phases.failTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }), error);
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
     expect(phases.finishTurn).not.toHaveBeenCalled();
   });
 
@@ -69,7 +69,7 @@ describe('runTurn', () => {
     expect(turn.flags.interruptedByInput).toBe(true);
     expect(phases.runSteps).not.toHaveBeenCalled();
     expect(phases.failTurn).not.toHaveBeenCalled();
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(turn);
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
   });
 
   it('skips empty prepared turns without marking failure', async () => {
@@ -82,6 +82,6 @@ describe('runTurn', () => {
 
     expect(phases.runSteps).not.toHaveBeenCalled();
     expect(phases.failTurn).not.toHaveBeenCalled();
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(turn);
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
   });
 });

@@ -2,17 +2,16 @@ import type { Logger } from '@guiiai/logg';
 import { computed, effect, signal } from 'alien-signals';
 
 import { runCompaction } from './compaction';
-import { composeContext, findWorkingWindowCursor, injectLateBindingPrompt, wasToolLoopInterrupted } from './context';
-import { renderLateBindingPrompt, renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
-import { createRunner, pruneLengthLimitFailures } from './runner';
+import { composeContext, findWorkingWindowCursor } from './context';
+import { createMainTurnFeatures } from './features/main';
+import { renderSubagentSystemPrompt } from './prompt';
+import { createRunner } from './runner';
 import { createDriverScheduler } from './scheduler';
-import { collectRecentSendMessageAssessments, RECENT_SEND_MESSAGE_WINDOW, renderRecentSendMessageHumanLikenessXml } from './send-message-human-likeness';
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
 import { createToolsForCapabilities } from './tool-providers';
 import type { CapabilityToolProviderDeps } from './tool-providers';
-import { createLoadSkillTool, extractLoadedSkillNames } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import { TurnPreparationSkipped } from './turn-features';
 import type { DriverFeature } from './turn-features';
@@ -35,17 +34,6 @@ const localTimeNow = (): string => {
   const tz = `${sign}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
   const iso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
   return `${iso}${tz}`;
-};
-
-const abortable = async <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> => {
-  signal.throwIfAborted();
-  return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason ?? new Error('Operation aborted'));
-    signal.addEventListener('abort', abort, { once: true });
-    promise.then(resolve, reject).finally(() => {
-      signal.removeEventListener('abort', abort);
-    });
-  });
 };
 
 export { mergeContext } from './merge';
@@ -269,213 +257,6 @@ export const createDriver = (config: DriverConfig, deps: {
       },
     });
 
-    const createMainTurnFeatures = (): DriverFeature[] => {
-      let contextEstimatedTokens = 0;
-      let recentSendMessageHumanLikenessXml = '';
-
-      const contextFeature: DriverFeature = {
-        name: 'context',
-        prepareContext: async turn => {
-          const cursor = cursorMs();
-          const sum = summary();
-          const trs = await loadTRs(chatId, cursor);
-          const ctx = composeContext(turn.rcAtStart, trs, chatConfig.compaction.maxContextEstTokens, turn.model.model, sum);
-          if (!ctx) throw new TurnPreparationSkipped('No context entries to send');
-          turn.trs = trs;
-          turn.entries = ctx.entries;
-          contextEstimatedTokens = ctx.estimatedTokens;
-        },
-      };
-
-      const interruptionFeature: DriverFeature = {
-        name: 'interruption',
-        shouldContinue: (turn, step) => {
-          if (!step.hasToolCalls || !step.anyRequiresFollowUp) return undefined;
-          if (rc() === turn.rcAtStart) return undefined;
-
-          const hasPendingRuntimeEvent = rc().some(seg =>
-            seg.receivedAtMs > lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
-          if (!hasPendingRuntimeEvent) return undefined;
-
-          log.withFields({ chatId, step: turn.step }).log('Turn stopped at step boundary for runtime event');
-          return false;
-        },
-      };
-
-      const reactionFeature: DriverFeature = {
-        name: 'reaction',
-        prepareCapabilities: async (turn, signal) => {
-          if (chatConfig.platform !== 'telegram' || !deps.refreshAllowedReactionEmojis) return;
-          try {
-            turn.reactionEmojis = await abortable(deps.refreshAllowedReactionEmojis(chatId, signal), signal);
-          } catch (err) {
-            if (signal.aborted) throw err;
-            log.withError(err).withFields({ chatId }).warn('Failed to refresh Telegram reaction emojis');
-            turn.reactionEmojis = deps.getAllowedReactionEmojis?.(chatId) ?? [];
-          }
-        },
-      };
-
-      const capabilityFeature: DriverFeature = {
-        name: 'capability',
-        prepareCapabilities: turn => {
-          turn.capabilities.canReact = chatConfig.platform === 'telegram' && turn.reactionEmojis.length > 0;
-          turn.capabilities.canStartSubagent = chatConfig.subagents.enabled;
-          turn.capabilities.canMessageSubagent = chatConfig.subagents.enabled;
-        },
-      };
-
-      const skillFeature: DriverFeature = {
-        name: 'skill',
-        prepareTools: turn => {
-          if (!turn.capabilities.canLoadSkill || allSkills.size === 0) return;
-          turn.loadedSkills = extractLoadedSkillNames(turn.entries);
-          turn.tools.push(createLoadSkillTool(
-            () => allSkills,
-            name => { turn.loadedSkills.add(name); },
-            name => turn.loadedSkills.has(name),
-          ));
-        },
-      };
-
-      const toolFeature: DriverFeature = {
-        name: 'tools',
-        prepareTools: turn => {
-          const sharedTools = createCapabilityTools(turn.capabilities, turn.reactionEmojis, createSendMessageTurnFlags(turn));
-          const subagentTools = turn.capabilities.canStartSubagent ? subagentManager.mainTools() : [];
-          turn.tools = [...sharedTools, ...subagentTools];
-        },
-      };
-
-      const humanLikenessFeature: DriverFeature = {
-        name: 'human-likeness',
-        preparePrompt: async () => {
-          recentSendMessageHumanLikenessXml = renderRecentSendMessageHumanLikenessXml(
-            collectRecentSendMessageAssessments(await deps.loadTurnResponses(chatId), RECENT_SEND_MESSAGE_WINDOW, chatConfig.humanLikeness),
-          );
-        },
-      };
-
-      const promptFeature: DriverFeature = {
-        name: 'prompt',
-        preparePrompt: async turn => {
-          turn.system = await renderSystemPrompt({
-            currentChannel: chatConfig.platform,
-            modelName: chatConfig.primaryModel.model,
-            forceToolCall: chatConfig.primaryModel.forceToolCall,
-            systemFiles: chatConfig.systemFiles,
-            hasLoadSkillTool: allSkills.size > 0,
-            hasSubagentTools: chatConfig.subagents.enabled,
-            hasReactTool: chatConfig.platform === 'telegram' && turn.reactionEmojis.length > 0,
-            availableReactionEmojis: turn.reactionEmojis,
-            availableSkills: [...allSkills.values()]
-              .map(s => ({
-                id: s.name,
-                ...(s.format === 'custom-v2' && s.title ? { title: s.title } : {}),
-                description: s.description,
-                usage: s.usage,
-              })),
-          });
-
-          const isInterrupted = wasToolLoopInterrupted(turn.trs);
-          const isMentioned = turn.rcAtStart.some(seg => seg.mentionsMe && seg.receivedAtMs > lastProcessedMs());
-          const isReplied = turn.rcAtStart.some(seg => seg.repliesToMe && seg.receivedAtMs > lastProcessedMs());
-
-          injectLateBindingPrompt(turn.entries, await renderLateBindingPrompt({
-            timeNow: localTimeNow(),
-            forceToolCall: chatConfig.primaryModel.forceToolCall,
-            isMentioned,
-            isReplied,
-            recentSendMessageHumanLikenessXml,
-            isInterrupted,
-            activeBackgroundTasks: deps.backgroundTask.getActiveTasks(chatId),
-          }));
-        },
-      };
-
-      const mailboxFeature: DriverFeature = {
-        name: 'mailbox',
-        beforeStep: turn => {
-          const externalEntries = mailbox.flush('main');
-          if (externalEntries.length > 0)
-            turn.entries = [...turn.entries, ...externalEntries];
-        },
-      };
-
-      const sendMessageFeature: DriverFeature = {
-        name: 'send-message',
-        transformStepEntries: (turn, entries) => {
-          const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, turn.pendingPrune);
-          turn.pendingPrune = pendingPrune;
-          return pruned;
-        },
-      };
-
-      const persistenceFeature: DriverFeature = {
-        name: 'persistence',
-        persistStep: async (turn, step) => {
-          await deps.persistTurnResponse(chatId, {
-            requestedAtMs: step.requestedAtMs,
-            entries: step.persistedEntries,
-            inputTokens: step.usage.inputTokens,
-            outputTokens: step.usage.outputTokens,
-            modelName: turn.model.model,
-          });
-          lastProcessedMs(step.requestedAtMs);
-        },
-      };
-
-      const failureFeature: DriverFeature = {
-        name: 'failure',
-        failTurn: (turn, error) => {
-          log.withError(error).error('LLM call failed');
-          schedulerController.markFailed(turn.rcAtStart);
-        },
-      };
-
-      const cleanupFeature: DriverFeature = {
-        name: 'cleanup',
-        cleanupTurn: turn => {
-          schedulerController.onTurnSettled();
-          schedulerController.clearAbortController(turn.abortController);
-          turn.scope.activeTurn = null;
-          running(false);
-          if (turn.flags.wasOfflineAtStart) {
-            offline(false);
-            log.withFields({ chatId }).log('Offline mode: auto-returning to online after response');
-          }
-        },
-      };
-
-      const loggingFeature: DriverFeature = {
-        name: 'logging',
-        preparePrompt: turn => {
-          log.withFields({
-            chatId,
-            entries: turn.entries.length,
-            estimatedTokens: contextEstimatedTokens,
-          }).log('Triggering LLM call');
-        },
-      };
-
-      return [
-        contextFeature,
-        interruptionFeature,
-        reactionFeature,
-        capabilityFeature,
-        toolFeature,
-        skillFeature,
-        humanLikenessFeature,
-        promptFeature,
-        loggingFeature,
-        mailboxFeature,
-        sendMessageFeature,
-        persistenceFeature,
-        failureFeature,
-        cleanupFeature,
-      ];
-    };
-
     const runMainTurn = async (turn: TurnState, features: DriverFeature[]): Promise<void> => {
       const runner = getOrCreateRunner(turn.model);
       await runTurn(turn, createTurnPhases({
@@ -499,7 +280,30 @@ export const createDriver = (config: DriverConfig, deps: {
           const turn = createMainTurn(rcAtStart, stepAbortController, wasOffline);
           turn.scope.activeTurn = turn;
           schedulerController.attachAbortController(stepAbortController);
-          const features = createMainTurnFeatures();
+          const features = createMainTurnFeatures({
+            chatId,
+            chatConfig,
+            log,
+            rc,
+            offline,
+            running,
+            lastProcessedMs,
+            cursorMs,
+            summary,
+            allSkills,
+            mailbox,
+            subagentManager,
+            loadTRs,
+            loadTurnResponses: deps.loadTurnResponses,
+            persistTurnResponse: deps.persistTurnResponse,
+            createCapabilityTools,
+            createSendMessageTurnFlags,
+            schedulerController,
+            refreshAllowedReactionEmojis: deps.refreshAllowedReactionEmojis,
+            getAllowedReactionEmojis: deps.getAllowedReactionEmojis,
+            getActiveBackgroundTasks: deps.backgroundTask.getActiveTasks,
+            nowString: localTimeNow,
+          });
           await runMainTurn(turn, features);
         } catch (err) {
           if (err instanceof TurnPreparationSkipped) return;

@@ -1,6 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createTurnContext } from './turn-features';
 import { runTurnStepLoop } from './turn-loop';
 import { createDefaultTurnCapabilities } from './turn-state';
 import type { ChatScope, TurnState } from './turn-state';
@@ -106,7 +107,7 @@ describe('runTurnStepLoop', () => {
     };
     const persisted: ConversationEntry[][] = [];
 
-    await runTurnStepLoop(turn, {
+    await runTurnStepLoop(createTurnContext(turn), {
       runner,
       executorChatId: 'chat',
       log,

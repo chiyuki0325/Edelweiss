@@ -190,6 +190,24 @@ hook may mutate `turn.capabilities`, `turn.tools`, `turn.entries`, or
 well-defined `turn.flags`, but should not squirrel state away in feature-local
 closures unless it is purely cache-like.
 
+Feature hooks receive a `TurnContext`, not a bare `TurnState`. `TurnState`
+remains the business state understood by the scheduler, turn loop, persistence,
+and runner. `TurnScratch` is the per-turn feature scratchpad for transient
+cross-feature values that should not become part of the core turn state machine.
+
+```ts
+interface TurnScratch {
+  contextEstimatedTokens: number;
+  recentSendMessageHumanLikenessXml: string;
+}
+
+interface TurnContext {
+  turn: TurnState;
+  scratch: TurnScratch;
+  signal: AbortSignal;
+}
+```
+
 ### Step Entries: Raw vs Persisted
 
 There are **two** entry streams per step, and they must not be conflated. The
@@ -278,26 +296,26 @@ runner.
 interface DriverFeature {
   name: string;
 
-  prepareTurn?(turn: TurnState): Awaitable<void>;
-  prepareContext?(turn: TurnState): Awaitable<void>;
-  preparePrompt?(turn: TurnState): Awaitable<void>;
-  prepareCapabilities?(turn: TurnState): Awaitable<void>;
-  prepareTools?(turn: TurnState): Awaitable<void>;
+  prepareTurn?(ctx: TurnContext): Awaitable<void>;
+  prepareContext?(ctx: TurnContext): Awaitable<void>;
+  preparePrompt?(ctx: TurnContext): Awaitable<void>;
+  prepareCapabilities?(ctx: TurnContext): Awaitable<void>;
+  prepareTools?(ctx: TurnContext): Awaitable<void>;
 
-  beforeStep?(turn: TurnState): Awaitable<void>;
-  beforeModelCall?(turn: TurnState): Awaitable<void>;
-  afterModelCall?(turn: TurnState, output: ModelStepOutput): Awaitable<void>;
-  afterToolResults?(turn: TurnState, output: StepOutput): Awaitable<void>;
+  beforeStep?(ctx: TurnContext): Awaitable<void>;
+  beforeModelCall?(ctx: TurnContext): Awaitable<void>;
+  afterModelCall?(ctx: TurnContext, output: ModelStepOutput): Awaitable<void>;
+  afterToolResults?(ctx: TurnContext, output: StepOutput): Awaitable<void>;
   transformStepEntries?(
-    turn: TurnState,
+    ctx: TurnContext,
     entries: ConversationEntry[],
   ): Awaitable<ConversationEntry[]>;
-  persistStep?(turn: TurnState, step: CompletedStep): Awaitable<void>;
-  shouldContinue?(turn: TurnState, step: CompletedStep): Awaitable<boolean | undefined>;
+  persistStep?(ctx: TurnContext, step: CompletedStep): Awaitable<void>;
+  shouldContinue?(ctx: TurnContext, step: CompletedStep): Awaitable<boolean | undefined>;
 
-  finishTurn?(turn: TurnState): Awaitable<void>;
-  failTurn?(turn: TurnState, error: unknown): Awaitable<void>;
-  cleanupTurn?(turn: TurnState): Awaitable<void>;
+  finishTurn?(ctx: TurnContext): Awaitable<void>;
+  failTurn?(ctx: TurnContext, error: unknown): Awaitable<void>;
+  cleanupTurn?(ctx: TurnContext): Awaitable<void>;
 }
 ```
 
@@ -991,9 +1009,10 @@ lifecycle, and parent-mailbox behavior.
 - Keep features internal and statically assembled per chat scope.
 
 Status: completed. `src/driver/turn-features.ts` defines the concrete hook
-interface and `runPrepareTurnFeatures()`. `src/driver/index.ts` now assembles
-main-turn features instead of a monolithic `prepareMainTurn()`. The design is
-still intentionally not a public plugin API.
+interface, `TurnContext`, `TurnScratch`, and `runPrepareTurnFeatures()`.
+`src/driver/features/` contains one static factory per main-turn feature, with
+`src/driver/features/main.ts` as the fixed ordering point. The design is still
+intentionally not a public plugin API.
 
 ### Phase 8: Complete Turn Phases and Preemptive Prepare Abort
 

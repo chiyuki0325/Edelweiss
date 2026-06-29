@@ -23,6 +23,7 @@ import { createRunner, pruneLengthLimitFailures } from '../driver/runner';
 import { loadSkillsFromFolder } from '../driver/skills';
 import { extractToolCalls } from '../driver/tools';
 import type { CahciuaTool } from '../driver/tools';
+import { createTurnContext } from '../driver/turn-features';
 import { runTurnStepLoop } from '../driver/turn-loop';
 import { createDefaultTurnCapabilities } from '../driver/turn-state';
 import type { ChatScope, TurnState } from '../driver/turn-state';
@@ -99,11 +100,12 @@ const runEvalStepLoop = async (params: {
     },
   };
 
-  await runTurnStepLoop(turn, {
+  await runTurnStepLoop(createTurnContext(turn), {
     runner: params.runner,
     executorChatId: params.chatId,
     maxImagesAllowed: params.maxImagesAllowed,
-    transformStepEntries: (stepTurn, entries) => {
+    transformStepEntries: (ctx, entries) => {
+      const { turn: stepTurn } = ctx;
       const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, stepTurn.pendingPrune);
       stepTurn.pendingPrune = pendingPrune;
       return pruned;

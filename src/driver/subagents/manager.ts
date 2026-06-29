@@ -5,6 +5,7 @@ import type { ConversationEntry } from '../../unified-api/types';
 import type { RunnerConfig } from '../runner';
 import { createRunner } from '../runner';
 import type { CahciuaTool } from '../tools';
+import { createTurnContext } from '../turn-features';
 import { runTurnStepLoop } from '../turn-loop';
 import { createDefaultTurnCapabilities } from '../turn-state';
 import type { ChatScope, TurnState } from '../turn-state';
@@ -127,7 +128,7 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
 
     try {
       const turn = await createSubagentTurn(state);
-      await runTurnStepLoop(turn, {
+      await runTurnStepLoop(createTurnContext(turn), {
         runner,
         executorChatId: `${deps.chatId}:${state.id}`,
         maxImagesAllowed: turn.model.maxImagesAllowed,
