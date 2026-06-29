@@ -6,7 +6,9 @@ models:
     # apiFormat: "responses"        # optional: 'openai-chat' (default), 'responses', or 'anthropic-messages'
     # timeoutSec: 120                # optional: abort requests that stream for too long
     # maxImagesAllowed: 100     # optional: drop oldest images when context exceeds this limit
-    # reasoningEffort: "xhigh"
+    # thinking:                      # optional: per-model reasoning budget
+    #   type: "enabled"              # 'enabled' (default when present) or 'disabled'
+    #   effort: "high"               # provider-specific string; Anthropic maps max/xhigh to 10000 budget_tokens, other values to 5000
     # forceToolCall: false             # force the model to always call a tool
 telegram:
   botToken: ""

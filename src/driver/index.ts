@@ -21,7 +21,7 @@ import type { ChatScope, TurnState } from './turn-state';
 import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
-import type { LlmEndpoint, ProviderFormat } from '../llm/types';
+import type { LlmEndpoint } from '../llm/types';
 import type { RenderedContext } from '../rendering/types';
 import type { Attachment } from '../telegram/message/types';
 
@@ -76,7 +76,7 @@ export const createDriver = (config: DriverConfig, deps: {
   // Runner cache: keyed by "apiBaseUrl::model" to reuse runners across chats
   // sharing the same endpoint.
   const runners = new Map<string, ReturnType<typeof createRunner>>();
-  const getOrCreateRunner = (endpoint: { apiBaseUrl: string; apiKey: string; model: string; apiFormat?: ProviderFormat; timeoutSec?: number; reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh'; forceToolCall?: boolean | 'api' | 'local' }) => {
+  const getOrCreateRunner = (endpoint: LlmEndpoint) => {
     const key = `${endpoint.apiBaseUrl}::${endpoint.model}`;
     let runner = runners.get(key);
     if (!runner) {
@@ -86,7 +86,7 @@ export const createDriver = (config: DriverConfig, deps: {
         model: endpoint.model,
         apiFormat: endpoint.apiFormat ?? 'openai-chat',
         timeoutSec: endpoint.timeoutSec,
-        reasoningEffort: endpoint.reasoningEffort,
+        thinking: endpoint.thinking,
         forceToolCall: endpoint.forceToolCall,
       });
       runners.set(key, runner);
@@ -375,7 +375,7 @@ export const createDriver = (config: DriverConfig, deps: {
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
               timeoutSec: compactEndpoint.timeoutSec,
-              reasoningEffort: compactEndpoint.reasoningEffort,
+              thinking: compactEndpoint.thinking,
               chatId,
               rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
               trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),

@@ -1,6 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 
 import { parseSSEStream } from './sse';
+import type { ThinkingConfig } from './types';
 import type {
   CacheControl,
   MessagesAssistantContentBlock,
@@ -16,6 +17,20 @@ interface AnthropicTool {
   cache_control?: CacheControl;
 }
 
+const DEFAULT_MAX_TOKENS = 8192;
+const THINKING_BUDGET_HIGH = 5000;
+const THINKING_BUDGET_MAX = 10000;
+
+const buildThinkingParam = (thinking?: ThinkingConfig): { type: 'enabled'; budget_tokens: number } | undefined => {
+  if (!thinking || thinking.type === 'disabled') return undefined;
+  return {
+    type: 'enabled',
+    budget_tokens: thinking.effort === 'max' || thinking.effort === 'xhigh'
+      ? THINKING_BUDGET_MAX
+      : THINKING_BUDGET_HIGH,
+  };
+};
+
 export interface StreamingMessagesParams {
   baseURL: string;
   apiKey: string;
@@ -26,8 +41,7 @@ export interface StreamingMessagesParams {
   forceToolCall?: boolean | 'api' | 'local';
   maxTokens?: number;
   timeoutSec?: number;
-  /** Anthropic output_config effort level. When set, sent as `output_config: { effort }`. */
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  thinking?: ThinkingConfig;
   signal?: AbortSignal;
   log: Logger;
   label: string;
@@ -80,14 +94,18 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
   }
 
   try {
+    const thinkingParam = buildThinkingParam(params.thinking);
+    const maxTokens = params.maxTokens
+      ?? (thinkingParam ? thinkingParam.budget_tokens + 4096 : DEFAULT_MAX_TOKENS);
+
     const body = JSON.stringify({
       model: params.model,
-      max_tokens: params.maxTokens ?? 8192,
+      max_tokens: maxTokens,
       ...(params.system ? { system: params.system } : {}),
       messages: params.messages,
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
       ...(params.forceToolCall === true || params.forceToolCall === 'api' ? { tool_choice: { type: 'any' } } : {}),
-      ...(params.reasoningEffort ? { output_config: { effort: params.reasoningEffort } } : {}),
+      ...(thinkingParam ? { thinking: thinkingParam } : {}),
       stream: true,
     });
 

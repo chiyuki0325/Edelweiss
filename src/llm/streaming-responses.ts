@@ -9,6 +9,7 @@ import type {
   ResponsesResult,
 } from './responses-types';
 import { parseSSEStream } from './sse';
+import type { ThinkingConfig } from './types';
 
 export interface StreamingResponsesParams {
   baseURL: string;
@@ -19,6 +20,7 @@ export interface StreamingResponsesParams {
   tools?: ResponseTool[];
   forceToolCall?: boolean | 'api' | 'local';
   timeoutSec?: number;
+  thinking?: ThinkingConfig;
   signal?: AbortSignal;
   log: Logger;
   label: string;
@@ -54,6 +56,7 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
       ...(params.instructions ? { instructions: params.instructions } : {}),
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
       ...(params.forceToolCall === true || params.forceToolCall === 'api' ? { tool_choice: 'required' } : {}),
+      ...(params.thinking?.type !== 'disabled' && params.thinking?.effort ? { output_config: { effort: params.thinking.effort } } : {}),
       stream: true,
     });
 

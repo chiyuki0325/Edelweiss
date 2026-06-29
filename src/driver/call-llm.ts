@@ -7,7 +7,7 @@ import { trimImages } from './context';
 import { streamingChat } from '../llm/streaming';
 import { streamingMessages } from '../llm/streaming-messages';
 import { streamingResponses } from '../llm/streaming-responses';
-import type { ProviderFormat, Usage } from '../llm/types';
+import type { ProviderFormat, ThinkingConfig, Usage } from '../llm/types';
 import {
   fromChatCompletionsOutput,
   fromMessagesOutput,
@@ -28,7 +28,7 @@ export interface LlmCallConfig {
   apiFormat?: ProviderFormat;
   timeoutSec?: number;
   forceToolCall?: boolean | 'api' | 'local';
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  thinking?: ThinkingConfig;
   signal?: AbortSignal;
 }
 
@@ -97,6 +97,7 @@ export const callLlm = async (
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
       forceToolCall: config.forceToolCall,
       input, instructions: system, ...(wireTools ? { tools: wireTools } : {}),
+      thinking: config.thinking,
       log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
     });
     dump(options?.dumpId, 'response', response);
@@ -153,7 +154,7 @@ export const callLlm = async (
       baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
       forceToolCall: config.forceToolCall,
       system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
-      reasoningEffort: config.reasoningEffort,
+      thinking: config.thinking,
       log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
     });
     dump(options?.dumpId, 'response', response);
@@ -178,7 +179,7 @@ export const callLlm = async (
     baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
     forceToolCall: config.forceToolCall,
     messages: chatMessages, system, ...(wireTools ? { tools: wireTools } : {}),
-    reasoningEffort: config.reasoningEffort,
+    thinking: config.thinking,
     log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
   });
   dump(options?.dumpId, 'response', response);
