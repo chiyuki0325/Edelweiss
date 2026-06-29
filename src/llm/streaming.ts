@@ -207,6 +207,14 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
     flushTextBuf();
     flushReasoningBuf();
 
+    if (message.tool_calls) {
+      for (const tc of message.tool_calls) {
+        let args: unknown = tc.function.arguments;
+        try { args = JSON.parse(tc.function.arguments); } catch { /* keep raw string */ }
+        log.withFields({ label, tool: tc.function.name, args }).log('tool call');
+      }
+    }
+
     return {
       choices: [{ finish_reason: finishReason, message }],
       usage,

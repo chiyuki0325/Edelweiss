@@ -206,6 +206,11 @@ export const streamingMessages = async (params: StreamingMessagesParams): Promis
     flushTextBuf();
     flushReasoningBuf();
 
+    for (const block of content) {
+      if (block?.type === 'tool_use')
+        log.withFields({ label, tool: block.name, args: block.input }).log('tool call');
+    }
+
     return {
       content: content.filter((b): b is MessagesAssistantContentBlock => b != null),
       usage: {

@@ -179,6 +179,14 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
     flushTextBuf();
     flushReasoningBuf();
 
+    for (const item of output) {
+      if (item.type === 'function_call') {
+        let args: unknown = item.arguments;
+        try { args = JSON.parse(item.arguments); } catch { /* keep raw string */ }
+        log.withFields({ label, tool: item.name, args }).log('tool call');
+      }
+    }
+
     return { output, usage, status };
   } finally {
     if (timeout) clearTimeout(timeout);
