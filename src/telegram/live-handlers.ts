@@ -33,8 +33,65 @@ export interface TelegramLiveHandlersDeps {
   driverControl: TelegramDriverControl;
 }
 
+const REACTION_DEBOUNCE_MS = 500;
+
 const reactionEntryKey = (entry: TelegramReactionSnapshotEntry) =>
   `${entry.emoji}\u0000${entry.sender.id}`;
+
+const pendingReactionKey = (chatId: string, messageId: string, emoji: string, senderId?: string) =>
+  `${chatId}\u0000${messageId}\u0000${emoji}\u0000${senderId ?? ''}`;
+
+interface PendingReactionEvent {
+  reaction: TelegramReactionUpdate;
+  emoji: string;
+  count: number;
+  sender?: TelegramReactionSnapshotEntry['sender'];
+  timer: ReturnType<typeof setTimeout>;
+}
+
+export interface ReactionDebouncer {
+  enqueue(
+    reaction: TelegramReactionUpdate,
+    emoji: string,
+    count: number,
+    sender?: TelegramReactionSnapshotEntry['sender'],
+  ): void;
+  cancel(chatId: string, messageId: string, emoji: string, senderId?: string): void;
+}
+
+export const createReactionDebouncer = (
+  flush: (
+    reaction: TelegramReactionUpdate,
+    emoji: string,
+    count: number,
+    sender?: TelegramReactionSnapshotEntry['sender'],
+  ) => void,
+  debounceMs = REACTION_DEBOUNCE_MS,
+): ReactionDebouncer => {
+  const pending = new Map<string, PendingReactionEvent>();
+
+  const cancel = (chatId: string, messageId: string, emoji: string, senderId?: string) => {
+    const key = pendingReactionKey(chatId, messageId, emoji, senderId);
+    const event = pending.get(key);
+    if (!event) return;
+    clearTimeout(event.timer);
+    pending.delete(key);
+  };
+
+  const enqueue: ReactionDebouncer['enqueue'] = (reaction, emoji, count, sender) => {
+    const key = pendingReactionKey(reaction.chatId, String(reaction.messageId), emoji, sender?.id);
+    cancel(reaction.chatId, String(reaction.messageId), emoji, sender?.id);
+    const timer = setTimeout(() => {
+      const event = pending.get(key);
+      if (!event) return;
+      pending.delete(key);
+      flush(event.reaction, event.emoji, event.count, event.sender);
+    }, debounceMs);
+    pending.set(key, { reaction, emoji, count, sender, timer });
+  };
+
+  return { enqueue, cancel };
+};
 
 export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): TelegramLiveHandlers => {
   const persistReactionEvent = (
@@ -46,6 +103,8 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
     const event = adaptReaction(reaction, emoji, count, sender);
     deps.eventSink.accept(event);
   };
+
+  const reactionDebouncer = createReactionDebouncer(persistReactionEvent);
 
   const persistEmptyReactionSnapshotIfUnseeded = (chatId: string, messageId: string, updatedAtMs: number) => {
     const existing = deps.reactionStore.loadSnapshot(chatId, messageId);
@@ -163,6 +222,7 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
       if (reaction.kind === 'user') {
         const oldReactions = new Set(reaction.oldReactions);
         const newReactions = [...new Set(reaction.newReactions)];
+        const newReactionSet = new Set(newReactions);
         const next = [
           ...(previous ?? []).filter(entry => entry.sender.id !== reaction.sender.id),
           ...newReactions.map(emoji => ({ emoji, sender: reaction.sender, date: reaction.date })),
@@ -170,10 +230,15 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
 
         deps.reactionStore.upsertSnapshot(reaction.chatId, messageId, next, updatedAtMs);
 
+        for (const emoji of oldReactions) {
+          if (newReactionSet.has(emoji)) continue;
+          reactionDebouncer.cancel(reaction.chatId, messageId, emoji, reaction.sender.id);
+        }
+
         for (const emoji of newReactions) {
           if (oldReactions.has(emoji)) continue;
           if (deps.chatPolicy.isBlocked(reaction.chatId, reaction.sender.id)) continue;
-          persistReactionEvent(reaction, emoji, 1, reaction.sender);
+          reactionDebouncer.enqueue(reaction, emoji, 1, reaction.sender);
         }
         return;
       }
@@ -187,10 +252,16 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
       if (!previous) return;
 
       const oldKeys = new Set(previous.map(reactionEntryKey));
+      const newKeys = new Set(reaction.snapshot.map(reactionEntryKey));
+      for (const entry of previous) {
+        if (newKeys.has(reactionEntryKey(entry))) continue;
+        reactionDebouncer.cancel(reaction.chatId, messageId, entry.emoji, entry.sender.id);
+      }
+
       for (const entry of reaction.snapshot) {
         if (oldKeys.has(reactionEntryKey(entry))) continue;
         if (deps.chatPolicy.isBlocked(reaction.chatId, entry.sender.id)) continue;
-        persistReactionEvent(reaction, entry.emoji, 1, entry.sender);
+        reactionDebouncer.enqueue(reaction, entry.emoji, 1, entry.sender);
       }
     });
 

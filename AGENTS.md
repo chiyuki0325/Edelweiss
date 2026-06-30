@@ -20,7 +20,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates, fetch reaction actors via userbot for count-only updates |
+| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
@@ -214,6 +214,7 @@ src/
     ├── manager.ts           # TelegramManager — unified facade, session ingress queue, blocking media transforms, dedup dispatch
     ├── event-sink.ts        # Persist/hydrate/push-to-pipeline/notify-driver event sink used by Telegram ingress
     ├── live-handlers.ts     # Telegram live ingress handlers, reactions, typing events, /offline and /online commands
+    ├── live-handlers.test.ts # Telegram live ingress tests, including reaction add/remove debounce
     ├── driver-hooks.ts      # Driver-facing Telegram send/download/reaction hooks and synthetic self-message injection
     ├── post-startup.ts      # Telegram historical animation/custom-emoji backfill tasks
     ├── custom-emoji-resolver.ts # Telegram Bot API adapter for custom emoji alt-text resolution
