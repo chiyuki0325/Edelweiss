@@ -148,15 +148,30 @@ src/
 │   │   └── *.ts            # One factory per feature: context, interruption, reaction, capability, tools, skill, prompt, mailbox, persistence, cleanup, etc.
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
-│   ├── pseudo-commands.ts  # Built-in bash pseudo commands: chat_info and skill_info
+│   ├── tools/               # Tool definitions, one file per tool + shared types/execution/barrel
+│   │   ├── types.ts          # CahciuaTool, ToolResult, createTool, SendMessageAttachment, SendMessageTurnFlags
+│   │   ├── bash.ts           # createBashTool + built-in pseudo commands (chat_info, skill_info)
+│   │   ├── send-message.ts   # createSendMessageTool
+│   │   ├── web-search.ts     # createWebSearchTool (Tavily)
+│   │   ├── web-fetch.ts      # createWebFetchTool
+│   │   ├── download-file.ts  # createDownloadFileTool
+│   │   ├── read-image.ts     # createReadImageTool
+│   │   ├── load-skill.ts     # createLoadSkillTool
+│   │   ├── stay-silent.ts    # createStaySilentTool
+│   │   ├── react-message.ts  # createReactMessageTool (Telegram only)
+│   │   ├── kill-task.ts      # createKillTaskTool
+│   │   ├── read-task-output.ts # createReadTaskOutputTool
+│   │   ├── sleep.ts          # createSleepTool
+│   │   ├── attachment-downloader.ts # Shared file_id→Buffer resolver (Telegram + OneBot)
+│   │   ├── execution.ts      # extractToolCalls, extractLoadedSkillNames, executeToolCall
+│   │   ├── index.ts          # Barrel re-exports
+│   │   └── index.test.ts     # Tool unit tests
 │   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (7 configurable checks)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
 │   ├── turn-state.ts      # Explicit ChatScope / SchedulerState / TurnState / capability types for driver turn-loop refactors
 │   ├── turn-state.test.ts # Driver turn/scheduler default-state tests
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── index.test.ts      # Driver reactive scheduling/debounce tests
-│   ├── tools.ts            # Tool definitions: send_message, bash, web_search, download_file, read_image, load_skill, subagent communication, background-task helpers
-│   ├── tools.test.ts       # Tool capability tests
 │   ├── tool-providers.ts   # Capability-driven Driver tool assembly providers
 │   ├── subagents/          # Subagent runtime: isolated helper manager, mailbox, lifecycle/types, communication/finalize tools
 │   │   ├── types.ts        # AgentId, SubagentState, AgentMessage, SubagentStatus

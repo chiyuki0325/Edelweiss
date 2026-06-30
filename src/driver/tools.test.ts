@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createSendMessageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools';
-import type { SendMessageTurnFlags } from './tools';
+import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createSendMessageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools/index';
+import type { SendMessageTurnFlags } from './tools/index';
 import type { RuntimeConfig } from '../config/config';
 import type { ConversationEntry } from '../unified-api/types';
 

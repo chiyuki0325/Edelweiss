@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { executePseudoCommand } from './pseudo-commands';
+import { executePseudoCommand } from './tools/bash';
 import type { SkillInfo } from './skills';
 
 const skills = new Map<string, SkillInfo>([
