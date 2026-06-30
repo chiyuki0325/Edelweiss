@@ -35,7 +35,7 @@ describe('subagent communication tools', () => {
       log,
     });
 
-    const result = await tool.execute({ subagent_id: 'sa-1', type: 'status_request', message: 'status?', await_response: true }, { toolCallId: 'tc1' });
+    const result = await tool.execute({ subagent_id: 'sa-1', type: 'status_request', message: 'status?', still_working: true }, { toolCallId: 'tc1' });
     expect(result.requiresFollowUp).toBe(true);
     expect(JSON.parse(result.content as string)).toEqual({ ok: true, queued: true });
     expect(wakeAgent).toHaveBeenCalledWith('sa-1');

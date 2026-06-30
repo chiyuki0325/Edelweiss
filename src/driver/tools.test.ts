@@ -351,21 +351,21 @@ describe('createSendMessageTool', () => {
     const flags: SendMessageTurnFlags = { wasLengthLimited: true };
     const tool = createSendMessageTool(send, flags);
 
-    // Model omits await_response — should auto-override to true
+    // Model omits still_working — should auto-override to true
     const result = await tool.execute({ text: makeText(10) }, { toolCallId: 'tc2' });
 
     expect(result.requiresFollowUp).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('respects explicit await_response: false even after wasLengthLimited', async () => {
+  it('respects explicit still_working: false even after wasLengthLimited', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '43' });
     const flags: SendMessageTurnFlags = { wasLengthLimited: true };
     const tool = createSendMessageTool(send, flags);
 
     // Model explicitly signals "done" — should be respected
     const result = await tool.execute(
-      { text: makeText(10), await_response: false },
+      { text: makeText(10), still_working: false },
       { toolCallId: 'tc3' },
     );
 
@@ -373,7 +373,7 @@ describe('createSendMessageTool', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('requiresFollowUp defaults to false when wasLengthLimited is false and await_response is omitted', async () => {
+  it('requiresFollowUp defaults to false when wasLengthLimited is false and still_working is omitted', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '44' });
     const flags: SendMessageTurnFlags = { wasLengthLimited: false };
     const tool = createSendMessageTool(send, flags);

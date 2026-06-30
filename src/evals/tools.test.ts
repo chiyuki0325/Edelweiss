@@ -11,7 +11,7 @@ describe('createEvalTools', () => {
     const result = await executeToolCall(
       'tc1',
       'send_message',
-      JSON.stringify({ text: 'hello', await_response: false }),
+      JSON.stringify({ text: 'hello', still_working: false }),
       tools,
       log,
     );

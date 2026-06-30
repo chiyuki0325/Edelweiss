@@ -92,9 +92,9 @@ export const createSendMessageTool = (
   const properties: Record<string, unknown> = {
     text: { type: 'string', description: 'The message to send. When sending attachments, this becomes the caption.' },
     reply_to: { type: 'string', description: 'A message id to reply to.' },
-    await_response: {
+    still_working: {
       type: 'boolean',
-      description: 'Set to true if you need to perform additional actions after this message (e.g., send another message, use another tool). Defaults to false.',
+      description: 'Set to true if you are still working and need to perform additional actions after this message (e.g., send another message, use another tool). Defaults to false.',
     },
     attachments: {
       type: 'array',
@@ -124,10 +124,10 @@ export const createSendMessageTool = (
       required: ['text'],
     },
     execute: async input => {
-      const { text, reply_to, await_response, attachments } = input as {
+      const { text, reply_to, still_working, attachments } = input as {
         text: string;
         reply_to?: string;
-        await_response?: boolean;
+        still_working?: boolean;
         attachments?: SendMessageAttachment[];
       };
       // Enforce 256-byte hard limit when the message does not contain code blocks or blockquotes
@@ -153,7 +153,7 @@ export const createSendMessageTool = (
       const result = await send(formattedText, reply_to, attachments);
       return {
         content: JSON.stringify({ ok: true, message_id: result.messageId }),
-        requiresFollowUp: await_response ?? (turnFlags?.wasLengthLimited ?? false),
+        requiresFollowUp: still_working ?? (turnFlags?.wasLengthLimited ?? false),
       };
     },
   });

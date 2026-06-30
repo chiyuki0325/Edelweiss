@@ -47,16 +47,16 @@ export const createMessageSubagentTool = (deps: ToolDeps): CahciuaTool => create
       subagent_id: { type: 'string', description: 'The helper agent id, such as sa-1.' },
       type: { type: 'string', enum: messageTypeEnum },
       message: { type: 'string' },
-      await_response: { type: 'boolean', description: 'Set true if you need to continue after the helper responds. Defaults to false.' },
+      still_working: { type: 'boolean', description: 'Set true if you are still working and need to continue after the helper responds. Defaults to false.' },
     },
     required: ['subagent_id', 'type', 'message'],
   },
   execute: input => {
-    const { subagent_id, type, message, await_response } = input as {
+    const { subagent_id, type, message, still_working } = input as {
       subagent_id: string;
       type: AgentMessageType;
       message: string;
-      await_response?: boolean;
+      still_working?: boolean;
     };
     if (!isSubagentId(subagent_id))
       return { content: JSON.stringify({ ok: false, error: 'Invalid subagent_id.' }), requiresFollowUp: true };
@@ -67,7 +67,7 @@ export const createMessageSubagentTool = (deps: ToolDeps): CahciuaTool => create
       return { content: JSON.stringify({ ok: false, error: `Subagent ${subagent_id} is ${status.status}.` }), requiresFollowUp: true };
     deps.mailbox.enqueue({ fromAgentId: 'main', toAgentId: subagent_id, type, content: message });
     deps.wakeAgent(subagent_id);
-    return { content: JSON.stringify({ ok: true, queued: true }), requiresFollowUp: await_response ?? false };
+    return { content: JSON.stringify({ ok: true, queued: true }), requiresFollowUp: still_working ?? false };
   },
 });
 
@@ -79,15 +79,15 @@ export const createMessageMainTool = (deps: ToolDeps, subagentId: AgentId): Cahc
     properties: {
       type: { type: 'string', enum: messageTypeEnum },
       message: { type: 'string' },
-      await_response: { type: 'boolean', description: 'Set true if you need the parent to reply before continuing. Defaults to false.' },
+      still_working: { type: 'boolean', description: 'Set true if you are still working and need the parent to reply before continuing. Defaults to false.' },
     },
     required: ['type', 'message'],
   },
   execute: input => {
-    const { type, message, await_response } = input as { type: AgentMessageType; message: string; await_response?: boolean };
+    const { type, message, still_working } = input as { type: AgentMessageType; message: string; still_working?: boolean };
     deps.mailbox.enqueue({ fromAgentId: subagentId, toAgentId: 'main', type, content: message });
     deps.wakeAgent('main');
-    return { content: JSON.stringify({ ok: true, queued: true }), requiresFollowUp: await_response ?? false };
+    return { content: JSON.stringify({ ok: true, queued: true }), requiresFollowUp: still_working ?? false };
   },
 });
 
