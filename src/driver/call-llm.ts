@@ -4,7 +4,7 @@ import type { Logger } from '@guiiai/logg';
 
 import { DUMP_DIR } from './constants';
 import { trimImages } from './context';
-import { streamingChat } from '../llm/streaming';
+import { streamingChat, type StreamingChatResult } from '../llm/streaming';
 import { streamingMessages } from '../llm/streaming-messages';
 import { streamingResponses } from '../llm/streaming-responses';
 import type { ProviderFormat, Usage } from '../llm/types';
@@ -72,6 +72,13 @@ const toChatToolSchema = (t: ToolSchema) => ({
 
 const optionalTools = <T>(mapped: T[] | undefined): T[] | undefined =>
   mapped && mapped.length > 0 ? mapped : undefined;
+
+const chatUsageToUsage = (usage: StreamingChatResult['usage']): Usage => ({
+  inputTokens: usage.prompt_tokens ?? 0,
+  outputTokens: usage.completion_tokens ?? 0,
+  cacheCreationTokens: usage.prompt_cache_miss_tokens ?? -1,
+  cacheReadTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? -1,
+});
 
 export const callLlm = async (
   config: LlmCallConfig,
@@ -186,21 +193,11 @@ export const callLlm = async (
 
   const choice = response.choices[0];
   if (!choice) return {
-    entries: [], usage: {
-      inputTokens: response.usage.prompt_tokens ?? 0,
-      outputTokens: response.usage.completion_tokens ?? 0,
-      cacheCreationTokens: -1,
-      cacheReadTokens: -1,
-    },
+    entries: [], usage: chatUsageToUsage(response.usage),
   };
 
   return {
     entries: fromChatCompletionsOutput([choice.message as ChatCompletionsAssistantMessage]),
-    usage: {
-      inputTokens: response.usage.prompt_tokens ?? 0,
-      outputTokens: response.usage.completion_tokens ?? 0,
-      cacheCreationTokens: -1,
-      cacheReadTokens: -1,
-    },
+    usage: chatUsageToUsage(response.usage),
   };
 };

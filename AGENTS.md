@@ -132,6 +132,7 @@ src/
 │   ├── merge.test.ts       # Merge logic tests
 │   ├── constants.ts        # Driver-scoped constants and dump-dir bootstrap helpers
 │   ├── call-llm.ts         # Unified LLM call dispatcher (openai-chat / responses / anthropic-messages)
+│   ├── call-llm.test.ts    # LLM dispatcher mapping tests, including OpenAI-compatible cache usage fields
 │   ├── runner.ts           # LLM step executor: triple-provider SSE streaming + manual tool execution (callModelStep/executeToolStep/runOneStep only)
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider)
 │   ├── scheduler.ts        # Driver scheduler controller: reply eligibility, debounce/typing timers, active-run interruption, begin/settle state

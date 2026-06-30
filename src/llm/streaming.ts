@@ -5,7 +5,7 @@ import type { ChatCompletionsAssistantMessage } from '../unified-api/chat-types'
 
 // Chat Completions SSE chunk shape (subset we consume)
 interface ChatStreamChunk {
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: ChatStreamUsage;
   choices?: Array<{
     finish_reason?: string;
     delta?: {
@@ -21,6 +21,20 @@ interface ChatStreamChunk {
       }>;
     };
   }>;
+}
+
+export interface ChatUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+  };
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+}
+
+interface ChatStreamUsage extends Partial<Omit<ChatUsage, 'prompt_tokens_details'>> {
+  prompt_tokens_details?: ChatUsage['prompt_tokens_details'];
 }
 
 // Tool schema for API serialization — only the fields sent over the wire.
@@ -51,7 +65,7 @@ export interface StreamingChatParams {
 
 export interface StreamingChatResult {
   choices: Array<{ finish_reason: string; message: ChatCompletionsAssistantMessage }>;
-  usage: { prompt_tokens: number; completion_tokens: number };
+  usage: ChatUsage;
 }
 
 // Parse an OpenAI-compatible SSE stream into a single ChatCompletion-shaped result.
@@ -107,7 +121,7 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
     // Accumulated state for the single choice we care about
     let finishReason = '';
     const message: ChatCompletionsAssistantMessage = { role: 'assistant' };
-    let usage = { prompt_tokens: 0, completion_tokens: 0 };
+    let usage: ChatUsage = { prompt_tokens: 0, completion_tokens: 0 };
 
     // Accumulators for logging batched deltas
     let textBuf = '';
@@ -130,10 +144,20 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
     const processChunk = (chunk: ChatStreamChunk) => {
       // Usage (comes in the final chunk when streamOptions.includeUsage is true)
       if (chunk.usage) {
-        usage = {
-          prompt_tokens: chunk.usage.prompt_tokens ?? 0,
-          completion_tokens: chunk.usage.completion_tokens ?? 0,
+        const nextUsage: ChatUsage = {
+          prompt_tokens: chunk.usage.prompt_tokens ?? usage.prompt_tokens,
+          completion_tokens: chunk.usage.completion_tokens ?? usage.completion_tokens,
         };
+        const promptTokensDetails = chunk.usage.prompt_tokens_details ?? usage.prompt_tokens_details;
+        if (promptTokensDetails)
+          nextUsage.prompt_tokens_details = promptTokensDetails;
+        const promptCacheHitTokens = chunk.usage.prompt_cache_hit_tokens ?? usage.prompt_cache_hit_tokens;
+        if (promptCacheHitTokens != null)
+          nextUsage.prompt_cache_hit_tokens = promptCacheHitTokens;
+        const promptCacheMissTokens = chunk.usage.prompt_cache_miss_tokens ?? usage.prompt_cache_miss_tokens;
+        if (promptCacheMissTokens != null)
+          nextUsage.prompt_cache_miss_tokens = promptCacheMissTokens;
+        usage = nextUsage;
       }
 
       const choice = chunk.choices?.[0];
