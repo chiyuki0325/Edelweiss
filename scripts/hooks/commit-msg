@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# Commit message identity sanity checks for coding agents.
+
+msg_file="$1"
+msg=$(cat "$msg_file")
+
+# Check for "Co-Authored-By: Claude Opus 4 " (trailing space — likely missing version suffix)
+if printf '%s' "$msg" | grep -qF 'Co-Authored-By: Claude Opus 4 '; then
+  echo >&2 "ERROR: commit-msg hook"
+  echo >&2 "  Found 'Co-Authored-By: Claude Opus 4 ' — this looks like a wrong or incomplete model name."
+  echo >&2 "  Please recheck your actual model identity from the runtime environment and use the correct full name."
+  exit 1
+fi
+
+# Check for "Co-Authored-By: Claude <" (generic Claude without model name)
+if printf '%s' "$msg" | grep -qF 'Co-Authored-By: Claude <'; then
+  echo >&2 "ERROR: commit-msg hook"
+  echo >&2 "  Found 'Co-Authored-By: Claude <' — this is too generic."
+  echo >&2 "  Please recheck your actual model identity from the runtime environment and use the full model name (e.g. Claude Opus 4.6)."
+  exit 1
+fi
+
+# Check for "Co-Authored-By: GPT-5 " (trailing space — likely missing version suffix)
+if printf '%s' "$msg" | grep -qF 'Co-Authored-By: GPT-5 '; then
+  echo >&2 "ERROR: commit-msg hook"
+  echo >&2 "  Found 'Co-Authored-By: GPT-5 ' — this looks like a wrong or incomplete model name."
+  echo >&2 "  Please recheck your actual model identity from the runtime environment and use the correct full name."
+  exit 1
+fi
+
+# Check for DeepSeek model claiming anthropic.com email on the same line
+if printf '%s' "$msg" | grep -i 'Co-Authored-By' | grep -iq 'deepseek' && \
+   printf '%s' "$msg" | grep -i 'Co-Authored-By' | grep -iq 'anthropic.com'; then
+  echo >&2 "ERROR: commit-msg hook"
+  echo >&2 "  Found a Co-Authored-By line with DeepSeek and anthropic.com — DeepSeek is not an Anthropic model."
+  echo >&2 "  Please use the correct email for your model provider."
+  exit 1
+fi
+
+# Check for "1M Context" anywhere in the message
+if printf '%s' "$msg" | grep -qF '1M Context'; then
+  echo >&2 "ERROR: commit-msg hook"
+  echo >&2 "  Found '1M Context' in commit message — please remove it."
+  exit 1
+fi
