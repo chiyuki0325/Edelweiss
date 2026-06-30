@@ -32,11 +32,11 @@ const maxEdgeForPixelBudget = (buffer: Buffer, pixelBudget: number): Promise<num
     return Math.floor(Math.sqrt(pixelBudget * (longEdge / shortEdge)));
   });
 
-export const prepareImageToTextUrl = async (
+export const prepareImageToTextBuffer = async (
   buffer: Buffer,
   compression: ImageToTextCompressionConfig = DEFAULT_IMAGE_TO_TEXT_COMPRESSION,
   options: ImageToTextResolveOptions = {},
-): Promise<string> => {
+): Promise<Buffer> => {
   const image = sharp(buffer);
   const shouldCompress = options.isSticker === false || compression.compress;
   const maxEdge = shouldCompress ? await maxEdgeForPixelBudget(buffer, compression.pixelBudget) : undefined;
@@ -46,11 +46,10 @@ export const prepareImageToTextUrl = async (
         withoutEnlargement: true,
       })
     : image;
-  const png = await prepared
+  return await prepared
     .flatten({ background: '#ffffff' })
     .png()
     .toBuffer();
-  return `data:image/png;base64,${png.toString('base64')}`;
 };
 
 export interface ImageAltTextRecord {
@@ -109,14 +108,14 @@ export const createImageToTextResolver = (params: {
         const model = params.model;
         if (!model) throw new Error('imageToText.model is required when imageToText.enabled=true');
 
-        const imageUrl = await prepareImageToTextUrl(highResBuffer ?? thumbnailBuffer, options.compression ?? DEFAULT_IMAGE_TO_TEXT_COMPRESSION, options);
+        const imageBuffer = await prepareImageToTextBuffer(highResBuffer ?? thumbnailBuffer, options.compression ?? DEFAULT_IMAGE_TO_TEXT_COMPRESSION, options);
         const system = await renderImageToTextSystemPrompt({ caption });
 
         const result = await callDescriptionLlm({
           model,
           system,
           userText: 'Describe this image.',
-          images: [{ url: imageUrl }],
+          images: [imageBuffer],
           log,
           label: 'image-to-text',
         });

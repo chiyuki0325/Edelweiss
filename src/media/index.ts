@@ -1,12 +1,11 @@
 export { createSemaphore, callDescriptionLlm } from './llm-description';
-export type { ImageContentPart } from './llm-description';
 
 export { canExtractFrames, extractFrames, deduplicateFrames } from './frame-extractor';
 export type { FrameExtractionResult } from './frame-extractor';
 
 export { generateThumbnail, canGenerateThumbnail } from './thumbnail';
 
-export { prepareImageToTextUrl, computeThumbnailHash, createImageToTextResolver } from './image-to-text';
+export { prepareImageToTextBuffer, computeThumbnailHash, createImageToTextResolver } from './image-to-text';
 export type { ImageToTextCompressionConfig, ImageToTextResolveOptions, ImageAltTextRecord, ImageToTextResolver } from './image-to-text';
 export { renderImageToTextSystemPrompt } from './image-to-text-prompt';
 

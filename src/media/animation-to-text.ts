@@ -62,9 +62,7 @@ export const createAnimationToTextResolver = (params: {
           ? frameTimestamps.map(t => `${t.toFixed(1)}s`).join(', ')
           : undefined;
 
-        const images = uniqueFrames.map(buf => ({
-          url: `data:image/png;base64,${buf.toString('base64')}`,
-        }));
+        const images = uniqueFrames;
         const system = await renderAnimationToTextSystemPrompt({
           caption,
           isSticker,

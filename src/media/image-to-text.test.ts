@@ -1,15 +1,14 @@
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 
-import { prepareImageToTextUrl } from './image-to-text';
+import { prepareImageToTextBuffer } from './image-to-text';
 
-const imageSizeFromDataUrl = async (url: string) => {
-  const base64 = url.replace(/^data:image\/png;base64,/, '');
-  const meta = await sharp(Buffer.from(base64, 'base64')).metadata();
+const imageSizeFromBuffer = async (buffer: Buffer) => {
+  const meta = await sharp(buffer).metadata();
   return { width: meta.width, height: meta.height };
 };
 
-describe('prepareImageToTextUrl', () => {
+describe('prepareImageToTextBuffer', () => {
   it('compresses images by default', async () => {
     const source = await sharp({
       create: {
@@ -20,7 +19,7 @@ describe('prepareImageToTextUrl', () => {
       },
     }).png().toBuffer();
 
-    const size = await imageSizeFromDataUrl(await prepareImageToTextUrl(source));
+    const size = await imageSizeFromBuffer(await prepareImageToTextBuffer(source));
 
     expect(size).toEqual({ width: 591, height: 443 });
   });
@@ -35,7 +34,7 @@ describe('prepareImageToTextUrl', () => {
       },
     }).png().toBuffer();
 
-    const size = await imageSizeFromDataUrl(await prepareImageToTextUrl(source, {
+    const size = await imageSizeFromBuffer(await prepareImageToTextBuffer(source, {
       compress: false,
       pixelBudget: 512 * 512,
     }));
@@ -53,7 +52,7 @@ describe('prepareImageToTextUrl', () => {
       },
     }).png().toBuffer();
 
-    const size = await imageSizeFromDataUrl(await prepareImageToTextUrl(source, {
+    const size = await imageSizeFromBuffer(await prepareImageToTextBuffer(source, {
       compress: true,
       pixelBudget: 75_000,
     }));

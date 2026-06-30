@@ -20,8 +20,8 @@ export interface CustomEmojiToTextResolver {
 
 const emojiCacheKey = (customEmojiId: string): string => `emoji:${customEmojiId}`;
 
-const prepareStaticImageUrl = async (buffer: Buffer): Promise<string> => {
-  const resized = await sharp(buffer)
+const prepareStaticImageBuffer = async (buffer: Buffer): Promise<Buffer> => {
+  return await sharp(buffer)
     .resize(EMOJI_MAX_EDGE, EMOJI_MAX_EDGE, {
       fit: 'inside',
       withoutEnlargement: true,
@@ -29,15 +29,13 @@ const prepareStaticImageUrl = async (buffer: Buffer): Promise<string> => {
     .flatten({ background: '#ffffff' })
     .png()
     .toBuffer();
-  return `data:image/png;base64,${resized.toString('base64')}`;
 };
 
-const prepareFrameImageUrl = async (buffer: Buffer): Promise<string> => {
-  const flattened = await sharp(buffer)
+const prepareFrameImageBuffer = async (buffer: Buffer): Promise<Buffer> => {
+  return await sharp(buffer)
     .flatten({ background: '#ffffff' })
     .png()
     .toBuffer();
-  return `data:image/png;base64,${flattened.toString('base64')}`;
 };
 
 export const createCustomEmojiToTextResolver = (params: {
@@ -91,7 +89,7 @@ export const createCustomEmojiToTextResolver = (params: {
         const packMetadata = await resolveStickerSetMetadata({ stickerSetId: sticker.set_name }, params.resolvePackTitle);
         const packTitle = packMetadata.stickerSetName;
 
-        let images: Array<{ url: string }>;
+        let images: Buffer[];
         let frameCount: number | undefined;
         let timestamps: string | undefined;
 
@@ -104,14 +102,14 @@ export const createCustomEmojiToTextResolver = (params: {
           const extractionResult = await extractFrames(buffer, syntheticAtt, params.maxFrames);
           const uniqueFrames = deduplicateFrames(extractionResult.frames);
           if (uniqueFrames.length === 1) isAnimated = false;
-          images = await Promise.all(uniqueFrames.map(async buf => ({ url: await prepareFrameImageUrl(buf) })));
+          images = await Promise.all(uniqueFrames.map(async buf => await prepareFrameImageBuffer(buf)));
           frameCount = uniqueFrames.length;
           timestamps = extractionResult.frameTimestamps
             ? extractionResult.frameTimestamps.map(t => `${t.toFixed(1)}s`).join(', ')
             : undefined;
         } else {
-          const url = await prepareStaticImageUrl(buffer);
-          images = [{ url }];
+          const buf = await prepareStaticImageBuffer(buffer);
+          images = [buf];
         }
 
         const system = await renderCustomEmojiToTextSystemPrompt({
