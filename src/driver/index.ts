@@ -86,7 +86,7 @@ export const createDriver = (config: DriverConfig, deps: {
         model: endpoint.model,
         apiFormat: endpoint.apiFormat ?? 'openai-chat',
         timeoutSec: endpoint.timeoutSec,
-        thinking: endpoint.thinking,
+        extraBody: endpoint.extraBody,
         forceToolCall: endpoint.forceToolCall,
       });
       runners.set(key, runner);
@@ -379,7 +379,7 @@ export const createDriver = (config: DriverConfig, deps: {
               model: compactEndpoint.model,
               apiFormat: compactEndpoint.apiFormat,
               timeoutSec: compactEndpoint.timeoutSec,
-              thinking: compactEndpoint.thinking,
+              extraBody: compactEndpoint.extraBody,
               chatId,
               rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
               trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),

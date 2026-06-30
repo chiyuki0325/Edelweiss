@@ -17,12 +17,7 @@ const llmEndpointEntries = {
   maxImagesAllowed: v.optional(v.number()),
   timeoutSec: v.optional(v.number()),
   descriptionConcurrency: v.optional(v.number()),
-  thinking: v.optional(v.object({
-    type: v.optional(v.picklist(['enabled', 'disabled'])),
-    effort: v.optional(v.string()),
-  })),
-  /** Deprecated: use thinking.effort. Kept as a compatibility shim for existing configs. */
-  reasoningEffort: v.optional(v.string()),
+  extraBody: v.optional(v.record(v.string(), v.unknown())),
   forceToolCall: v.optional(v.union([v.boolean(), v.literal('api'), v.literal('local')])),
 };
 
@@ -281,16 +276,10 @@ export const resolveBackgroundTasks = (config: Config): BackgroundTasksConfig =>
   retentionCount: config.backgroundTasks.retentionCount,
 });
 
-const normalizeLlmEndpoint = (entry: Config['models'][string]): LlmEndpoint => {
-  const { reasoningEffort, ...endpoint } = entry;
-  if (endpoint.thinking || !reasoningEffort) return endpoint;
-  return { ...endpoint, thinking: { type: 'enabled', effort: reasoningEffort } };
-};
-
 export const resolveModel = (config: Config, name: string): LlmEndpoint => {
   const entry = config.models[name];
   if (!entry) throw new Error(`Unknown model "${name}" — not found in models registry`);
-  return normalizeLlmEndpoint(entry);
+  return entry;
 };
 
 /** Return whitelisted chat IDs (all keys in chats except "default"). */

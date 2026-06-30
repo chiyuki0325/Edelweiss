@@ -1,7 +1,6 @@
 import type { Logger } from '@guiiai/logg';
 
 import { parseSSEStream } from './sse';
-import type { ThinkingConfig } from './types';
 import type { ChatCompletionsAssistantMessage } from '../unified-api/chat-types';
 
 // Chat Completions SSE chunk shape (subset we consume)
@@ -44,7 +43,7 @@ export interface StreamingChatParams {
   tools?: ToolSchema[];
   forceToolCall?: boolean | 'api' | 'local';
   timeoutSec?: number;
-  thinking?: ThinkingConfig;
+  extraBody?: Record<string, unknown>;
   signal?: AbortSignal;
   log: Logger;
   label: string; // log prefix, e.g. "step" or "compact"
@@ -81,12 +80,7 @@ export const streamingChat = async (params: StreamingChatParams): Promise<Stream
       ],
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
       ...(params.forceToolCall === true || params.forceToolCall === 'api' ? { tool_choice: 'required' } : {}),
-      // Chat Completions takes the flat `reasoning_effort` field. type === 'disabled' or
-      // no thinking config means omit the field entirely; 'none' is non-standard, and
-      // upstreams may silently ignore unknown off values.
-      ...(params.thinking && params.thinking.type !== 'disabled' && params.thinking.effort
-        ? { reasoning_effort: params.thinking.effort }
-        : {}),
+      ...(params.extraBody ?? {}),
       stream: true,
       stream_options: { include_usage: true },
     });

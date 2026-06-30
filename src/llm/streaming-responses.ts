@@ -4,12 +4,12 @@ import type {
   ResponseOutputFunctionCall,
   ResponseOutputItem,
   ResponseOutputMessage,
+  ResponseOutputReasoning,
   ResponseStreamEvent,
   ResponseTool,
   ResponsesResult,
 } from './responses-types';
 import { parseSSEStream } from './sse';
-import type { ThinkingConfig } from './types';
 
 export interface StreamingResponsesParams {
   baseURL: string;
@@ -20,7 +20,7 @@ export interface StreamingResponsesParams {
   tools?: ResponseTool[];
   forceToolCall?: boolean | 'api' | 'local';
   timeoutSec?: number;
-  thinking?: ThinkingConfig;
+  extraBody?: Record<string, unknown>;
   signal?: AbortSignal;
   log: Logger;
   label: string;
@@ -56,7 +56,7 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
       ...(params.instructions ? { instructions: params.instructions } : {}),
       ...(params.tools && params.tools.length > 0 ? { tools: params.tools } : {}),
       ...(params.forceToolCall === true || params.forceToolCall === 'api' ? { tool_choice: 'required' } : {}),
-      ...(params.thinking?.type !== 'disabled' && params.thinking?.effort ? { output_config: { effort: params.thinking.effort } } : {}),
+      ...(params.extraBody ?? {}),
       stream: true,
     });
 
@@ -187,6 +187,9 @@ export const streamingResponses = async (params: StreamingResponsesParams): Prom
         let args: unknown = item.arguments;
         try { args = JSON.parse(item.arguments); } catch { /* keep raw string */ }
         log.withFields({ label, tool: item.name, args }).log('tool call');
+      } else if (item.type === 'reasoning') {
+        const reasoning = (item as ResponseOutputReasoning).summary.map(s => s.text).join('\n');
+        if (reasoning) log.withFields({ label, reasoning }).log('reasoning');
       }
     }
 
