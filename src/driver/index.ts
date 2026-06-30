@@ -125,7 +125,7 @@ export const createDriver = (config: DriverConfig, deps: {
     // --- Skills state ---
     // Always all skills are available to preserve prefix consistency across epochs.
     const allSkills = chatConfig.skills?.folder
-      ? loadSkillsFromFolder(chatConfig.skills.folder)
+      ? loadSkillsFromFolder(chatConfig.skills.folder, { log })
       : new Map();
 
     // --- Compaction state as signal ---

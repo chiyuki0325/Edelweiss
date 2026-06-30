@@ -1,5 +1,5 @@
-import type { PlatformAdapter } from '../types';
 import type { Attachment } from '../../telegram/message/types';
+import type { PlatformAdapter } from '../types';
 
 /** Shared file_id → Buffer logic used by download_file and read_image tools. */
 export const createAttachmentDownloader = (deps: {

@@ -1,6 +1,6 @@
-import type { WebFetcher, WebFetchResult } from '../web-fetch/types';
 import type { CahciuaTool } from './types';
 import { createTool } from './types';
+import type { WebFetcher, WebFetchResult } from '../web-fetch/types';
 
 export const createWebFetchTool = (fetcher: WebFetcher): CahciuaTool => createTool({
   name: 'web_fetch',

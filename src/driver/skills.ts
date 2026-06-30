@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 
+import type { Logger } from '@guiiai/logg';
 import { parse as parseYaml } from 'yaml';
 
 export interface SkillInfo {
@@ -140,13 +141,14 @@ const loadAnthropicSkill = (path: string, id: string, skillsFolder: string): Ski
   };
 };
 
-export const loadSkillsFromFolder = (folder: string): Map<string, SkillInfo> => {
+export const loadSkillsFromFolder = (folder: string, opts?: { log?: Logger }): Map<string, SkillInfo> => {
   const map = new Map<string, SkillInfo>();
   const skillsFolder = resolve(folder);
   let entries: Dirent[];
   try {
     entries = readdirSync(skillsFolder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-  } catch {
+  } catch (err) {
+    opts?.log?.withError(err as Error).withFields({ skillsFolder }).warn('Cannot read skills folder, no skills loaded');
     return map;
   }
 

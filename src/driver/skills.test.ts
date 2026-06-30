@@ -1,9 +1,10 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { SkillInfo } from './skills';
 import { loadSkillsFromFolder } from './skills';
 
 const tempDirs: string[] = [];
@@ -129,6 +130,136 @@ describe('loadSkillsFromFolder', () => {
     expect(loadSkillsFromFolder(dir).get('debug')).toMatchObject({
       description: 'Directory wins.',
       format: 'anthropic',
+    });
+  });
+
+  describe('project skills/', () => {
+    const projectSkillsDir = resolve('skills');
+
+    const dumpSkill = (s: SkillInfo | undefined, label: string) => {
+      if (!s) {
+        console.log(`  [${label}] => undefined (not loaded)`);
+        return;
+      }
+      console.log(`  [${label}] name=${s.name} title=${s.title ?? '<none>'} format=${s.format} desc=${s.description?.slice(0, 80)}...`);
+    };
+
+    it('loads skill-authoring.md as custom-v2', () => {
+      const all = loadSkillsFromFolder(projectSkillsDir);
+      console.log(`Skills loaded from ${projectSkillsDir}: ${all.size} total`);
+      for (const [id, s] of all) dumpSkill(s, id);
+
+      const skill = all.get('skill-authoring');
+      dumpSkill(skill, 'skill-authoring');
+
+      expect(skill, 'skill-authoring must be loaded').toBeDefined();
+
+      expect(skill!.name).toBe('skill-authoring');
+      expect(skill!.title).toBe('Skill Authoring');
+      expect(skill!.format).toBe('custom-v2');
+      expect(skill!.description).toContain('inspect the current chat/skill environment');
+      expect(skill!.usage).toContain('Load this before creating');
+      expect(skill!.content).toContain('Skills are reusable workflow notes');
+      expect(skill!.skillsFolder).toBe(projectSkillsDir);
+      expect(skill!.skillPath).toBe(join(projectSkillsDir, 'skill-authoring.md'));
+      expect(skill!.mainFilePath).toBe(join(projectSkillsDir, 'skill-authoring.md'));
+    });
+
+    it('front-matter parse: rejects when name is empty', () => {
+      const dir = makeSkillsDir();
+      writeFileSync(join(dir, 'bad-name.md'), [
+        '---',
+        'name: ""',
+        'description: Has description',
+        '---',
+        '',
+        'Body',
+      ].join('\n'));
+
+      expect(loadSkillsFromFolder(dir).has('bad-name')).toBe(false);
+    });
+
+    it('front-matter parse: rejects when description is not a string', () => {
+      const dir = makeSkillsDir();
+      writeFileSync(join(dir, 'bad-desc.md'), [
+        '---',
+        'name: Good Name',
+        'description:',
+        '  - not a string',
+        '---',
+        '',
+        'Body',
+      ].join('\n'));
+
+      expect(loadSkillsFromFolder(dir).has('bad-desc')).toBe(false);
+    });
+
+    it('front-matter parse: rejects when description is empty string', () => {
+      const dir = makeSkillsDir();
+      writeFileSync(join(dir, 'empty-desc.md'), [
+        '---',
+        'name: Good Name',
+        'description: ""',
+        '---',
+        '',
+        'Body',
+      ].join('\n'));
+
+      expect(loadSkillsFromFolder(dir).has('empty-desc')).toBe(false);
+    });
+
+    it('front-matter parse: rejects when usage is non-string', () => {
+      const dir = makeSkillsDir();
+      writeFileSync(join(dir, 'bad-usage.md'), [
+        '---',
+        'name: Good Name',
+        'description: Good description',
+        'usage:',
+        '  key: value',
+        '---',
+        '',
+        'Body',
+      ].join('\n'));
+
+      expect(loadSkillsFromFolder(dir).has('bad-usage')).toBe(false);
+    });
+
+    it('front-matter parse: body starts after front-matter (no leading empty line bleed)', () => {
+      const dir = makeSkillsDir();
+      writeFileSync(join(dir, 'body-test.md'), [
+        '---',
+        'name: Body Test',
+        'description: Testing body extraction',
+        '---',
+        '',
+        'First paragraph.',
+        '',
+        'Second paragraph.',
+      ].join('\n'));
+
+      const skill = loadSkillsFromFolder(dir).get('body-test');
+      expect(skill).toBeDefined();
+      // body must NOT start with a blank line — trimStart in parseFrontMatterSkill handles this
+      expect(skill!.content).toMatch(/^First paragraph/);
+    });
+
+    it('returns empty map and logs warning when folder is not accessible', () => {
+      const nonexistent = join(tmpdir(), `does-not-exist-skills-${  Date.now()}`);
+      const log = { warn: vi.fn(), withFields: vi.fn(), withError: vi.fn() } as any;
+      log.withFields.mockReturnValue(log);
+      log.withError.mockReturnValue(log);
+
+      const skills = loadSkillsFromFolder(nonexistent, { log });
+
+      expect(skills.size).toBe(0);
+      expect(log.withError).toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('Cannot read skills folder'));
+    });
+
+    it('returns empty map without crashing when logger is not provided and folder is missing', () => {
+      const nonexistent = join(tmpdir(), `also-does-not-exist-${  Date.now()}`);
+      const skills = loadSkillsFromFolder(nonexistent);
+      expect(skills.size).toBe(0);
     });
   });
 });

@@ -1,8 +1,8 @@
 import sharp from 'sharp';
 
-import type { InputPart } from '../../unified-api/types';
 import type { CahciuaTool } from './types';
 import { createTool } from './types';
+import type { InputPart } from '../../unified-api/types';
 
 const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buffer> => {
   const maxEdge = detail === 'high' ? 1024 : 512;
