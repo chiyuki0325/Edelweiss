@@ -42,6 +42,7 @@ export interface MainTurnFeatureDeps {
   ) => CahciuaTool[];
   createSendMessageTurnFlags: (turn: TurnState) => SendMessageTurnFlags;
   schedulerController: MainTurnSchedulerController;
+  focusMode: DriverSignal<boolean>;
   refreshAllowedReactionEmojis?: (chatId: string, signal?: AbortSignal) => Promise<string[]>;
   getAllowedReactionEmojis?: (chatId: string) => string[];
   getActiveBackgroundTasks: (sessionId: string) => ActiveTaskInfo[];

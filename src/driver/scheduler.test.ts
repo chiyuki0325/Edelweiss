@@ -91,6 +91,7 @@ describe('createDriverScheduler', () => {
         lastProcessedMs: signal(0),
         failedRc: signal<RenderedContext | null>(null),
         lastTRInterrupted: signal(false),
+        focusMode: signal(false),
         scheduler: state,
       }, {
         initialDelayMs: 100,
@@ -129,6 +130,7 @@ describe('createDriverScheduler', () => {
         lastProcessedMs: signal(0),
         failedRc: signal<RenderedContext | null>(null),
         lastTRInterrupted: signal(false),
+        focusMode: signal(false),
         scheduler: state,
         getActiveTurn: () => activeTurn,
       }, {
@@ -167,6 +169,7 @@ describe('createDriverScheduler', () => {
           interruptedByInput: false,
           sendMessageWasLengthLimited: false,
           modelStayedSilent: false,
+          inFocusMode: false,
         },
       };
       scheduler.attachAbortController(abortController);
@@ -174,9 +177,123 @@ describe('createDriverScheduler', () => {
       rcSignal(rc(100, 200));
 
       expect(abortController.signal.aborted).toBe(true);
-      expect(activeTurn.flags.interruptedByInput).toBe(true);
+      expect(activeTurn!.flags.interruptedByInput).toBe(true);
       expect(state.startNextDebounceWithExtendDelay).toBe(true);
       expect(state.replyBatchDeadlineMs).toBe(1_001_000);
+
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not abort the active run when focus mode is active', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const state = createSchedulerState();
+      const rcSignal = signal<RenderedContext>([]);
+      const running = signal(false);
+      const focusMode = signal(false);
+      let activeTurn: TurnState | null = null;
+      const scheduler = createDriverScheduler({
+        chatId: 'chat',
+        rc: rcSignal,
+        offline: signal(false),
+        running,
+        lastProcessedMs: signal(0),
+        failedRc: signal<RenderedContext | null>(null),
+        lastTRInterrupted: signal(false),
+        focusMode,
+        scheduler: state,
+        getActiveTurn: () => activeTurn,
+      }, {
+        initialDelayMs: 100,
+        typingExtendMs: 50,
+        maxDelayMs: 1_000,
+        startTurn: vi.fn(),
+        log: testLogger(),
+      });
+
+      rcSignal(rc(100));
+      const started = scheduler.beginTurn();
+      const abortController = new AbortController();
+      activeTurn = {
+        id: 'turn',
+        kind: 'main',
+        chatId: 'chat',
+        agentId: 'main',
+        scope: {} as ChatScope,
+        model: { apiBaseUrl: '', apiKey: '', model: '' },
+        rcAtStart: started!.rcAtStart,
+        trs: [],
+        entries: [],
+        system: '',
+        tools: [],
+        step: 1,
+        maxSteps: Infinity,
+        pendingPrune: false,
+        abortController,
+        capabilities: createDefaultTurnCapabilities('main'),
+        loadedSkills: new Set(),
+        reactionEmojis: [],
+        flags: {
+          wasOfflineAtStart: false,
+          interruptedByInput: false,
+          sendMessageWasLengthLimited: false,
+          modelStayedSilent: false,
+          inFocusMode: true,
+        },
+      };
+      scheduler.attachAbortController(abortController);
+
+      focusMode(true);
+      rcSignal(rc(100, 200));
+
+      expect(abortController.signal.aborted).toBe(false);
+      expect(activeTurn.flags.interruptedByInput).toBe(false);
+
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips debounce and starts turn immediately when focus mode is active', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const state = createSchedulerState();
+      const startTurn = vi.fn();
+      const rcSignal = signal<RenderedContext>([]);
+      const focusMode = signal(false);
+      const scheduler = createDriverScheduler({
+        chatId: 'chat',
+        rc: rcSignal,
+        offline: signal(false),
+        running: signal(false),
+        lastProcessedMs: signal(0),
+        failedRc: signal<RenderedContext | null>(null),
+        lastTRInterrupted: signal(false),
+        focusMode,
+        scheduler: state,
+      }, {
+        initialDelayMs: 5_000,
+        typingExtendMs: 5_000,
+        maxDelayMs: 30_000,
+        startTurn,
+        log: testLogger(),
+      });
+
+      // First message triggers debounce (not immediate start)
+      rcSignal(rc(100));
+      expect(state.debounceWaiting).toBe(true);
+      expect(startTurn).not.toHaveBeenCalled();
+
+      // Enabling focus mode should bypass debounce and start immediately
+      focusMode(true);
+      expect(startTurn).toHaveBeenCalledTimes(1);
+      expect(state.debounceWaiting).toBe(false);
 
       scheduler.stop();
     } finally {

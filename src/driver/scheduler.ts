@@ -95,6 +95,7 @@ export interface DriverSchedulerScope {
   lastProcessedMs: DriverSignal<number>;
   lastTRInterrupted: DriverSignal<boolean>;
   failedRc: DriverSignal<RenderedContext | null>;
+  focusMode: DriverSignal<boolean>;
   scheduler: SchedulerState;
   getActiveTurn?: () => TurnState | null;
 }
@@ -210,6 +211,7 @@ export const createDriverScheduler = (
       if (
         hasInterruptingInputDuringActiveRun(rcVal)
         && !stateController.isReplyBatchDeadlineExpired()
+        && !scope.focusMode()
       ) {
         abortActiveRunForInput();
       }
@@ -219,6 +221,14 @@ export const createDriverScheduler = (
     if (!needsReply()) {
       notifyDebounceStopped();
       stateController.resetIdleBatch();
+      if (scope.focusMode()) scope.focusMode(false);
+      return;
+    }
+
+    if (scope.focusMode()) {
+      notifyDebounceStopped();
+      stateController.resetIdleBatch();
+      startTurn();
       return;
     }
 
@@ -273,6 +283,7 @@ export const createDriverScheduler = (
     stateController.clearDebounceTimers();
     notifyDebounceStopped();
     state.debounceWaiting = false;
+    if (scope.focusMode()) scope.focusMode(false);
 
     const wasOffline = scope.offline();
     const rcAtStart = scope.rc();

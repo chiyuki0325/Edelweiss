@@ -71,6 +71,7 @@ const createTurn = (): TurnState => ({
     interruptedByInput: false,
     sendMessageWasLengthLimited: false,
     modelStayedSilent: false,
+    inFocusMode: false,
   },
 });
 

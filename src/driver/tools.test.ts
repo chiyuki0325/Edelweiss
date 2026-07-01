@@ -332,7 +332,7 @@ describe('createSendMessageTool', () => {
 
   it('returns error and sets wasLengthLimited when message exceeds 256 bytes', async () => {
     const send = vi.fn();
-    const flags: SendMessageTurnFlags = { wasLengthLimited: false };
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };
     const tool = createSendMessageTool(send, flags);
 
     const longText = makeText(257);
@@ -348,7 +348,7 @@ describe('createSendMessageTool', () => {
 
   it('auto-overrides requiresFollowUp to true after wasLengthLimited was set', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '42' });
-    const flags: SendMessageTurnFlags = { wasLengthLimited: true };
+    const flags: SendMessageTurnFlags = { wasLengthLimited: true, inFocusMode: false };
     const tool = createSendMessageTool(send, flags);
 
     // Model omits still_working — should auto-override to true
@@ -360,7 +360,7 @@ describe('createSendMessageTool', () => {
 
   it('respects explicit still_working: false even after wasLengthLimited', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '43' });
-    const flags: SendMessageTurnFlags = { wasLengthLimited: true };
+    const flags: SendMessageTurnFlags = { wasLengthLimited: true, inFocusMode: false };
     const tool = createSendMessageTool(send, flags);
 
     // Model explicitly signals "done" — should be respected
@@ -375,12 +375,26 @@ describe('createSendMessageTool', () => {
 
   it('requiresFollowUp defaults to false when wasLengthLimited is false and still_working is omitted', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '44' });
-    const flags: SendMessageTurnFlags = { wasLengthLimited: false };
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };
     const tool = createSendMessageTool(send, flags);
 
     const result = await tool.execute({ text: makeText(10) }, { toolCallId: 'tc4' });
 
     expect(result.requiresFollowUp).toBe(false);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('bypasses 256-byte limit when inFocusMode is true', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '45' });
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: true };
+    const tool = createSendMessageTool(send, flags);
+
+    const longText = makeText(300);
+    const result = await tool.execute({ text: longText }, { toolCallId: 'tc5' });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(result.requiresFollowUp).toBe(false);
+    const payload = JSON.parse(result.content as string);
+    expect(payload.ok).toBe(true);
   });
 });

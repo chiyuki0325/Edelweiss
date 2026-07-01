@@ -15,5 +15,6 @@ export { createStaySilentTool } from './stay-silent';
 export { createReactMessageTool } from './react-message';
 export { createReadImageTool } from './read-image';
 export { createSleepTool } from './sleep';
+export { createEnterFocusTool } from './focus-mode';
 
 export { executeToolCall, extractLoadedSkillNames, extractToolCalls } from './execution';

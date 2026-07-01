@@ -97,6 +97,7 @@ const runEvalStepLoop = async (params: {
       interruptedByInput: false,
       sendMessageWasLengthLimited: false,
       modelStayedSilent: false,
+      inFocusMode: false,
     },
   };
 

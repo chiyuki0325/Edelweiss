@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import type { Logger } from '@guiiai/logg';
 
 import type { SkillInfo } from './skills';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool } from './tools';
+import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
-import type { TurnCapabilities } from './turn-state';
+import type { DriverSignal, TurnCapabilities, TurnState } from './turn-state';
 import type { PlatformAdapter } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { RuntimeConfig, ResolvedChatConfig } from '../config/config';
@@ -31,6 +31,8 @@ export interface CapabilityToolProviderDeps {
     killTask: (taskId: number) => { ok: boolean; error?: string };
     readTaskOutput: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>;
   };
+  focusMode: DriverSignal<boolean>;
+  getActiveTurn: () => TurnState | null;
   log: Logger;
 }
 
@@ -74,6 +76,7 @@ export const createToolsForCapabilities = (
         return { messageId: String(sent.messageId) };
       }, sendMessageTurnFlags));
     }
+    tools.push(createEnterFocusTool({ focusMode: deps.focusMode, getActiveTurn: deps.getActiveTurn }));
     if (capabilities.canDismissMessage)
       tools.push(createStaySilentTool());
     return tools;

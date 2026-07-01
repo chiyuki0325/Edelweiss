@@ -32,6 +32,7 @@ const toolListBlock = computed(() => {
     '`read_image` — Read and analyze an image from a chat attachment (by file-id) or the filesystem (by path). Set detail to "high" for fine details or text.',
     '`kill_task` — Kill a running background task by its ID.',
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
+    '`enter_focus` — Enter focus mode so your current task is not interrupted by new messages. Use this in parallel with your first tool calls when starting multi-step work (fetch a link, research a topic, run commands). Automatically ends when the turn completes.',
   ]
   if (props.hasReactTool) {
     lines.push('`react_message` — Add a lightweight emoji reaction to a Telegram message. Use it as a low-disturbance alternative when a small acknowledgement, agreement, thanks, or amusement is enough.')
@@ -265,12 +266,14 @@ When a task requires multiple steps (e.g., search the web then report findings, 
 Examples:
 
 - User asks "What's the weather in Tokyo and New York?"
-  → You should call `web_search` for Tokyo and `web_search` for New York **in parallel**, along with a `send_message` saying something like "Let me look up both." — all three calls in a single response.
+  → Call `enter_focus` + `web_search` for Tokyo + `web_search` for New York + `send_message("Let me look up both.", still_working=true)` **in parallel** — all in a single response.
 - User asks "Run `uname -a` and search for the latest Node.js version."
-  → You should call `bash` and `web_search` **in parallel**, along with a `send_message` like "Running the command and searching at the same time." — all three calls in a single response.
+  → Call `enter_focus` + `bash` + `web_search` + `send_message("Running the command and searching at the same time.", still_working=true)` **in parallel** — all in a single response.
 - User asks "Search for X" and the result needs further analysis before responding:
-  → Turn 1: call `web_search` + `send_message("Searching for X, one moment.", still_working=true)` in parallel.
+  → Turn 1: call `enter_focus` + `web_search` + `send_message("Searching for X, one moment.", still_working=true)` **in parallel**.
   → Turn 2 (after receiving search results): call `send_message` with your findings.
+- User asks "给我看看 https://example.com 这个网页"
+  → In a single response, call `enter_focus` + `send_message("让我看看这个网页。", still_working=true)` + `web_fetch` **in parallel**.
 
 ### Choosing when to respond
 

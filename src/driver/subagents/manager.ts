@@ -115,6 +115,7 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
         interruptedByInput: false,
         sendMessageWasLengthLimited: false,
         modelStayedSilent: false,
+        inFocusMode: false,
       },
     };
   };

@@ -86,6 +86,7 @@ export interface ChatScope {
   subagents: SubagentManager;
   allSkills: Map<string, SkillInfo>;
   compactionMeta: DriverSignal<CompactionSessionMeta | null>;
+  focusMode: DriverSignal<boolean>;
   scheduler: SchedulerState;
   activeTurn: TurnState | null;
   extendDebounce(): void;
@@ -117,6 +118,7 @@ export interface TurnState {
     interruptedByInput: boolean;
     sendMessageWasLengthLimited: boolean;
     modelStayedSilent: boolean;
+    inFocusMode: boolean;
   };
 }
 

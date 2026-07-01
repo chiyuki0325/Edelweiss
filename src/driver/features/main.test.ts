@@ -105,6 +105,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
   createCapabilityTools: vi.fn(() => []),
   createSendMessageTurnFlags: vi.fn(() => ({
     wasLengthLimited: false,
+    inFocusMode: false,
   })),
   schedulerController: {
     clearAbortController: vi.fn(),
@@ -113,6 +114,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
   },
   getActiveBackgroundTasks: vi.fn(() => []),
   lastTRInterrupted: signal(false),
+  focusMode: signal(false),
   nowString: () => '2026-01-01T00:00:00+00:00',
 });
 

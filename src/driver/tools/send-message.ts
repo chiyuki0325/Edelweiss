@@ -54,8 +54,9 @@ export const createSendMessageTool = (
         attachments?: SendMessageAttachment[];
       };
       // Enforce 256-byte hard limit when the message does not contain code blocks or blockquotes
+      const inFocusMode = turnFlags?.inFocusMode ?? false;
       const hasBlockquote = /^> /m.test(text);
-      if (!text.includes('```') && !hasBlockquote) {
+      if (!inFocusMode && !text.includes('```') && !hasBlockquote) {
         const byteLength = Buffer.byteLength(text, 'utf8');
         if (byteLength > 256) {
           if (turnFlags) turnFlags.wasLengthLimited = true;

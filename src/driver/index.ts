@@ -120,6 +120,7 @@ export const createDriver = (config: DriverConfig, deps: {
     void loadTRs(chatId).then(trs => lastTRInterrupted(wasToolLoopInterrupted(trs)));
     const running = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
+    const focusMode = signal(false);
     const scheduler = createSchedulerState();
 
     // --- Skills state ---
@@ -163,6 +164,9 @@ export const createDriver = (config: DriverConfig, deps: {
       set wasLengthLimited(value: boolean) {
         turn.flags.sendMessageWasLengthLimited = value;
       },
+      get inFocusMode() {
+        return turn.flags.inFocusMode;
+      },
     });
 
     const toolProviderDeps = (): CapabilityToolProviderDeps => ({
@@ -182,6 +186,8 @@ export const createDriver = (config: DriverConfig, deps: {
         killTask: deps.backgroundTask.killTask,
         readTaskOutput: deps.backgroundTask.readTaskOutput,
       },
+      focusMode,
+      getActiveTurn: () => chatScopes.get(chatId)?.activeTurn ?? null,
       log,
     });
 
@@ -256,6 +262,7 @@ export const createDriver = (config: DriverConfig, deps: {
         interruptedByInput: false,
         sendMessageWasLengthLimited: false,
         modelStayedSilent: false,
+        inFocusMode: false,
       },
     });
 
@@ -302,6 +309,7 @@ export const createDriver = (config: DriverConfig, deps: {
             createSendMessageTurnFlags,
             lastTRInterrupted,
             schedulerController,
+            focusMode,
             refreshAllowedReactionEmojis: deps.refreshAllowedReactionEmojis,
             getAllowedReactionEmojis: deps.getAllowedReactionEmojis,
             getActiveBackgroundTasks: deps.backgroundTask.getActiveTasks,
@@ -323,6 +331,7 @@ export const createDriver = (config: DriverConfig, deps: {
       lastProcessedMs,
       lastTRInterrupted,
       failedRc,
+      focusMode,
       scheduler,
       getActiveTurn: () => chatScopes.get(chatId)?.activeTurn ?? null,
     }, {
@@ -427,6 +436,7 @@ export const createDriver = (config: DriverConfig, deps: {
       subagents: subagentManager,
       allSkills,
       compactionMeta,
+      focusMode,
       scheduler,
       activeTurn: null,
       extendDebounce: () => schedulerController.extendDebounce(),

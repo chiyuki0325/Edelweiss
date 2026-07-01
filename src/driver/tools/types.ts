@@ -61,4 +61,5 @@ export interface SendMessageAttachment {
 
 export interface SendMessageTurnFlags {
   wasLengthLimited: boolean;
+  inFocusMode: boolean;
 }
