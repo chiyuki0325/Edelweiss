@@ -56,6 +56,8 @@ export const createSchedulerStateController = (
   };
 
   const onTurnSettled = (): void => {
+    state.abortLocked = false;
+    state.pendingAbort = false;
     if (!state.activeRunInterruptedByInput)
       state.replyBatchDeadlineMs = null;
     state.activeRunRc = null;
@@ -156,6 +158,10 @@ export const createDriverScheduler = (
     const activeTurn = scope.getActiveTurn?.();
     if (activeTurn)
       activeTurn.flags.interruptedByInput = true;
+    if (state.abortLocked) {
+      state.pendingAbort = true;
+      return;
+    }
     if (state.abortController) {
       state.abortController.abort(new Error('New messages arrived, aborting current call'));
       state.abortController = null;

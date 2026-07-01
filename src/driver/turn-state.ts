@@ -61,6 +61,8 @@ export interface SchedulerState {
   activeRunRc: RenderedContext | null;
   activeRunInterruptedByInput: boolean;
   abortController: AbortController | null;
+  abortLocked: boolean;
+  pendingAbort: boolean;
 }
 
 export const createSchedulerState = (): SchedulerState => ({
@@ -72,6 +74,8 @@ export const createSchedulerState = (): SchedulerState => ({
   activeRunRc: null,
   activeRunInterruptedByInput: false,
   abortController: null,
+  abortLocked: false,
+  pendingAbort: false,
 });
 
 export interface ChatScope {

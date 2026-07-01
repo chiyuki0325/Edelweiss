@@ -68,6 +68,9 @@ export const runTurnStepLoop = async (
       await feature.afterModelCall?.(ctx, modelOutput);
     turn.abortController.signal.throwIfAborted();
 
+    const hasProtectedTool = modelOutput.toolCalls.some(tc => tc.name === 'send_message');
+    if (hasProtectedTool) turn.scope.scheduler.abortLocked = true;
+
     const toolResults = await params.runner.executeToolStep(modelOutput.toolCalls, stepParams);
     turn.abortController.signal.throwIfAborted();
     const stepEntries = [...modelOutput.entries, ...toolResults];
@@ -78,6 +81,13 @@ export const runTurnStepLoop = async (
     if (stepEntries.length === 0) {
       turn.flags.modelStayedSilent = true;
       params.log.withFields({ chatId: params.executorChatId, step: stepNumber }).log('Model chose to stay silent');
+      if (hasProtectedTool) {
+        turn.scope.scheduler.abortLocked = false;
+        if (turn.scope.scheduler.pendingAbort) {
+          turn.scope.scheduler.pendingAbort = false;
+          turn.abortController.abort(new Error('Deferred: new messages arrived during protected step'));
+        }
+      }
       await persistCompletedStep({
         rawEntries: [],
         persistedEntries: [],
@@ -112,6 +122,15 @@ export const runTurnStepLoop = async (
       anyRequiresFollowUp,
     };
     await persistCompletedStep(completedStep);
+
+    if (hasProtectedTool) {
+      turn.scope.scheduler.abortLocked = false;
+      if (turn.scope.scheduler.pendingAbort) {
+        turn.scope.scheduler.pendingAbort = false;
+        turn.abortController.abort(new Error('Deferred: new messages arrived during protected step'));
+      }
+    }
+    turn.abortController.signal.throwIfAborted();
 
     if (!hasToolCalls || !anyRequiresFollowUp) {
       if (hasToolCalls && !anyRequiresFollowUp)
