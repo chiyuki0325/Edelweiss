@@ -21,6 +21,7 @@ import { canGenerateThumbnail, generateThumbnail } from '../media/thumbnail';
 
 export interface TelegramManagerOptions {
   botToken: string;
+  botApiUrl?: string;
   apiId?: number;
   apiHash?: string;
   session?: string;
@@ -97,7 +98,7 @@ export const createTelegramManager = (
   logger: Logger,
 ): TelegramManager => {
   const log = logger.withContext('telegram:manager');
-  const bot = createBotClient({ token: options.botToken }, logger);
+  const bot = createBotClient({ token: options.botToken, botApiUrl: options.botApiUrl }, logger);
   const userbot = (options.apiId != null && options.apiHash != null)
     ? createUserbotClient({
         apiId: options.apiId,
@@ -429,6 +430,7 @@ export const createTelegramStartupManager = (deps: TelegramManagerDeps): Telegra
   const hasUserbot = deps.config.telegram.apiId != null && deps.config.telegram.apiHash != null;
   return createTelegramManager({
     botToken: deps.config.telegram.botToken,
+    botApiUrl: deps.config.telegram.botApiUrl,
     ...(hasUserbot ? {
       apiId: deps.config.telegram.apiId,
       apiHash: deps.config.telegram.apiHash,

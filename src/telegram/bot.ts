@@ -12,6 +12,7 @@ import type { MessageEntity } from './message/types';
 
 export interface BotClientOptions {
   token: string;
+  botApiUrl?: string;
 }
 
 export interface BotInfo {
@@ -70,7 +71,7 @@ export interface BotClient {
 
 export const createBotClient = (options: BotClientOptions, logger: Logger): BotClient => {
   const log = logger.withContext('telegram:bot');
-  const bot = new Bot(options.token);
+  const bot = new Bot(options.token, options.botApiUrl ? { client: { apiRoot: options.botApiUrl } } : {});
 
   registerHttpSecret(options.token);
 
@@ -79,7 +80,8 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
 
   const downloadFile = async (fileId: string): Promise<Buffer> => {
     const file = await bot.api.getFile(fileId);
-    return await httpGetBuffer(`https://api.telegram.org/file/bot${options.token}/${file.file_path}`);
+    const apiRoot = options.botApiUrl ?? 'https://api.telegram.org';
+    return await httpGetBuffer(`${apiRoot}/file/bot${options.token}/${file.file_path}`);
   };
 
   type PendingCommand = { name: string; description: string; handler: (chatId: string) => Promise<void> };
