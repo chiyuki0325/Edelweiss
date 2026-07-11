@@ -2,6 +2,7 @@ import fs from 'fs';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 import type { Logger } from '@guiiai/logg';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -271,6 +272,7 @@ export interface OneBotServerDeps {
 export interface OneBotServer {
   start(): Promise<void>;
   stop(): Promise<void>;
+  address: AddressInfo | string | null;
   api: OneBotApiClient | null;
   selfId: string | null;
 }
@@ -288,11 +290,13 @@ export const createOneBotServer = (
   let api: OneBotApiClient | null = null;
   let selfId: string | null = null;
   let httpServer: ReturnType<typeof createServer> | null = null;
+  let webSocketServer: WebSocketServer | null = null;
 
   const start = async (): Promise<void> => {
     const server = createServer();
 
     const wss = new WebSocketServer({ server });
+    webSocketServer = wss;
 
     wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       // Access token validation
@@ -364,13 +368,34 @@ export const createOneBotServer = (
   };
 
   const stop = async (): Promise<void> => {
-    if (httpServer) {
-      await new Promise<void>(resolve => {
-        httpServer!.close(() => resolve());
-      });
-      httpServer = null;
-    }
+    const currentHttpServer = httpServer;
+    const currentWebSocketServer = webSocketServer;
+    httpServer = null;
+    webSocketServer = null;
+    api = null;
+    selfId = null;
+
+    for (const client of currentWebSocketServer?.clients ?? []) client.terminate();
+
+    await Promise.all([
+      currentWebSocketServer
+        ? new Promise<void>((resolve, reject) => {
+          currentWebSocketServer.close(err => err ? reject(err) : resolve());
+        })
+        : Promise.resolve(),
+      currentHttpServer
+        ? new Promise<void>((resolve, reject) => {
+          currentHttpServer.close(err => err ? reject(err) : resolve());
+        })
+        : Promise.resolve(),
+    ]);
   };
 
-  return { start, stop, get api() { return api; }, get selfId() { return selfId; } };
+  return {
+    start,
+    stop,
+    get address() { return httpServer?.address() ?? null; },
+    get api() { return api; },
+    get selfId() { return selfId; },
+  };
 };

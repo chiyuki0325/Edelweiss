@@ -1,8 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { useLogger } from '@guiiai/logg';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 
-import { createGroupMemberCache } from './server';
+import { createGroupMemberCache, createOneBotServer } from './server';
+import type { OneBotConfig } from './types';
 import type { CanonicalUser } from '../adaption-types';
 import { redactSecrets, registerHttpSecret } from '../http';
+
+const connectedClients = new Set<WebSocket>();
+
+afterEach(() => {
+  for (const client of connectedClients) client.terminate();
+  connectedClients.clear();
+});
 
 const makeUser = (id: string, displayName: string): CanonicalUser => ({
   id,
@@ -84,5 +94,38 @@ describe('redactSecrets', () => {
     const masked = redactSecrets(`Cannot download file from https://h/?token=${token}`);
     expect(masked).not.toContain(token);
     expect(masked).toContain('*'.repeat(token.length));
+  });
+});
+
+describe('createOneBotServer', () => {
+  it('stops while a WebSocket client is still connected', async () => {
+    const config: OneBotConfig = {
+      enabled: true,
+      host: '127.0.0.1',
+      port: 0,
+      accessToken: '',
+    };
+    const server = createOneBotServer(config, {
+      onEvent: () => {},
+      log: useLogger('onebot-server-test'),
+    });
+
+    await server.start();
+
+    expect(server.address).toEqual(expect.objectContaining({ port: expect.any(Number) }));
+    const port = typeof server.address === 'object' ? server.address?.port : undefined;
+
+    const client = new WebSocket(`ws://127.0.0.1:${port}`);
+    connectedClients.add(client);
+    await new Promise<void>((resolve, reject) => {
+      client.once('open', resolve);
+      client.once('error', reject);
+    });
+
+    const clientClosed = new Promise<void>(resolve => client.once('close', () => resolve()));
+    await expect(server.stop()).resolves.toBeUndefined();
+    await clientClosed;
+    expect(client.readyState).toBe(WebSocket.CLOSED);
+    await expect(server.stop()).resolves.toBeUndefined();
   });
 });
