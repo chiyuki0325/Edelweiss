@@ -135,6 +135,45 @@ describe('redactSecrets', () => {
 });
 
 describe('createOneBotServer', () => {
+  const connect = async (port: number): Promise<WebSocket> => {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`);
+    connectedClients.add(client);
+    await new Promise<void>((resolve, reject) => {
+      client.once('open', resolve);
+      client.once('error', reject);
+    });
+    return client;
+  };
+
+  it('keeps the newest API when an older WebSocket closes', async () => {
+    const server = createOneBotServer({
+      enabled: true,
+      host: '127.0.0.1',
+      port: 0,
+      accessToken: '',
+    }, {
+      onEvent: () => {},
+      log: useLogger('onebot-server-test'),
+    });
+    await server.start();
+    const port = typeof server.address === 'object' ? server.address?.port : undefined;
+    expect(port).toBeTypeOf('number');
+
+    const olderClient = await connect(port!);
+    const olderApi = server.api;
+    const newerClient = await connect(port!);
+    const newerApi = server.api;
+    expect(newerApi).not.toBe(olderApi);
+
+    const olderClosed = new Promise<void>(resolve => olderClient.once('close', () => resolve()));
+    olderClient.terminate();
+    await olderClosed;
+    expect(server.api).toBe(newerApi);
+
+    newerClient.terminate();
+    await server.stop();
+  });
+
   it('stops while a WebSocket client is still connected', async () => {
     const config: OneBotConfig = {
       enabled: true,
@@ -152,12 +191,7 @@ describe('createOneBotServer', () => {
     expect(server.address).toEqual(expect.objectContaining({ port: expect.any(Number) }));
     const port = typeof server.address === 'object' ? server.address?.port : undefined;
 
-    const client = new WebSocket(`ws://127.0.0.1:${port}`);
-    connectedClients.add(client);
-    await new Promise<void>((resolve, reject) => {
-      client.once('open', resolve);
-      client.once('error', reject);
-    });
+    const client = await connect(port!);
 
     const clientClosed = new Promise<void>(resolve => client.once('close', () => resolve()));
     await expect(server.stop()).resolves.toBeUndefined();

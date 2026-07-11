@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown and latest-connection ownership, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, reconnect-safe send/download PlatformAdapter, fail-closed channel routing (never falls back to Telegram), entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -173,6 +173,7 @@ src/
 │   ├── system-prompt.test.ts # System prompt tests
 │   ├── index.test.ts      # Driver reactive scheduling/debounce tests
 │   ├── tool-providers.ts   # Capability-driven Driver tool assembly providers
+│   ├── tool-providers.test.ts # Tool-provider channel routing tests, including OneBot fail-closed send behavior
 │   ├── subagents/          # Subagent runtime: isolated helper manager, mailbox, lifecycle/types, communication/finalize tools
 │   │   ├── types.ts        # AgentId, SubagentState, AgentMessage, SubagentStatus
 │   │   ├── manager.ts      # SubagentManager: lifecycle, step loop, mailbox dispatch

@@ -29,14 +29,20 @@ export interface OneBotSelfSentSink {
 }
 
 export interface OneBotPlatformAdapterDeps {
-  api: OneBotApiClient;
+  getApi: () => OneBotApiClient | null;
   runtime: RuntimeConfig;
   logger?: Logger;
   selfSentSink?: OneBotSelfSentSink;
 }
 
 export const createOneBotPlatformAdapter = (deps: OneBotPlatformAdapterDeps): PlatformAdapter => {
-  const { api, runtime, logger, selfSentSink } = deps;
+  const { getApi, runtime, logger, selfSentSink } = deps;
+
+  const requireApi = (): OneBotApiClient => {
+    const api = getApi();
+    if (!api) throw new Error('OneBot is disconnected; cannot perform platform operation');
+    return api;
+  };
 
   const injectSelfSentEvent = (
     chatId: string,
@@ -72,13 +78,13 @@ export const createOneBotPlatformAdapter = (deps: OneBotPlatformAdapterDeps): Pl
         })),
         logger: logger?.withContext('onebot:send'),
       });
-      const sent = await api.sendMessage(chatId, segments);
+      const sent = await requireApi().sendMessage(chatId, segments);
       injectSelfSentEvent(chatId, sent.messageId, text, options?.replyTo);
       return sent;
     },
     downloadFile: async (identifier, chatId) =>
-      await api.downloadFile(identifier, chatId),
+      await requireApi().downloadFile(identifier, chatId),
     downloadImage: async (identifier, chatId) =>
-      await api.downloadFile(identifier, chatId),
+      await requireApi().downloadFile(identifier, chatId),
   };
 };

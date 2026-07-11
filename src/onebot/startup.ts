@@ -106,11 +106,10 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
   }
 
   const getAdapter = (chatId: string): PlatformAdapter | undefined => {
-    if (!server.api) return undefined;
     const existing = adapters.get(chatId);
     if (existing) return existing;
     const adapter = createOneBotPlatformAdapter({
-      api: server.api,
+      getApi: () => server.api,
       runtime: deps.runtimeConfig,
       logger: deps.logger,
       selfSentSink: {

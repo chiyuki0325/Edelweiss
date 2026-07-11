@@ -72,6 +72,8 @@ export const createToolsForCapabilities = (
           const result = await platform.sendMessage(chatId, text, { replyTo, attachments });
           return { messageId: result.messageId };
         }
+        if (chatConfig.platform === 'onebot')
+          throw new Error(`OneBot adapter unavailable for chat ${chatId}; refusing Telegram fallback`);
         const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
         return { messageId: String(sent.messageId) };
       }, sendMessageTurnFlags));

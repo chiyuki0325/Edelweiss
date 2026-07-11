@@ -57,13 +57,32 @@ describe('buildOneBotSelfSentEvent', () => {
 });
 
 describe('createOneBotPlatformAdapter self-sent injection', () => {
+  it('uses the current API after reconnect and fails while disconnected', async () => {
+    const firstApi = stubApi('first');
+    const secondApi = stubApi('second');
+    let currentApi: OneBotApiClient | null = firstApi;
+    const adapter = createOneBotPlatformAdapter({
+      getApi: () => currentApi,
+      runtime: runtimeConfig,
+    });
+
+    await expect(adapter.sendMessage('100', 'first')).resolves.toEqual({ messageId: 'first' });
+    currentApi = null;
+    await expect(adapter.sendMessage('100', 'offline')).rejects.toThrow('OneBot is disconnected');
+    currentApi = secondApi;
+    await expect(adapter.sendMessage('100', 'second')).resolves.toEqual({ messageId: 'second' });
+
+    expect(firstApi.sendMessage).toHaveBeenCalledOnce();
+    expect(secondApi.sendMessage).toHaveBeenCalledOnce();
+  });
+
   it('persists, hydrates, and pushes the self-sent event after a successful send', async () => {
     const persisted: PipelineEvent[] = [];
     const hydrated: PipelineEvent[] = [];
     const pushed: { chatId: string; event: PipelineEvent }[] = [];
 
     const adapter = createOneBotPlatformAdapter({
-      api: stubApi('555'),
+      getApi: () => stubApi('555'),
       runtime: runtimeConfig,
       selfSentSink: {
         getSelfId: () => '999',
@@ -93,7 +112,7 @@ describe('createOneBotPlatformAdapter self-sent injection', () => {
   it('skips injection when self id is unavailable', async () => {
     const persisted: PipelineEvent[] = [];
     const adapter = createOneBotPlatformAdapter({
-      api: stubApi('555'),
+      getApi: () => stubApi('555'),
       runtime: runtimeConfig,
       selfSentSink: {
         getSelfId: () => null,
@@ -109,7 +128,7 @@ describe('createOneBotPlatformAdapter self-sent injection', () => {
 
   it('does not inject when no sink is configured', async () => {
     const adapter = createOneBotPlatformAdapter({
-      api: stubApi('555'),
+      getApi: () => stubApi('555'),
       runtime: runtimeConfig,
     });
     const sent = await adapter.sendMessage('100', 'hi');

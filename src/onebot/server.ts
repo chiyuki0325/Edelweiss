@@ -331,6 +331,7 @@ export const createOneBotServer = (
 
   let api: OneBotApiClient | null = null;
   let selfId: string | null = null;
+  let activeWebSocket: WebSocket | null = null;
   let httpServer: ReturnType<typeof createServer> | null = null;
   let webSocketServer: WebSocketServer | null = null;
 
@@ -355,12 +356,15 @@ export const createOneBotServer = (
       log.withFields({ ip: req.socket.remoteAddress }).log('OneBot WS client connected');
 
       // Only keep one active API client (latest connection wins)
-      api = createApiClient(ws);
+      const connectionApi = createApiClient(ws);
+      activeWebSocket = ws;
+      api = connectionApi;
 
       const isEvent = (msg: unknown): msg is OneBotEvent =>
         typeof msg === 'object' && msg !== null && 'post_type' in msg;
 
       ws.on('message', (data: Buffer) => {
+        if (activeWebSocket !== ws) return;
         // Capture ingress meta synchronously at the frame entry, before any
         // adaptation or queueing — this is the ordering source of truth.
         const meta = captureOneBotIngressMeta();
@@ -391,7 +395,10 @@ export const createOneBotServer = (
 
       ws.on('close', code => {
         log.withFields({ code }).log('OneBot WS client disconnected');
-        api = null;
+        if (activeWebSocket === ws) {
+          activeWebSocket = null;
+          api = null;
+        }
       });
 
       ws.on('error', err => {
@@ -416,6 +423,7 @@ export const createOneBotServer = (
     webSocketServer = null;
     api = null;
     selfId = null;
+    activeWebSocket = null;
 
     for (const client of currentWebSocketServer?.clients ?? []) client.terminate();
 
