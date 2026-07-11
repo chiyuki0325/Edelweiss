@@ -72,9 +72,9 @@ export const buildOneBotSelfSentEvent = (params: OneBotSelfSentParams): Canonica
   };
 };
 
-export const adaptUser = (user_id: number, nickname: string, card?: string): CanonicalUser => ({
+export const adaptUser = (user_id: number, nickname: string, card?: string, remark?: string): CanonicalUser => ({
   id: String(user_id),
-  displayName: card && card !== '' ? card : nickname,
+  displayName: [remark, card, nickname].find(name => name?.trim()) ?? nickname,
   isBot: false,
 });
 
@@ -225,7 +225,7 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     type: 'message',
     chatId,
     messageId: String(event.message_id),
-    sender: adaptUser(event.sender.user_id, event.sender.nickname, event.sender.card),
+    sender: adaptUser(event.sender.user_id, event.sender.nickname, event.sender.card, event.sender.remark),
     receivedAtMs: meta.receivedAtMs,
     timestampSec: event.time,
     utcOffsetMin: meta.utcOffsetMin,

@@ -168,11 +168,11 @@ const createApiClient = (
     });
 
   const groupMemberCache = createGroupMemberCache(async (groupId, userId) => {
-    const result = await call<{ nickname: string; card: string }>('get_group_member_info', {
+    const result = await call<{ nickname: string; card?: string; remark?: string }>('get_group_member_info', {
       group_id: parseInt(groupId, 10),
       user_id: parseInt(userId, 10),
     });
-    return adaptUser(parseInt(userId, 10), result.nickname, result.card);
+    return adaptUser(parseInt(userId, 10), result.nickname, result.card, result.remark);
   });
 
   return {

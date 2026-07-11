@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server, access-token check, message/notice adaptation, QQ display names (remark → group card → nickname), QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -213,7 +213,8 @@ src/
 │   ├── ingress.ts           # createOneBotIngress: per-chat ordered queue + bounded-retry-then-drop transform (adapt + alt-text); attemptWithBudget policy; shared-dedup gating
 │   ├── ingress.test.ts      # OneBot ingress + attemptWithBudget + dedup tests
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
-│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; OneBotIngressMeta capture, applies entry-time timestamps
+│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; QQ name priority (remark → group card → nickname); OneBotIngressMeta capture, applies entry-time timestamps
+│   ├── adaptation.test.ts   # OneBot user display-name priority tests
 │   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
 │   ├── send.test.ts         # OneBot send rendering tests, including optional silicon code-block image conversion
 │   ├── image-to-text.ts     # OneBot image download + thumbnail generation via shared image-to-text resolver (fail-closed: throws on failure)

@@ -100,6 +100,7 @@ export interface OneBotSender {
   user_id: number;
   nickname: string;
   card?: string;
+  remark?: string;
   role?: string;
 }
 
