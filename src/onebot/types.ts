@@ -100,8 +100,13 @@ export interface OneBotSender {
   user_id: number;
   nickname: string;
   card?: string;
-  remark?: string;
   role?: string;
+}
+
+export interface NapCatRawMessage {
+  sendRemarkName?: string;
+  sendMemberName?: string;
+  sendNickName?: string;
 }
 
 // --- Events ---
@@ -117,6 +122,7 @@ export interface OneBotMessageEvent {
   message: OneBotMessageSegment[];
   raw_message: string;
   sender: OneBotSender;
+  raw?: NapCatRawMessage;
 }
 
 export interface OneBotNoticeEvent {

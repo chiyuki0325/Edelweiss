@@ -78,6 +78,15 @@ export const adaptUser = (user_id: number, nickname: string, card?: string, rema
   isBot: false,
 });
 
+const nonBlank = (value: string | undefined): string | undefined => value?.trim() ? value : undefined;
+
+export const adaptOneBotSender = (event: OneBotMessageEvent): CanonicalUser => adaptUser(
+  event.sender.user_id,
+  nonBlank(event.raw?.sendNickName) ?? event.sender.nickname,
+  nonBlank(event.raw?.sendMemberName) ?? event.sender.card,
+  event.raw?.sendRemarkName,
+);
+
 const extractFileName = (file: string): string | undefined => {
   const lastSlash = file.lastIndexOf('/');
   const name = lastSlash >= 0 ? file.slice(lastSlash + 1) : file;
@@ -225,7 +234,7 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     type: 'message',
     chatId,
     messageId: String(event.message_id),
-    sender: adaptUser(event.sender.user_id, event.sender.nickname, event.sender.card, event.sender.remark),
+    sender: adaptOneBotSender(event),
     receivedAtMs: meta.receivedAtMs,
     timestampSec: event.time,
     utcOffsetMin: meta.utcOffsetMin,
