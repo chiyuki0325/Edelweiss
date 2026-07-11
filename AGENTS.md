@@ -21,7 +21,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Layer | Status | Notes |
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text, blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
-| OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown, access-token check, message/notice adaptation, NapCat QQ display names (`raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
+| OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, send/download PlatformAdapter, entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
@@ -209,12 +209,12 @@ src/
 │   ├── startup.ts           # OneBot startup: WS server lifecycle, ingress wiring, history pull (shared dedup), PlatformAdapter registration, post-startup task assembly
 │   ├── post-startup.ts      # OneBot cold-start alt-text backfill: resolves historical image/animation events lacking alt text, persists attachments, replays affected chats (best-effort)
 │   ├── post-startup.test.ts # OneBot alt-text backfill tests
-│   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client; captures ingress meta at the WS frame entry and forwards raw events
+│   ├── server.ts            # OneBot 11 reverse WebSocket server + echo-correlated API client; cached get_friend_list remarks; captures ingress meta at the WS frame entry and forwards raw events
 │   ├── server.test.ts       # OneBot WebSocket server lifecycle and connected-client shutdown tests
 │   ├── ingress.ts           # createOneBotIngress: per-chat ordered queue + bounded-retry-then-drop transform (adapt + alt-text); attemptWithBudget policy; shared-dedup gating
 │   ├── ingress.test.ts      # OneBot ingress + attemptWithBudget + dedup tests
 │   ├── types.ts             # OneBot 11 event/API/message-segment types
-│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; NapCat raw QQ name priority (sendRemarkName → sendMemberName/card → sendNickName/nickname); OneBotIngressMeta capture, applies entry-time timestamps
+│   ├── adaptation.ts        # OneBot message/notice → CanonicalIMEvent conversion; NapCat QQ name priority (friend-list remark → raw remark → member name/card → nickname); OneBotIngressMeta capture, applies entry-time timestamps
 │   ├── adaptation.test.ts   # OneBot user display-name priority tests
 │   ├── send.ts              # send_message text/attachment rendering into OneBot array segments
 │   ├── send.test.ts         # OneBot send rendering tests, including optional silicon code-block image conversion

@@ -80,11 +80,11 @@ export const adaptUser = (user_id: number, nickname: string, card?: string, rema
 
 const nonBlank = (value: string | undefined): string | undefined => value?.trim() ? value : undefined;
 
-export const adaptOneBotSender = (event: OneBotMessageEvent): CanonicalUser => adaptUser(
+export const adaptOneBotSender = (event: OneBotMessageEvent, friendRemark?: string): CanonicalUser => adaptUser(
   event.sender.user_id,
   nonBlank(event.raw?.sendNickName) ?? event.sender.nickname,
   nonBlank(event.raw?.sendMemberName) ?? event.sender.card,
-  event.raw?.sendRemarkName,
+  nonBlank(friendRemark) ?? event.raw?.sendRemarkName,
 );
 
 const extractFileName = (file: string): string | undefined => {
@@ -216,6 +216,7 @@ const adaptSegment = async (
 // OneBotApiClient 传入用于某些消息（如 mention 的副作用）
 export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent, meta: OneBotIngressMeta): Promise<CanonicalMessageEvent> => {
   const chatId = oneBotMessageChatId(event);
+  const friendRemark = await api.getFriendRemark(String(event.sender.user_id)).catch(() => undefined);
 
   const content: ContentNode[] = [];
   const attachments: CanonicalAttachment[] = [];
@@ -234,7 +235,7 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     type: 'message',
     chatId,
     messageId: String(event.message_id),
-    sender: adaptOneBotSender(event),
+    sender: adaptOneBotSender(event, friendRemark),
     receivedAtMs: meta.receivedAtMs,
     timestampSec: event.time,
     utcOffsetMin: meta.utcOffsetMin,

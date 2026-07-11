@@ -35,6 +35,7 @@ const DOWNLOAD_TIMEOUT_MS = 60_000;
 // memory for long-running processes. 10 min balances RPC savings against staleness.
 const GROUP_MEMBER_TTL_MS = 10 * 60_000;
 const GROUP_MEMBER_CACHE_MAX = 5_000;
+const FRIEND_REMARK_TTL_MS = 10 * 60_000;
 
 export interface OneBotApiClient {
   sendMessage(chatId: string, segments: OneBotMessageSegment[], replyTo?: string): Promise<{ messageId: string }>;
@@ -44,6 +45,8 @@ export interface OneBotApiClient {
   getGroupMemberInfo(groupId: string, userId: string): Promise<CanonicalUser>;
   /** Get the current group or private-chat display name. */
   getChatName(chatId: string): Promise<string>;
+  /** Get the bot account's friend remark for a user, if present. */
+  getFriendRemark(userId: string): Promise<string | undefined>;
   /** Get 20 messages from the specified chat */
   fetchMessages(chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]>;
 }
@@ -117,6 +120,40 @@ export const createGroupMemberCache = (
   };
 };
 
+export const createFriendRemarkCache = (
+  fetcher: () => Promise<Array<{ user_id: number; remark?: string }>>,
+  options: { ttlMs?: number; now?: () => number } = {},
+) => {
+  const ttlMs = options.ttlMs ?? FRIEND_REMARK_TTL_MS;
+  const now = options.now ?? Date.now;
+  let remarks = new Map<string, string>();
+  let expiresAtMs = 0;
+  let inflight: Promise<void> | undefined;
+
+  const refresh = async () => {
+    const friends = await fetcher();
+    remarks = new Map(friends.flatMap(friend => {
+      const remark = friend.remark?.trim();
+      return remark ? [[String(friend.user_id), remark] as const] : [];
+    }));
+    expiresAtMs = now() + ttlMs;
+  };
+
+  return {
+    get: async (userId: string): Promise<string | undefined> => {
+      if (now() >= expiresAtMs) {
+        inflight ??= refresh();
+        try {
+          await inflight;
+        } finally {
+          inflight = undefined;
+        }
+      }
+      return remarks.get(userId);
+    },
+  };
+};
+
 const createApiClient = (
   ws: WebSocket,
 ): OneBotApiClient => {
@@ -177,6 +214,8 @@ const createApiClient = (
     });
     return adaptUser(parseInt(userId, 10), result.nickname, result.card, result.remark);
   });
+  const friendRemarkCache = createFriendRemarkCache(() =>
+    call<Array<{ user_id: number; remark?: string }>>('get_friend_list', {}));
 
   return {
     sendMessage: async (chatId, segments, replyTo) => {
@@ -245,6 +284,9 @@ const createApiClient = (
       });
       return result.group_name.trim() ? result.group_name : chatId;
     },
+
+    getFriendRemark: (userId: string): Promise<string | undefined> =>
+      friendRemarkCache.get(userId),
 
     fetchMessages: async (chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]> => {
       const isGroup = !chatId.startsWith('private:');

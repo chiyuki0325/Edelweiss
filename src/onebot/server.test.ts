@@ -2,7 +2,7 @@ import { useLogger } from '@guiiai/logg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { createGroupMemberCache, createOneBotServer } from './server';
+import { createFriendRemarkCache, createGroupMemberCache, createOneBotServer } from './server';
 import type { OneBotConfig } from './types';
 import type { CanonicalUser } from '../adaption-types';
 import { redactSecrets, registerHttpSecret } from '../http';
@@ -82,6 +82,43 @@ describe('createGroupMemberCache', () => {
 
     await expect(cache.get('g1', 'u1')).rejects.toThrow('rpc failed');
     expect(await cache.get('g1', 'u1')).toEqual(makeUser('u1', 'Alice'));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createFriendRemarkCache', () => {
+  it('loads friend remarks once and serves users from the cache', async () => {
+    const fetcher = vi.fn(async () => [
+      { user_id: 1, remark: '好友备注' },
+      { user_id: 2, remark: '' },
+    ]);
+    const cache = createFriendRemarkCache(fetcher);
+
+    expect(await cache.get('1')).toBe('好友备注');
+    expect(await cache.get('2')).toBeUndefined();
+    expect(await cache.get('3')).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('deduplicates concurrent refreshes and reloads after expiry', async () => {
+    let nowMs = 1000;
+    let resolveFetch: (friends: Array<{ user_id: number; remark?: string }>) => void = () => {};
+    const fetcher = vi.fn(() => new Promise<Array<{ user_id: number; remark?: string }>>(resolve => {
+      resolveFetch = resolve;
+    }));
+    const cache = createFriendRemarkCache(fetcher, { ttlMs: 100, now: () => nowMs });
+
+    const first = cache.get('1');
+    const second = cache.get('2');
+    resolveFetch([{ user_id: 1, remark: '备注一' }]);
+    expect(await first).toBe('备注一');
+    expect(await second).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledOnce();
+
+    nowMs += 101;
+    const refreshed = cache.get('1');
+    resolveFetch([{ user_id: 1, remark: '备注二' }]);
+    expect(await refreshed).toBe('备注二');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

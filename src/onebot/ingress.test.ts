@@ -105,7 +105,9 @@ const meta = () => ({ receivedAtMs: Date.now(), utcOffsetMin: 0 });
 
 // Minimal API stub: text-only messages never touch the network, but
 // transformMessage still calls getApi() and throws if it returns null.
-const stubApi = () => ({} as NonNullable<ReturnType<OneBotIngressDeps['getApi']>>);
+const stubApi = () => ({
+  getFriendRemark: () => Promise.resolve(undefined),
+} as unknown as NonNullable<ReturnType<OneBotIngressDeps['getApi']>>);
 
 describe('createOneBotIngress', () => {
   it('commits notice events through the queue and applies ingress meta', async () => {
