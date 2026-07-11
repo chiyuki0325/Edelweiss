@@ -48,6 +48,9 @@ export default function registerDriver({ get, register }: Registrar): void {
           ? onebot.handle?.getAdapter(chatId)
           : undefined;
       },
+      getChatName: chatId => resolveChatConfig(config, chatId).platform === 'onebot'
+        ? onebot.handle?.getChatName(chatId) ?? Promise.resolve(chatId)
+        : telegram?.manager.getChatName(chatId) ?? Promise.resolve(chatId),
       onDebounceStateChange: telegram
         ? (chatId, isDebouncing) => telegram.driverHooks.onDebounceStateChange(chatId, isDebouncing)
         : undefined,

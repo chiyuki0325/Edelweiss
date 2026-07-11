@@ -15,6 +15,7 @@ const stubApi = (messageId: string): OneBotApiClient => ({
   sendMessage: vi.fn(async () => ({ messageId })),
   downloadFile: vi.fn(async () => Buffer.alloc(0)),
   getGroupMemberInfo: vi.fn(async () => ({ id: '0', displayName: 'x', isBot: false })),
+  getChatName: vi.fn(async () => 'test chat'),
   fetchMessages: vi.fn(async () => []),
 });
 

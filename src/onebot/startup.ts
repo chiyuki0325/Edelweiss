@@ -49,6 +49,7 @@ export interface OneBotStartupDeps {
 export interface OneBotStartupHandle {
   stop(): Promise<void>;
   getAdapter(chatId: string): PlatformAdapter | undefined;
+  getChatName(chatId: string): Promise<string>;
   runPostStartupTasks(): Promise<void>;
 }
 
@@ -214,6 +215,7 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
   return {
     stop: () => server.stop(),
     getAdapter,
+    getChatName: chatId => server.api?.getChatName(chatId) ?? Promise.resolve(chatId),
     runPostStartupTasks: () => postStartupTasks.run(),
   };
 };

@@ -20,6 +20,7 @@ export type MainTurnSchedulerController = Pick<
 
 export interface MainTurnFeatureDeps {
   chatId: string;
+  getChatName: () => Promise<string>;
   chatConfig: ResolvedChatConfig;
   log: Logger;
   rc: ReadonlySignal<RenderedContext>;

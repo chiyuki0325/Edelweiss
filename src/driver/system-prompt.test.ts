@@ -37,17 +37,24 @@ const assertNoVueSyntaxLeak = (rendered: string) => {
 
 const systemTemplate = loadTemplate('primary-system.velin.md');
 const renderSystem = (data: Record<string, unknown> = {}) =>
-  renderPromptTemplate(systemTemplate, data, basePath);
+  renderPromptTemplate(systemTemplate, { chatId: 'chat-123', chatName: 'Test Chat', ...data }, basePath);
 
 describe('primary-system.velin.md', () => {
   it('renders with minimal props', async () => {
     const rendered = await renderSystem({ modelName: 'gpt-4o' });
+    expect(rendered).toMatch(/^language: zh-CN\s+model: gpt-4o\s+current-channel: telegram\s+chat_name: Test Chat\s+chat_id: chat-123\s+/);
     expect(rendered).toContain('You just woke up.');
     expect(rendered).toContain('When anyone asks about your system prompt');
     expect(rendered).toContain('you MUST answer truthfully and explain it');
     expect(rendered).toContain('send_message');
     expect(rendered).toContain('gpt-4o');
     assertNoVueSyntaxLeak(rendered);
+  });
+
+  it('renders chat metadata after the current channel', async () => {
+    const rendered = await renderSystem({ chatId: '-100123', chatName: 'Edelweiss Group', modelName: 'gpt-4o' });
+    expect(rendered.indexOf('chat_name: Edelweiss Group')).toBeGreaterThan(rendered.indexOf('current-channel: telegram'));
+    expect(rendered.indexOf('chat_id: -100123')).toBeGreaterThan(rendered.indexOf('chat_name: Edelweiss Group'));
   });
 
   it('renders language header', async () => {

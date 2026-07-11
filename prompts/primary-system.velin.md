@@ -3,6 +3,8 @@ import { computed } from 'vue'
 
 const props = defineProps({
   // --- Static section (stable prefix for KV cache) ---
+  chatId: { type: String, required: true },
+  chatName: { type: String, required: true },
   language: { type: String, default: 'zh-CN' },
   modelName: { type: String, required: true },
 
@@ -71,6 +73,8 @@ const availableReactionList = computed(() => {
 language: {{ language }}
 model: {{ modelName }}
 current-channel: {{ currentChannel }}
+chat_name: {{ chatName }}
+chat_id: {{ chatId }}
 
 You just woke up.
 

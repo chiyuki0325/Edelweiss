@@ -192,6 +192,8 @@ describe('createDriver debounce scheduling', () => {
       typingExemptUsers: [],
     }, (chatId, isDebouncing) => {
       debounceStates.push({ chatId, isDebouncing });
+    }, {
+      getChatName: vi.fn(async () => 'Test Chat'),
     });
 
     try {
@@ -199,6 +201,10 @@ describe('createDriver debounce scheduling', () => {
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(0);
       expect(mocks.callModelStep).toHaveBeenCalledTimes(1);
+      expect(mocks.renderSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'chat',
+        chatName: 'Test Chat',
+      }));
 
       driver.handleEvent('chat', rc(100, 200));
       const firstCall = mocks.callModelStep.mock.calls[0]![1] as { signal: AbortSignal };

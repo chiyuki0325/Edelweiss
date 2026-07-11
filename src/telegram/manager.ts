@@ -88,6 +88,7 @@ export interface TelegramManager {
   refreshAllowedReactionEmojis(chatId: string, signal?: AbortSignal): Promise<string[]>;
   getAllowedReactionEmojis(chatId: string): string[];
   sendReaction(chatId: string, messageId: number, emoji: string): Promise<void>;
+  getChatName(chatId: string): Promise<string>;
   botUserId: string;
   bot: BotClient;
   userbot?: UserbotClient;
@@ -416,6 +417,7 @@ export const createTelegramManager = (
     refreshAllowedReactionEmojis: (chatId, signal) => userbot?.refreshAllowedReactionEmojis(chatId, signal) ?? Promise.resolve([]),
     getAllowedReactionEmojis: chatId => userbot?.getAllowedReactionEmojis(chatId) ?? [],
     sendReaction: (chatId, messageId, emoji) => bot.sendReaction(chatId, messageId, emoji),
+    getChatName: chatId => bot.getChatName(chatId),
     botUserId: bot.botUserId(),
     bot,
     userbot,

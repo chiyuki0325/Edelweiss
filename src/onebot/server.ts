@@ -41,6 +41,8 @@ export interface OneBotApiClient {
   downloadFile(file: string, chatId: string): Promise<Buffer>;
   /** Get group member info, used for resolving mention info in group messages. */
   getGroupMemberInfo(groupId: string, userId: string): Promise<CanonicalUser>;
+  /** Get the current group or private-chat display name. */
+  getChatName(chatId: string): Promise<string>;
   /** Get 20 messages from the specified chat */
   fetchMessages(chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]>;
 }
@@ -230,6 +232,18 @@ const createApiClient = (
 
     getGroupMemberInfo: (groupId: string, userId: string): Promise<CanonicalUser> =>
       groupMemberCache.get(groupId, userId),
+
+    getChatName: async (chatId: string): Promise<string> => {
+      if (chatId.startsWith('private:')) {
+        const userId = parseInt(chatId.slice(8), 10);
+        const result = await call<{ nickname: string; remark?: string }>('get_stranger_info', { user_id: userId });
+        return [result.remark, result.nickname, chatId].find(name => name?.trim()) ?? chatId;
+      }
+      const result = await call<{ group_name: string }>('get_group_info', {
+        group_id: parseInt(chatId, 10),
+      });
+      return result.group_name.trim() ? result.group_name : chatId;
+    },
 
     fetchMessages: async (chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]> => {
       const isGroup = !chatId.startsWith('private:');

@@ -17,6 +17,7 @@ const createLog = (): MainTurnFeatureDeps['log'] => {
 
 const createDeps = (): MainTurnFeatureDeps => ({
   chatId: 'chat',
+  getChatName: async () => 'Test Chat',
   chatConfig: {
     platform: 'telegram',
     primaryModel: {

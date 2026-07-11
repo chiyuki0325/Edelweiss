@@ -63,6 +63,7 @@ export interface BotClient {
   sendVideoNote(chatId: string | number, videoNote: Buffer, options?: MediaSendOptions): Promise<SentMessage>;
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
   sendReaction(chatId: string | number, messageId: number, emoji: string): Promise<void>;
+  getChatName(chatId: string | number): Promise<string>;
   downloadFile(fileId: string): Promise<Buffer>;
   raw(): Bot;
   botUserId(): string;
@@ -303,6 +304,13 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     await bot.api.setMessageReaction(chatId, messageId, reaction);
   };
 
+  const getChatName = async (chatId: string | number): Promise<string> => {
+    const chat = await bot.api.getChat(chatId);
+    if ('title' in chat && chat.title) return chat.title;
+    if ('first_name' in chat) return [chat.first_name, chat.last_name].filter(Boolean).join(' ');
+    return String(chatId);
+  };
+
   return {
     start,
     stop,
@@ -319,6 +327,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     sendVideoNote,
     sendMediaGroup,
     sendReaction,
+    getChatName,
     downloadFile,
     raw: () => bot,
     botUserId: () => userId,

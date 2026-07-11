@@ -66,6 +66,7 @@ export const createDriver = (config: DriverConfig, deps: {
     readTaskOutput: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>;
   };
   getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
+  getChatName?: (chatId: string) => Promise<string>;
   onDebounceStateChange?: (chatId: string, isDebouncing: boolean) => void;
   logger: Logger;
 }) => {
@@ -110,6 +111,15 @@ export const createDriver = (config: DriverConfig, deps: {
 
     // Resolve per-chat config once per scope
     const chatConfig = config.resolveChatConfig(chatId);
+    let chatName: Promise<string> | undefined;
+    const getChatName = () => {
+      chatName ??= (deps.getChatName?.(chatId) ?? Promise.resolve(chatId))
+        .catch(err => {
+          log.withError(err).withFields({ chatId }).warn('Failed to resolve chat name; using chat id');
+          return chatId;
+        });
+      return chatName;
+    };
 
     const rc = signal<RenderedContext>([]);
     const mailbox = createAgentMailbox();
@@ -291,6 +301,7 @@ export const createDriver = (config: DriverConfig, deps: {
           schedulerController.attachAbortController(stepAbortController);
           const features = createMainTurnFeatures({
             chatId,
+            getChatName,
             chatConfig,
             log,
             rc,
