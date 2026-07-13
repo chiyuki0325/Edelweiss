@@ -58,6 +58,9 @@ type IngressEvent =
   | { kind: 'delete'; chatId: string; del: TelegramMessageDelete }
   | { kind: 'reaction'; chatId: string; reaction: TelegramReactionUpdate };
 
+export const shouldAutoDescribeImageAttachment = (attachment: Attachment): boolean =>
+  attachment.type !== 'photo' || attachment.hasSpoiler !== true;
+
 const captureIngressMeta = () => ({
   receivedAtMs: Date.now(),
   utcOffsetMin: -new Date().getTimezoneOffset(),
@@ -179,7 +182,7 @@ export const createTelegramManager = (
       // Keep original buffers for high-res LLM input later.
       const originalBuffers = new Map<Attachment, Buffer>();
       await Promise.all(attachments.map(async att => {
-        if (att.thumbnailWebp || !canGenerateThumbnail(att)) return;
+        if (!shouldAutoDescribeImageAttachment(att) || att.thumbnailWebp || !canGenerateThumbnail(att)) return;
         try {
           const buffer = await downloadAttachmentMedia(chatId, messageId, att);
           if (buffer) {
@@ -194,7 +197,7 @@ export const createTelegramManager = (
       // Phase 2: Call image-to-text resolver for each attachment with a thumbnail.
       if (imageToText && (!imageToTextChatIds || imageToTextChatIds.has(chatId))) {
         await Promise.all(attachments.map(async att => {
-          if (!att.thumbnailWebp) return;
+          if (!shouldAutoDescribeImageAttachment(att) || !att.thumbnailWebp) return;
           const thumbnailBuffer = Buffer.from(att.thumbnailWebp, 'base64');
           const highResBuffer = originalBuffers.get(att);
           await imageToText.resolve(thumbnailBuffer, text, highResBuffer, {

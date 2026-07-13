@@ -12,6 +12,8 @@ import type {
 } from '../adaption-types';
 import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from './message';
 
+export const SPOILER_IMAGE_ALT_TEXT = 'Spoiler image hidden. Use read_image with this attachment file-id to view it when needed.';
+
 export type {
   CanonicalAttachment,
   CanonicalDeleteEvent,
@@ -38,7 +40,7 @@ const adaptUser = (user: TelegramUser): CanonicalUser => {
   };
 };
 
-const adaptAttachment = ({ type, mimeType, fileName, width, height, duration, thumbnailWebp, animationHash, stickerSetId, stickerSetName }: Attachment): CanonicalAttachment => ({
+const adaptAttachment = ({ type, mimeType, fileName, width, height, duration, thumbnailWebp, animationHash, stickerSetId, stickerSetName, hasSpoiler }: Attachment): CanonicalAttachment => ({
   type,
   ...mimeType && { mimeType },
   ...fileName && { fileName },
@@ -49,6 +51,7 @@ const adaptAttachment = ({ type, mimeType, fileName, width, height, duration, th
   ...animationHash && { animationHash },
   ...stickerSetId && { stickerSetId },
   ...stickerSetName && { stickerSetName },
+  ...type === 'photo' && hasSpoiler && { altText: SPOILER_IMAGE_ALT_TEXT },
 });
 
 const adaptAttachments = (attachments?: Attachment[]): CanonicalAttachment[] => {

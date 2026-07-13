@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage, parseContent } from './adaption';
+import { adaptDelete, adaptEdit, adaptMessage, adaptServiceEvent, contentToPlainText, isServiceMessage, parseContent, SPOILER_IMAGE_ALT_TEXT } from './adaption';
 import type { ContentNode } from '../adaption-types';
 import type { MessageEntity, TelegramMessage, TelegramMessageEdit } from './message/types';
 
@@ -341,6 +341,24 @@ describe('adaptMessage', () => {
       width: 800,
       height: 600,
       thumbnailWebp: 'base64data',
+    }]);
+  });
+
+  it('replaces spoiler photo content with a read_image hint', () => {
+    const event = adaptMessage(baseTelegramMessage({
+      attachments: [{
+        type: 'photo',
+        width: 800,
+        height: 600,
+        hasSpoiler: true,
+      }],
+    }));
+
+    expect(event.attachments).toEqual([{
+      type: 'photo',
+      width: 800,
+      height: 600,
+      altText: SPOILER_IMAGE_ALT_TEXT,
     }]);
   });
 
