@@ -19,6 +19,7 @@ const messageTypeEnum = ['status_request', 'status_reply', 'progress', 'result',
 
 export const createStartSubagentTool = (deps: ToolDeps): CahciuaTool => createTool({
   name: 'start_subagent',
+  execution: { lane: 'serial' },
   description: 'Start an isolated helper agent for a non-trivial investigation or tool-heavy task. Use this only when delegation will keep your own context cleaner than doing the work directly.',
   parameters: {
     type: 'object',
@@ -40,6 +41,7 @@ export const createStartSubagentTool = (deps: ToolDeps): CahciuaTool => createTo
 
 export const createMessageSubagentTool = (deps: ToolDeps): CahciuaTool => createTool({
   name: 'message_subagent',
+  execution: { lane: 'serial' },
   description: 'Send a short instruction or status request to an active helper agent.',
   parameters: {
     type: 'object',
@@ -73,6 +75,7 @@ export const createMessageSubagentTool = (deps: ToolDeps): CahciuaTool => create
 
 export const createMessageMainTool = (deps: ToolDeps, subagentId: AgentId): CahciuaTool => createTool({
   name: 'message_main',
+  execution: { lane: 'serial' },
   description: 'Send a short progress update or answer to the parent agent.',
   parameters: {
     type: 'object',
@@ -93,6 +96,7 @@ export const createMessageMainTool = (deps: ToolDeps, subagentId: AgentId): Cahc
 
 export const createFinalizeSubagentTool = (deps: ToolDeps, subagentId: AgentId): CahciuaTool => createTool({
   name: 'finalize_subagent',
+  execution: { lane: 'serial' },
   description: 'Finish this assigned task and return the final result to the parent agent.',
   parameters: {
     type: 'object',

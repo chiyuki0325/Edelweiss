@@ -3,6 +3,7 @@ import { createTool } from './types';
 
 export const createStaySilentTool = (): CahciuaTool => createTool({
   name: 'stay_silent',
+  execution: { lane: 'readonly' },
   description: 'Mark this evaluation as a deliberate choice to stay silent. Use only when you have considered the chat and decided not to speak. Equivalent to making no tool call when send_message is otherwise unrestricted.',
   parameters: {
     type: 'object',

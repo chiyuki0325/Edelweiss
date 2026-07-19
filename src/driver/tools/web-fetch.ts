@@ -4,6 +4,7 @@ import type { WebFetcher, WebFetchResult } from '../web-fetch/types';
 
 export const createWebFetchTool = (fetcher: WebFetcher): CahciuaTool => createTool({
   name: 'web_fetch',
+  execution: { lane: 'readonly' },
   description: 'Fetch a web page by URL and return its content as clean, readable markdown. Use this to read articles, docs, or any page the conversation references.',
   parameters: {
     type: 'object',

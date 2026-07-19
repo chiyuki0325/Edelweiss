@@ -11,6 +11,7 @@ export const createDownloadFileTool = (deps: {
   runtime: RuntimeConfig;
 }): CahciuaTool => createTool({
   name: 'download_file',
+  execution: { lane: 'writer' },
   description: 'Download a file attachment from the chat to a local path. Use the file-id attribute from attachment elements in the chat context.',
   parameters: {
     type: 'object',

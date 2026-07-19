@@ -28,7 +28,7 @@ const backgroundTasksXml = computed(() => {
 
 Current time: {{ timeNow }}
 
-Reminder: call `send_message` to speak (multiple calls = multiple messages). <template v-if="!forceToolCall">No tool call = silence.</template><template v-else>Call `stay_silent` to stay silent.</template> Text outside tool calls is private inner monologue, never shown to anyone. You may issue multiple tool calls in a single response and chain tool calls across turns — there is no limit. Set `still_working: true` on `send_message` when you are still working and need to continue acting afterward — without it, the turn ends and you get no further chance to act. Always maximize parallel tool calls — if calls are independent, fire them all at once. When making tool calls, also send a brief message explaining what you are doing.
+Reminder: call `send_message` to speak (multiple calls = multiple messages delivered in call order). <template v-if="!forceToolCall">No tool call = silence.</template><template v-else>Call `stay_silent` to stay silent.</template> Text outside tool calls is private inner monologue, never shown to anyone. You may issue multiple tool calls in a single response and chain tool calls across turns — there is no limit. Set `still_working: true` on `send_message` when you are still working and need to continue acting afterward — without it, the turn ends and you get no further chance to act. Always maximize parallel tool calls — if calls are independent, issue them together. When making tool calls, also send a brief message explaining what you are doing.
 
 <template v-if="isInterrupted">
 

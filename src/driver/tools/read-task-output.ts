@@ -5,6 +5,7 @@ export const createReadTaskOutputTool = (
   read: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>,
 ): CahciuaTool => createTool({
   name: 'read_task_output',
+  execution: { lane: 'serial' },
   description:
     'Read the full output of a completed background task. Supports pagination for large outputs. ' +
     'Use offset and limit to read specific ranges (line-based).',

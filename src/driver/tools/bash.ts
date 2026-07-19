@@ -143,6 +143,7 @@ export const createBashTool = (runtime: RuntimeConfig, backgroundTask: {
 
   return createTool({
     name: 'bash',
+    execution: { lane: 'writer' },
     description:
     'Execute a shell command. Output (stdout+stderr combined) is truncated to 4 KB. '
     + 'For large outputs, redirect to a file and read specific ranges. '

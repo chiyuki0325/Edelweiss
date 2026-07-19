@@ -7,6 +7,7 @@ export const createEnterFocusTool = (opts: {
   getActiveTurn: () => TurnState | null;
 }): CahciuaTool => createTool({
   name: 'enter_focus',
+  execution: { lane: 'prelude' },
   description: 'Enter focus mode so your current task is not interrupted by new messages. Use this when you need to complete multi-step work (fetch a link, research a topic, run commands) without being disturbed.',
   parameters: { type: 'object', properties: {} },
   execute: () => {

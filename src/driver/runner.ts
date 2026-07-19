@@ -2,8 +2,7 @@ import type { Logger } from '@guiiai/logg';
 
 import { callLlm, type LlmCallConfig, type ToolSchema } from './call-llm';
 import { ensureDumpDir } from './constants';
-import type { CahciuaTool } from './tools';
-import { executeToolCall, extractToolCalls } from './tools';
+import { executePreparedToolCall, extractToolCalls, prepareToolCall, type CahciuaTool, type PreparedToolCall } from './tools';
 import type { Usage } from '../llm/types';
 import type {
   ConversationEntry,
@@ -218,9 +217,48 @@ export const createRunner = (config: RunnerConfig) => {
     toolCalls: ToolCallPart[],
     params: StepExecutorParams,
   ): Promise<ToolResult[]> => {
-    const toolResults: ToolResult[] = [];
-    for (const tc of toolCalls)
-      toolResults.push(await executeToolCall(tc.callId, tc.name, tc.args, params.tools, params.log));
+    const toolResults = new Array<ToolResult>(toolCalls.length);
+    const lanes: Record<'prelude' | 'readonly' | 'writer' | 'message' | 'serial', Array<{ index: number; call: PreparedToolCall }>> = {
+      prelude: [],
+      readonly: [],
+      writer: [],
+      message: [],
+      serial: [],
+    };
+
+    for (const [index, tc] of toolCalls.entries()) {
+      const prepared = prepareToolCall(tc.callId, tc.name, tc.args, params.tools, params.log);
+      if (!prepared.ok) {
+        toolResults[index] = prepared.result;
+        continue;
+      }
+      const lane = prepared.call.tool.execution?.lane ?? 'serial';
+      lanes[lane].push({ index, call: prepared.call });
+    }
+
+    const execute = async ({ index, call }: { index: number; call: PreparedToolCall }): Promise<void> => {
+      toolResults[index] = await executePreparedToolCall(call, params.log);
+    };
+    const runSerial = async (calls: Array<{ index: number; call: PreparedToolCall }>, before?: Promise<void>): Promise<void> => {
+      for (const item of calls) {
+        if (item.call.tool.execution?.waitForWriters?.(item.call.input)) await before;
+        await execute(item);
+      }
+    };
+
+    // Prelude calls (currently enter_focus) must settle before any other lane starts.
+    await runSerial(lanes.prelude);
+
+    // Writer failures are converted to ToolResults, so this barrier always releases.
+    const writersDone = runSerial(lanes.writer);
+    const readonlyDone = Promise.all(lanes.readonly.map(async item => {
+      if (item.call.tool.execution?.waitForWriters?.(item.call.input)) await writersDone;
+      await execute(item);
+    })).then(() => undefined);
+    const messagesDone = runSerial(lanes.message, writersDone);
+    const serialDone = runSerial(lanes.serial);
+
+    await Promise.all([writersDone, readonlyDone, messagesDone, serialDone]);
     return toolResults;
   };
 

@@ -6,6 +6,7 @@ export const createReactMessageTool = (
   react: (messageId: string, emoji: string) => Promise<void>,
 ): CahciuaTool => createTool({
   name: 'react_message',
+  execution: { lane: 'message' },
   description: 'Add a lightweight emoji reaction to a Telegram message. Use this as a low-disturbance alternative to send_message when a small acknowledgement, agreement, thanks, or amusement is enough.',
   parameters: {
     type: 'object',

@@ -53,41 +53,74 @@ const toolError = (id: string, message: string): IRToolResult => ({
   requiresFollowUp: true,
 });
 
-/** Execute a tool call against the tools list, returning an IR ToolResult. */
-export const executeToolCall = async (
+export interface PreparedToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  tool: CahciuaTool;
+}
+
+export type PrepareToolCallResult =
+  | { ok: true; call: PreparedToolCall }
+  | { ok: false; result: IRToolResult };
+
+/** Resolve, parse, and validate a tool call before scheduling it. */
+export const prepareToolCall = (
   id: string, name: string, args: string,
   tools: CahciuaTool[], log: Logger,
-): Promise<IRToolResult> => {
+): PrepareToolCallResult => {
   const tool = tools.find(t => t.function.name === name);
-  if (!tool) return toolError(id, `Unknown tool: ${name}`);
+  if (!tool) return { ok: false, result: toolError(id, `Unknown tool: ${name}`) };
 
-  let parsed: unknown;
+  let input: unknown;
   try {
-    parsed = JSON.parse(args);
+    input = JSON.parse(args);
   } catch {
     log.withFields({ tool: name, args }).error('Tool call has invalid JSON args');
-    return toolError(id, `Invalid JSON in tool arguments: ${args.slice(0, 200)}`);
-  }
-
-  const { valid, errors } = tool.validate(parsed);
-  if (!valid) {
-    log.withFields({ tool: name, errors }).error('Tool call args failed schema validation');
-    return toolError(id, `Arguments do not match schema: ${errors.join('; ')}`);
+    return { ok: false, result: toolError(id, `Invalid JSON in tool arguments: ${args.slice(0, 200)}`) };
   }
 
   try {
-    const rawResult = await tool.execute(parsed, { toolCallId: id });
+    const { valid, errors } = tool.validate(input);
+    if (!valid) {
+      log.withFields({ tool: name, errors }).error('Tool call args failed schema validation');
+      return { ok: false, result: toolError(id, `Arguments do not match schema: ${errors.join('; ')}`) };
+    }
+  } catch (err) {
+    log.withError(err).error(`Tool ${name} validation failed`);
+    return { ok: false, result: toolError(id, String(err)) };
+  }
+
+  return { ok: true, call: { id, name, input, tool } };
+};
+
+/** Execute an already validated tool call. Always resolves to a tool result. */
+export const executePreparedToolCall = async (
+  call: PreparedToolCall,
+  log: Logger,
+): Promise<IRToolResult> => {
+  try {
+    const rawResult = await call.tool.execute(call.input, { toolCallId: call.id });
     const { content, requiresFollowUp } = isToolResult(rawResult)
       ? rawResult
       : { content: JSON.stringify(rawResult), requiresFollowUp: true };
     return {
       kind: 'toolResult',
-      callId: id,
+      callId: call.id,
       payload: content as string | InputPart[],
       requiresFollowUp,
     };
   } catch (err) {
-    log.withError(err).error(`Tool ${name} failed`);
-    return toolError(id, String(err));
+    log.withError(err).error(`Tool ${call.name} failed`);
+    return toolError(call.id, String(err));
   }
+};
+
+/** Execute a tool call against the tools list, returning an IR ToolResult. */
+export const executeToolCall = async (
+  id: string, name: string, args: string,
+  tools: CahciuaTool[], log: Logger,
+): Promise<IRToolResult> => {
+  const prepared = prepareToolCall(id, name, args, tools, log);
+  return prepared.ok ? await executePreparedToolCall(prepared.call, log) : prepared.result;
 };

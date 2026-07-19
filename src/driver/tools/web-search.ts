@@ -5,6 +5,7 @@ const WEB_SEARCH_TIMEOUT_MS = 15_000;
 
 export const createWebSearchTool = (tavilyKey: string): CahciuaTool => createTool({
   name: 'web_search',
+  execution: { lane: 'readonly' },
   description: 'Search the web using Tavily. Returns an answer and up to 5 results.',
   parameters: {
     type: 'object',

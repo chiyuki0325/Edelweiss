@@ -40,6 +40,13 @@ export const createSendMessageTool = (
 
   return createTool({
     name: 'send_message',
+    execution: {
+      lane: 'message',
+      waitForWriters: input => {
+        const { attachments } = input as { attachments?: SendMessageAttachment[] };
+        return (attachments?.length ?? 0) > 0;
+      },
+    },
     description: 'Send a message in the current conversation, optionally with media attachments.',
     parameters: {
       type: 'object',

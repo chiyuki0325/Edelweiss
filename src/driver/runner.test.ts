@@ -10,7 +10,8 @@ vi.mock('./call-llm', () => ({
 }));
 
 import { createRunner, pruneLengthLimitFailures } from './runner';
-import type { CahciuaTool } from './tools';
+import { createTool } from './tools';
+import type { CahciuaTool, ToolExecutionPolicy } from './tools';
 import type { Usage } from '../llm/types';
 import type { ConversationEntry } from '../unified-api/types';
 
@@ -124,6 +125,198 @@ describe('runOneStep', () => {
         },
       ],
     });
+  });
+});
+
+describe('executeToolStep scheduling', () => {
+  const runner = createRunner({
+    apiBaseUrl: 'https://llm.example.test',
+    apiKey: 'test-key',
+    model: 'test-model',
+  });
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>(r => { resolve = r; });
+    return { promise, resolve };
+  };
+  const scheduledTool = (
+    name: string,
+    execution: ToolExecutionPolicy,
+    execute: CahciuaTool['execute'],
+  ): CahciuaTool => createTool({
+    name,
+    execution,
+    parameters: {
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+        attachments: { type: 'array' },
+        path: { type: 'string' },
+      },
+      required: ['label'],
+    },
+    execute,
+  });
+
+  it('settles prelude calls before starting other lanes', async () => {
+    const preludeGate = deferred();
+    const events: string[] = [];
+    const prelude = scheduledTool('focus', { lane: 'prelude' }, async () => {
+      events.push('focus:start');
+      await preludeGate.promise;
+      events.push('focus:end');
+      return { content: 'focus', requiresFollowUp: true };
+    });
+    const read = scheduledTool('read', { lane: 'readonly' }, () => {
+      events.push('read:start');
+      return { content: 'read', requiresFollowUp: true };
+    });
+
+    const pending = runner.executeToolStep([
+      TC('read', 'read-call', '{"label":"read"}'),
+      TC('focus', 'focus-call', '{"label":"focus"}'),
+    ], { chatId: 'chat', system: 'system', tools: [prelude, read], log });
+
+    await vi.waitFor(() => expect(events).toEqual(['focus:start']));
+    preludeGate.resolve();
+    const results = await pending;
+
+    expect(events).toEqual(['focus:start', 'focus:end', 'read:start']);
+    expect(results.map(result => result.callId)).toEqual(['read-call', 'focus-call']);
+  });
+
+  it('runs readonly calls concurrently while preserving result order', async () => {
+    const firstGate = deferred();
+    const secondGate = deferred();
+    const events: string[] = [];
+    const read = scheduledTool('read', { lane: 'readonly' }, async input => {
+      const { label } = input as { label: string };
+      events.push(`${label}:start`);
+      await (label === 'first' ? firstGate.promise : secondGate.promise);
+      events.push(`${label}:end`);
+      return { content: label, requiresFollowUp: true };
+    });
+
+    const pending = runner.executeToolStep([
+      TC('read', 'first-call', '{"label":"first"}'),
+      TC('read', 'second-call', '{"label":"second"}'),
+    ], { chatId: 'chat', system: 'system', tools: [read], log });
+
+    await vi.waitFor(() => expect(events).toEqual(['first:start', 'second:start']));
+    secondGate.resolve();
+    await vi.waitFor(() => expect(events).toContain('second:end'));
+    firstGate.resolve();
+    const results = await pending;
+
+    expect(results.map(result => result.callId)).toEqual(['first-call', 'second-call']);
+  });
+
+  it('serializes workspace writers', async () => {
+    const firstGate = deferred();
+    const events: string[] = [];
+    const writer = scheduledTool('writer', { lane: 'writer' }, async input => {
+      const { label } = input as { label: string };
+      events.push(`${label}:start`);
+      if (label === 'first') await firstGate.promise;
+      events.push(`${label}:end`);
+      return { content: label, requiresFollowUp: true };
+    });
+
+    const pending = runner.executeToolStep([
+      TC('writer', 'first-call', '{"label":"first"}'),
+      TC('writer', 'second-call', '{"label":"second"}'),
+    ], { chatId: 'chat', system: 'system', tools: [writer], log });
+
+    await vi.waitFor(() => expect(events).toEqual(['first:start']));
+    firstGate.resolve();
+    await pending;
+
+    expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+  });
+
+  it('runs writers and messages in FIFO lanes and blocks attachments on writers', async () => {
+    const writerGate = deferred();
+    const firstMessageGate = deferred();
+    const attachmentGate = deferred();
+    const events: string[] = [];
+    const writer = scheduledTool('writer', { lane: 'writer' }, async () => {
+      events.push('writer:start');
+      await writerGate.promise;
+      events.push('writer:end');
+      return { content: 'writer', requiresFollowUp: true };
+    });
+    const read = scheduledTool('read', { lane: 'readonly' }, () => {
+      events.push('read:start');
+      return { content: 'read', requiresFollowUp: true };
+    });
+    const message = scheduledTool('message', {
+      lane: 'message',
+      waitForWriters: input => Array.isArray((input as { attachments?: unknown[] }).attachments),
+    }, async input => {
+      const { label } = input as { label: string };
+      events.push(`${label}:start`);
+      if (label === 'plain-before') await firstMessageGate.promise;
+      if (label === 'attachment') await attachmentGate.promise;
+      events.push(`${label}:end`);
+      return { content: label, requiresFollowUp: false };
+    });
+
+    const pending = runner.executeToolStep([
+      TC('writer', 'writer-call', '{"label":"writer"}'),
+      TC('message', 'plain-before-call', '{"label":"plain-before"}'),
+      TC('read', 'read-call', '{"label":"read"}'),
+      TC('message', 'attachment-call', '{"label":"attachment","attachments":[]}'),
+      TC('message', 'plain-after-call', '{"label":"plain-after"}'),
+    ], { chatId: 'chat', system: 'system', tools: [writer, read, message], log });
+
+    await vi.waitFor(() => {
+      expect(events).toContain('writer:start');
+      expect(events).toContain('read:start');
+      expect(events).toContain('plain-before:start');
+    });
+    expect(events).not.toContain('attachment:start');
+    firstMessageGate.resolve();
+    await vi.waitFor(() => expect(events).toContain('plain-before:end'));
+    expect(events).not.toContain('attachment:start');
+    writerGate.resolve();
+    await vi.waitFor(() => expect(events).toContain('attachment:start'));
+    expect(events).not.toContain('plain-after:start');
+    attachmentGate.resolve();
+    const results = await pending;
+
+    expect(events.indexOf('writer:end')).toBeLessThan(events.indexOf('attachment:start'));
+    expect(events.indexOf('attachment:end')).toBeLessThan(events.indexOf('plain-after:start'));
+    expect(results.map(result => result.callId)).toEqual([
+      'writer-call',
+      'plain-before-call',
+      'read-call',
+      'attachment-call',
+      'plain-after-call',
+    ]);
+  });
+
+  it('releases the writer barrier after a writer failure', async () => {
+    const events: string[] = [];
+    const writer = scheduledTool('writer', { lane: 'writer' }, () => {
+      events.push('writer:start');
+      throw new Error('write failed');
+    });
+    const localRead = scheduledTool('local-read', {
+      lane: 'readonly',
+      waitForWriters: input => Boolean((input as { path?: string }).path),
+    }, () => {
+      events.push('read:start');
+      return { content: 'read', requiresFollowUp: true };
+    });
+
+    const results = await runner.executeToolStep([
+      TC('writer', 'writer-call', '{"label":"writer"}'),
+      TC('local-read', 'read-call', '{"label":"read","path":"image.png"}'),
+    ], { chatId: 'chat', system: 'system', tools: [writer, localRead], log });
+
+    expect(events).toEqual(['writer:start', 'read:start']);
+    expect(results[0]?.payload).toContain('write failed');
+    expect(results[1]?.payload).toBe('read');
   });
 });
 

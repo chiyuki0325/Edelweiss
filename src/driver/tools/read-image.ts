@@ -18,6 +18,10 @@ export const createReadImageTool = (deps: {
   resolveImageToText?: (buffer: Buffer, detail: 'low' | 'high') => Promise<string>;
 }): CahciuaTool => createTool({
   name: 'read_image',
+  execution: {
+    lane: 'readonly',
+    waitForWriters: input => Boolean((input as { path?: string }).path),
+  },
   description: 'Read and analyze an image from a chat attachment or the filesystem.',
   parameters: {
     type: 'object',

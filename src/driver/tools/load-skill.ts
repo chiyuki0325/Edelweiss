@@ -30,6 +30,7 @@ export const createLoadSkillTool = (
   isSkillLoaded: (id: string) => boolean = () => false,
 ): CahciuaTool => createTool({
   name: 'load_skill',
+  execution: { lane: 'serial' },
   description: 'Load a predefined skill module into the current session. If the available skills list contains a skill that clearly matches the user request or next action, load it before giving a substantive answer or using other task-specific tools.',
   parameters: {
     type: 'object',

@@ -5,6 +5,7 @@ export const createKillTaskTool = (
   kill: (taskId: number) => { ok: boolean; error?: string },
 ): CahciuaTool => createTool({
   name: 'kill_task',
+  execution: { lane: 'serial' },
   description: 'Kill a running background task by its ID.',
   parameters: {
     type: 'object',

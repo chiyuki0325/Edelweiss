@@ -5,6 +5,7 @@ const SLEEP_MAX_SECONDS = 300;
 
 export const createSleepTool = (): CahciuaTool => createTool({
   name: 'sleep',
+  execution: { lane: 'readonly' },
   description: 'Pause execution for a specified number of seconds before continuing. Use this to wait for an external process to finish, avoid busy-polling, or introduce a deliberate delay before the next action.',
   parameters: {
     type: 'object',

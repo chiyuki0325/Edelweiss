@@ -1,5 +1,5 @@
 export { createTool, isToolResult } from './types';
-export type { CahciuaTool, CahciuaToolExecuteOptions, SendMessageAttachment, SendMessageTurnFlags, ToolResult } from './types';
+export type { CahciuaTool, CahciuaToolExecuteOptions, SendMessageAttachment, SendMessageTurnFlags, ToolExecutionLane, ToolExecutionPolicy, ToolResult } from './types';
 
 export { createAttachmentDownloader } from './attachment-downloader';
 export { createSendMessageTool } from './send-message';
@@ -17,4 +17,5 @@ export { createReadImageTool } from './read-image';
 export { createSleepTool } from './sleep';
 export { createEnterFocusTool } from './focus-mode';
 
-export { executeToolCall, extractLoadedSkillNames, extractToolCalls } from './execution';
+export { executePreparedToolCall, executeToolCall, extractLoadedSkillNames, extractToolCalls, prepareToolCall } from './execution';
+export type { PreparedToolCall, PrepareToolCallResult } from './execution';
