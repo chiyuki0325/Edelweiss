@@ -18,6 +18,7 @@ export interface ICMessage {
   editedAtSec?: number;
   editUtcOffsetMin?: number;
   deleted?: boolean;
+  isMyself?: boolean;
   isSelfSent?: boolean;
 }
 
@@ -32,6 +33,7 @@ export interface ICBlockedMessage {
 export interface ICUserRenamedEvent {
   type: 'system_event';
   kind: 'user_renamed';
+  isMyself?: boolean;
   receivedAtMs: number;
   timestampSec: number;
   utcOffsetMin: number;

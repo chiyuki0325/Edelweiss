@@ -51,11 +51,15 @@ const truncate = (text: string, max: number): string => {
 
 const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent) => {
   // Dedup: skip if a message with the same ID already exists (bypass + userbot race).
-  // Merge isSelfSent from the late-arriving synthetic event into the existing node.
+  // A platform echo and the synthetic send event may arrive in either order.
+  // Merge identity flags so the existing node converges without duplicating it.
   const existingIdx = findAnyMessageIndex(draft.nodes, event.messageId);
   if (existingIdx !== -1) {
-    if (event.isSelfSent && draft.nodes[existingIdx]!.type === 'message')
-      (draft.nodes[existingIdx] as ICMessage).isSelfSent = true;
+    if (draft.nodes[existingIdx]!.type === 'message') {
+      const existingMessage = draft.nodes[existingIdx] as ICMessage;
+      if (event.isMyself) existingMessage.isMyself = true;
+      if (event.isSelfSent) existingMessage.isSelfSent = true;
+    }
     return;
   }
 
@@ -73,6 +77,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
         userId: event.sender.id,
         oldUser: existing.user,
         newUser: event.sender,
+        ...(event.isMyself && { isMyself: true }),
       };
       draft.nodes.push(systemEvent);
     }
@@ -104,6 +109,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
     }
   }
   if (event.forwardInfo) message.forwardInfo = event.forwardInfo;
+  if (event.isMyself) message.isMyself = true;
   if (event.isSelfSent) message.isSelfSent = true;
   draft.nodes.push(message);
 

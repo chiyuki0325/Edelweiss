@@ -22,8 +22,8 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 |-------|--------|-------|
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, blocking image-to-text (spoiler photos require manual `read_image`), blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown and latest-connection ownership, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, reconnect-safe send/download PlatformAdapter, fail-closed channel routing (never falls back to Telegram), entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
-| Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering |
-| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 30 migrations |
+| Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering, platform-resolved `isMyself` identity |
+| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 31 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, blocked-message placeholders as deleted messages, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
 | Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, manual tool execution, Telegram-only `react_message`, per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
@@ -59,7 +59,7 @@ src/
 ├── http.ts                 # HTTP client with credential redaction (registerHttpSecret)
 ├── contacts.ts             # Contact list loader (contacts.json → Map<id, displayName>)
 ├── runtime-event.ts        # RuntimeEvent types for Driver-generated synthetic events (e.g. background task completion)
-├── adaption-types.ts       # CanonicalIMEvent, CanonicalUser, ContentNode, etc.
+├── adaption-types.ts       # CanonicalIMEvent, CanonicalUser, ContentNode, platform-resolved self identity, etc.
 ├── config/
 │   ├── config.ts           # Unified YAML config loader (Valibot schema)
 │   └── logger.ts           # @guiiai/logg setup (pretty in dev, JSON in prod)
@@ -527,9 +527,13 @@ Before any actual provider request is sent, the Driver applies a final request-l
 
 `read_image` supports attachment file-id and local filesystem path modes.
 
-### isSelfSent Pipeline
+### Self Identity and isSelfSent Pipeline
+
+Platform adapters own account-identity resolution. Telegram Adaptation compares the message sender with the configured Telegram bot user id; OneBot Adaptation compares the raw event sender with `self_id`. The result is stored as `CanonicalMessageEvent.isMyself`, persisted in `events.is_myself`, and passed unchanged through `ICMessage.isMyself` to `RenderedContextSegment.isMyself`. Projection, Rendering, and Driver must not infer platform account identity from a global bot id. Driver uses this platform-resolved flag to exclude the bot account's messages from reply and interruption scheduling.
 
 Bot's own sent messages are marked `isSelfSent: true` at creation time by the synthetic event bypass in `src/telegram/driver-hooks.ts`. This flag flows through the full pipeline: `CanonicalMessageEvent.isSelfSent` → `events.is_self_sent` (DB) → `ICMessage.isSelfSent` → `RenderedContextSegment.isSelfSent`. The flag is set at creation, not derived from sender ID (bot may change accounts).
+
+`isMyself` and `isSelfSent` have different meanings: `isMyself` means the sender is the current platform account, while `isSelfSent` means this process produced the message through `send_message`. A message sent by another program controlling the same account is `isMyself` but not `isSelfSent`; only `isSelfSent` messages are removed as duplicate TR representations during context composition.
 
 OneBot mirrors this: `createOneBotPlatformAdapter` (`src/onebot/index.ts`) takes an optional `selfSentSink` and, after a successful `api.sendMessage`, builds a synthetic self-sent event via `buildOneBotSelfSentEvent` (`src/onebot/adaptation.ts`) and runs the same ordering — persist event → hydrate alt text → push to Pipeline — **without** notifying the Driver (the bot must not wake on its own message). The OneBot send API returns only a message id (no server timestamp), so `timestampSec` is derived from `receivedAtMs` like delete events (see §Dual Timestamps); the synthetic sender is the OneBot `selfId` captured at lifecycle connect. If `selfId` is unavailable the injection is skipped. The sink is wired in `src/onebot/startup.ts` from the same `persistEvent` / `hydrateAltTextFromCache` / `pushPipelineEvent` deps used by ingress.
 

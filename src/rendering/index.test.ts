@@ -70,6 +70,16 @@ describe('render', () => {
     it('returns empty for empty IC', () => {
       expect(render(ic([]))).toEqual([]);
     });
+
+    it('uses the platform-resolved IC flag for self identity', () => {
+      const platformResolved = render(ic([message({ isMyself: true })]), { botUserId: 'different-platform-id' });
+      const matchingLegacyId = render(ic([message()]), { botUserId: alice.id });
+
+      expect(platformResolved[0]?.isMyself).toBe(true);
+      expect(xml(platformResolved)).toContain('myself="true"');
+      expect(matchingLegacyId[0]?.isMyself).toBeUndefined();
+      expect(xml(matchingLegacyId)).not.toContain('myself="true"');
+    });
   });
 
   describe('timestamp formatting', () => {

@@ -218,6 +218,13 @@
       "when": 1782573091664,
       "tag": "0030_rename_dismiss_message_to_stay_silent",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1784431168487,
+      "tag": "0031_events_is_myself",
+      "breakpoints": true
     }
   ]
 }

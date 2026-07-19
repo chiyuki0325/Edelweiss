@@ -61,6 +61,7 @@ export interface CanonicalMessageEvent {
   replyQuoteText?: string;
   forwardInfo?: CanonicalForwardInfo;
   attachments: CanonicalAttachment[];
+  isMyself?: boolean;
   isSelfSent?: boolean;
 }
 

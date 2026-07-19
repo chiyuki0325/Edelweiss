@@ -145,7 +145,7 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
         length: msg.text.length,
       }).log('Message received');
 
-      const event = adaptMessage(msg);
+      const event = adaptMessage(msg, deps.botUserId);
       if (deps.chatPolicy.isBlocked(event.chatId, event.sender?.id)) {
         const blockedEvent = deps.chatPolicy.toBlockedMessageEvent(event);
         deps.logger.withFields({ chatId: event.chatId, messageId: event.messageId }).debug('Redacted message from blocked user');

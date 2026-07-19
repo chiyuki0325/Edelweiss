@@ -78,7 +78,10 @@ export const events = sqliteTable('events', {
   replyToMessageId: text('reply_to_message_id'),
   forwardInfo: text('forward_info', { mode: 'json' }).$type<CanonicalForwardInfo>(),
 
-  // Bot's own sent messages — marked at creation time, not derived from sender ID
+  // Platform account identity, resolved by the platform adaptation layer
+  isMyself: integer('is_myself', { mode: 'boolean' }),
+
+  // Messages sent by this bot instance's send_message tool
   isSelfSent: integer('is_self_sent', { mode: 'boolean' }),
 
   // Service event action — JSON discriminated union

@@ -67,6 +67,7 @@ export const buildOneBotSelfSentEvent = (params: OneBotSelfSentParams): Canonica
     utcOffsetMin,
     content,
     attachments: [],
+    isMyself: true,
     isSelfSent: true,
     ...(params.replyToMessageId && { replyToMessageId: params.replyToMessageId }),
   };
@@ -231,7 +232,7 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     if (node) content.push(node);
   }
 
-  return {
+  const result: CanonicalMessageEvent = {
     type: 'message',
     chatId,
     messageId: String(event.message_id),
@@ -243,6 +244,8 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
     attachments,
     ...(replyToMessageId && { replyToMessageId }),
   };
+  if (event.sender.user_id === event.self_id) result.isMyself = true;
+  return result;
 };
 
 export const adaptOneBotNotice = (event: OneBotNoticeEvent, meta: OneBotIngressMeta): CanonicalIMEvent | null => {

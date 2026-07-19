@@ -191,7 +191,7 @@ export const contentToPlainText = (nodes: ContentNode[]): string =>
 
 export const captureUtcOffset = (): number => -new Date().getTimezoneOffset();
 
-export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
+export const adaptMessage = (msg: TelegramMessage, botUserId?: string): CanonicalMessageEvent => {
   const receivedAtMs = msg.receivedAtMs ?? Date.now();
   const utcOffsetMin = msg.utcOffsetMin ?? captureUtcOffset();
   const event: CanonicalMessageEvent = {
@@ -205,6 +205,7 @@ export const adaptMessage = (msg: TelegramMessage): CanonicalMessageEvent => {
     attachments: adaptAttachments(msg.attachments),
   };
   if (msg.sender) event.sender = adaptUser(msg.sender);
+  if (botUserId != null && msg.sender?.id === botUserId) event.isMyself = true;
   if (msg.replyToMessageId != null) event.replyToMessageId = String(msg.replyToMessageId);
   if (msg.replyQuoteText != null) event.replyQuoteText = msg.replyQuoteText;
   const forwardInfo = adaptForwardInfo(msg.forwardInfo);

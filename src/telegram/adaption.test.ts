@@ -264,6 +264,22 @@ describe('adaptMessage', () => {
     expect(event.utcOffsetMin).toBeTypeOf('number');
   });
 
+  it('marks messages from the Telegram bot account as myself', () => {
+    const event = adaptMessage(baseTelegramMessage({
+      sender: { id: 'bot-id', firstName: 'Bot', isBot: true, isPremium: false },
+    }), 'bot-id');
+
+    expect(event.isMyself).toBe(true);
+  });
+
+  it('does not mark other Telegram senders as myself', () => {
+    const event = adaptMessage(baseTelegramMessage({
+      sender: { id: 'user-id', firstName: 'Alice', isBot: false, isPremium: false },
+    }), 'bot-id');
+
+    expect(event.isMyself).toBeUndefined();
+  });
+
   it('adapts sender with firstName + lastName → displayName', () => {
     const event = adaptMessage(baseTelegramMessage({
       sender: { id: '1', firstName: 'Alice', lastName: 'Smith', isBot: false, isPremium: false },

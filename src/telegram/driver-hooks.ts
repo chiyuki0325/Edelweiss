@@ -105,7 +105,7 @@ export const createTelegramDriverHooks = (deps: TelegramDriverHooksDeps): Telegr
       replyToMessageId,
       source: 'bot' as const,
     };
-    const event = adaptMessage(syntheticMsg);
+    const event = adaptMessage(syntheticMsg, deps.botUserId);
     event.isSelfSent = true;
 
     const ic = deps.getIntermediateContext(chatId);

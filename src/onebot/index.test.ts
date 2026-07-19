@@ -32,6 +32,7 @@ describe('buildOneBotSelfSentEvent', () => {
     });
 
     expect(event.type).toBe('message');
+    expect(event.isMyself).toBe(true);
     expect(event.isSelfSent).toBe(true);
     expect(event.chatId).toBe('100');
     expect(event.messageId).toBe('42');

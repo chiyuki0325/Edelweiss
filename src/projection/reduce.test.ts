@@ -119,6 +119,21 @@ describe('reduce', () => {
       expect(node.forwardInfo).toEqual({ senderName: 'Someone', date: 100 });
     });
 
+    it('preserves platform-resolved self identity', () => {
+      const ic = reduce(createEmptyIC('chat1'), msg({ isMyself: true }));
+
+      expect((ic.nodes[0] as ICMessage).isMyself).toBe(true);
+    });
+
+    it('merges identity flags when a synthetic send follows a platform echo', () => {
+      let ic = reduce(createEmptyIC('chat1'), msg({ isMyself: true }));
+      ic = reduce(ic, msg({ isMyself: true, isSelfSent: true }));
+
+      expect(ic.nodes).toHaveLength(1);
+      expect((ic.nodes[0] as ICMessage).isMyself).toBe(true);
+      expect((ic.nodes[0] as ICMessage).isSelfSent).toBe(true);
+    });
+
     it('snapshots reply target sender and preview', () => {
       let ic = reduce(createEmptyIC('chat1'), msg());
       ic = reduce(ic, msg({
@@ -230,6 +245,20 @@ describe('reduce', () => {
       if (sysEvent.kind !== 'user_renamed') throw new Error('expected user_renamed');
       expect(sysEvent.oldUser).toEqual(alice);
       expect(sysEvent.newUser).toEqual(renamedAlice);
+    });
+
+    it('propagates self identity to rename events derived from self messages', () => {
+      const renamedAlice: CanonicalUser = { id: '1', displayName: 'Alice New', username: 'alice', isBot: false };
+      let ic = reduce(createEmptyIC('chat1'), msg({ isMyself: true }));
+      ic = reduce(ic, msg({
+        messageId: '2',
+        receivedAtMs: 2000,
+        timestampSec: 2,
+        sender: renamedAlice,
+        isMyself: true,
+      }));
+
+      expect((ic.nodes[1] as ICUserRenamedEvent).isMyself).toBe(true);
     });
 
     it('inserts ICUserRenamedEvent when username changes', () => {

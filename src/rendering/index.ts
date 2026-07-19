@@ -119,7 +119,7 @@ const hasMention = (nodes: ContentNode[], userId: string): boolean =>
 // --- ICNode → content pieces ---
 
 const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean; mentionsMe: boolean; repliesToMe: boolean } => {
-  const isMyself = !!(params.botUserId && msg.sender?.id === params.botUserId);
+  const isMyself = !!msg.isMyself;
   const isSelfSent = !!msg.isSelfSent;
   const mentionsMe = !!(params.botUserId && hasMention(msg.content, params.botUserId));
   const repliesToMe = !!(params.botUserId && msg.replyToSender?.id === params.botUserId);
@@ -273,7 +273,12 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
       segments.push({ receivedAtMs: node.receivedAtMs, content, isRuntimeEvent: true });
     } else {
       const content = [{ type: 'text' as const, text: renderSystemEvent(node, params.contactNames) }];
-      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(node.kind === 'reaction_added' && { isPassiveEvent: true }) });
+      segments.push({
+        receivedAtMs: node.receivedAtMs,
+        content,
+        ...(node.kind === 'user_renamed' && node.isMyself && { isMyself: true }),
+        ...(node.kind === 'reaction_added' && { isPassiveEvent: true }),
+      });
     }
   }
 
