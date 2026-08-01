@@ -76,7 +76,7 @@ describe('adaptOneBotSender', () => {
 });
 
 describe('adaptOneBotMessage', () => {
-  it('downloads image segments through the OneBot file API without requiring an event URL', async () => {
+  it('adapts ordinary image segments without downloading media for classification', async () => {
     const downloadFile = vi.fn(async () => Buffer.from('image bytes'));
     const api = {
       getFriendRemark: vi.fn(async () => undefined),
@@ -97,7 +97,7 @@ describe('adaptOneBotMessage', () => {
 
     const adapted = await adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 });
 
-    expect(downloadFile).toHaveBeenCalledWith('photo.jpg', '100');
+    expect(downloadFile).not.toHaveBeenCalled();
     expect(adapted.attachments).toEqual([{
       type: 'photo',
       fileName: 'photo.jpg',
@@ -105,7 +105,7 @@ describe('adaptOneBotMessage', () => {
     }]);
   });
 
-  it('rejects image adaptation when the OneBot file API cannot download the image', async () => {
+  it('keeps live sticker adaptation fail-closed when media classification fails', async () => {
     const api = {
       getFriendRemark: vi.fn(async () => undefined),
       downloadFile: vi.fn(async () => { throw new Error('file not found'); }),
@@ -118,13 +118,47 @@ describe('adaptOneBotMessage', () => {
       user_id: 42,
       group_id: 100,
       message_id: 7,
-      message: [{ type: 'image', data: { file: 'photo.jpg', url: 'https://expired.example/photo.jpg' } }],
-      raw_message: '[CQ:image,file=photo.jpg]',
+      message: [{ type: 'image', data: { file: 'sticker.gif', summary: '[动画表情]' } }],
+      raw_message: '[CQ:image,file=sticker.gif]',
       sender: { user_id: 42, nickname: 'Alice' },
     };
 
     await expect(adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 }))
       .rejects.toThrow('file not found');
+  });
+
+  it('keeps historical stickers when expired media cannot be classified', async () => {
+    const onMediaClassificationFailure = vi.fn();
+    const api = {
+      getFriendRemark: vi.fn(async () => undefined),
+      downloadFile: vi.fn(async () => { throw new Error('expired media'); }),
+    } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 1,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'sticker.gif', summary: '[动画表情]' } }],
+      raw_message: '[CQ:image,file=sticker.gif]',
+      sender: { user_id: 42, nickname: 'Alice' },
+    };
+
+    const adapted = await adaptOneBotMessage(
+      api,
+      event,
+      { receivedAtMs: 1000, utcOffsetMin: 480 },
+      { onMediaClassificationFailure },
+    );
+
+    expect(onMediaClassificationFailure).toHaveBeenCalledWith(expect.objectContaining({ message: 'expired media' }));
+    expect(adapted.attachments).toEqual([{
+      type: 'sticker',
+      fileName: 'sticker.gif',
+      fileRef: 'sticker.gif',
+    }]);
   });
 
   it('resolves the sender remark through the OneBot friend list API', async () => {

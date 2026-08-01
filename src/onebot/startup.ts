@@ -151,13 +151,24 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
 
     if (pulledMessages.length === 0) continue;
 
-    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(server.api!, msg, {
-      // Historical replay: derive the ordering timestamp from the message's
-      // server time rather than the wall clock, so replayed events keep their
-      // original order relative to one another and to live events.
-      receivedAtMs: msg.time * 1000,
-      utcOffsetMin: -new Date().getTimezoneOffset(),
-    }))))
+    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(
+      server.api!,
+      msg,
+      {
+        // Historical replay: derive the ordering timestamp from the message's
+        // server time rather than the wall clock, so replayed events keep their
+        // original order relative to one another and to live events.
+        receivedAtMs: msg.time * 1000,
+        utcOffsetMin: -new Date().getTimezoneOffset(),
+      },
+      {
+        // Old QQ sticker media may already be unavailable. Preserve the event
+        // as a static sticker; post-startup hydration can retry it later.
+        onMediaClassificationFailure: err => deps.logger.withError(err)
+          .withFields({ chatId, messageId: String(msg.message_id) })
+          .warn('OneBot replay media classification failed; keeping attachment as sticker'),
+      },
+    ))))
       .map(deps.redactBlockedMessage);
 
     if (deps.imageToTextChatIds.has(chatId) && server.api) {
@@ -168,8 +179,9 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
           // Historical backfill is best-effort, unlike the live ingress path
           // (which is fail-closed with bounded-retry-then-drop). Old QQ media
           // references are often already expired, so a failure here must not
-          // abort startup — the event is still persisted and renders with its
-          // thumbnail. Live consistency is enforced by the ingress queue.
+          // abort startup — the event is still persisted even when no thumbnail
+          // or alt text can be recovered. Live consistency is enforced by the
+          // ingress queue.
           try {
             await Promise.all(event.attachments.map(att =>
               resolveOneBotImageAltText(att, caption, server.api!, deps.imageToTextResolver, deps.animationToTextResolver, compression)));
