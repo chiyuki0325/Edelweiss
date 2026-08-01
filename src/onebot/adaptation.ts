@@ -117,11 +117,9 @@ const adaptSegment = async (
     return { type: 'mention', userId: String(seg.data.qq), children: [{ type: 'text', text: `@${userMentioned.displayName}` }] };
 
   case 'image': {
-    // Prefer NapCat's file lookup over the ephemeral URL carried by the event.
-    // get_image/get_file can refresh the QQ media URL/RKey and fall back to a
-    // local download, while a direct fetch may silently lose the image after
-    // the original URL expires.
-    const buffer = await api.downloadFile(seg.data.file, chatId);
+    const response = await fetch(seg.data.url!, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
 
     // 20260513 增加贴纸判断
     let attType: CanonicalAttachment['type'] = 'photo';
