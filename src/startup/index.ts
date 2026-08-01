@@ -119,6 +119,7 @@ export const startApp = async () => {
     getRenderedContext: chatId => pipeline.getRC(chatId),
     onDriverEvent: (chatId, rc) => get(TOKENS.DRIVER).handleEvent(chatId, rc),
     setOfflineMode: (chatId, offline) => get(TOKENS.DRIVER).setOfflineMode(chatId, offline),
+    requestCompaction: chatId => get(TOKENS.DRIVER).requestCompaction(chatId),
     sendPlatformMessage: async (chatId, text) => {
       const adapter = platformRegistry.getAdapter(chatId) ?? oneBotHolder.handle?.getAdapter(chatId);
       if (adapter) await adapter.sendMessage(chatId, text);

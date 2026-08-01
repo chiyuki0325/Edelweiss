@@ -18,7 +18,7 @@ import type { DriverFeature } from './turn-features';
 import { createTurnPhases, runTurn } from './turn-phases';
 import { createDefaultTurnCapabilities, createSchedulerState } from './turn-state';
 import type { ChatScope, TurnState } from './turn-state';
-import type { CompactionSessionMeta, DriverConfig, PlatformAdapter, TurnResponseV2 } from './types';
+import type { CompactionSessionMeta, DriverConfig, ManualCompactionResult, PlatformAdapter, TurnResponseV2 } from './types';
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
@@ -104,6 +104,7 @@ export const createDriver = (config: DriverConfig, deps: {
   };
 
   const chatScopes = new Map<string, ChatScope>();
+  const manualCompactionRequests = new Map<string, () => Promise<ManualCompactionResult>>();
 
   const getOrCreateScope = (chatId: string) => {
     const existing = chatScopes.get(chatId);
@@ -355,82 +356,107 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     // --- Independent compaction effect ---
-    let compactionRunning = false;
+    let compactionTask: Promise<ManualCompactionResult> | undefined;
     let compactionTimer: ReturnType<typeof setTimeout> | undefined;
     let lastCheckedRc: RenderedContext | null = null;
+
+    const compact = (manual: boolean): Promise<ManualCompactionResult> => {
+      if (compactionTask) return compactionTask;
+
+      compactionTask = (async (): Promise<ManualCompactionResult> => {
+        const cursor = cursorMs();
+        const sum = summary();
+        const compactEndpoint = chatConfig.compaction.model ?? chatConfig.primaryModel;
+        const rcSnapshot = rc();
+        const trs = await loadTRs(chatId, cursor);
+        const ctx = composeContext(
+          rcSnapshot,
+          trs,
+          chatConfig.compaction.maxContextEstTokens,
+          compactEndpoint.model,
+        );
+        if (!ctx) return { status: 'skipped', reason: 'no_content' };
+        if (!manual && ctx.rawEstimatedTokens <= chatConfig.compaction.maxContextEstTokens)
+          return { status: 'skipped', reason: 'within_working_window' };
+
+        const oldCursorMs = cursor ?? 0;
+        const newCursorMs = findWorkingWindowCursor(
+          rcSnapshot,
+          trs,
+          chatConfig.compaction.workingWindowEstTokens,
+        );
+        const rcWindow = rcSnapshot.filter(s => s.receivedAtMs >= oldCursorMs && s.receivedAtMs < newCursorMs);
+        const trsWindow = trs.filter(t => t.requestedAtMs >= oldCursorMs && t.requestedAtMs < newCursorMs);
+        if (newCursorMs <= oldCursorMs || (rcWindow.length === 0 && trsWindow.length === 0))
+          return { status: 'skipped', reason: 'within_working_window' };
+
+        log.withFields({
+          chatId,
+          manual,
+          oldCursorMs,
+          newCursorMs,
+          rawEstimatedTokens: ctx.rawEstimatedTokens,
+          triggerAt: chatConfig.compaction.maxContextEstTokens,
+          retainBudget: chatConfig.compaction.workingWindowEstTokens,
+        }).log('Triggering compaction');
+
+        const newMeta = await runCompaction({
+          apiBaseUrl: compactEndpoint.apiBaseUrl,
+          apiKey: compactEndpoint.apiKey,
+          model: compactEndpoint.model,
+          apiFormat: compactEndpoint.apiFormat,
+          timeoutSec: compactEndpoint.timeoutSec,
+          extraBody: compactEndpoint.extraBody,
+          chatId,
+          rcWindow,
+          trsWindow,
+          existingSummary: sum,
+          oldCursorMs,
+          newCursorMs,
+          maxImagesAllowed: compactEndpoint.maxImagesAllowed,
+          log,
+        });
+
+        deps.persistCompaction(chatId, newMeta);
+
+        log.withFields({
+          chatId,
+          manual,
+          newCursorMs,
+          summaryLength: newMeta.summary.length,
+        }).log('Compaction complete');
+
+        compactionMeta(newMeta);
+        return { status: 'completed', meta: newMeta };
+      })().finally(() => {
+        compactionTask = undefined;
+      });
+
+      return compactionTask!;
+    };
+
+    manualCompactionRequests.set(chatId, () => compact(true));
 
     const disposeCompactionEffect = effect(() => {
       const rcVal = rc();
       if (rcVal.length === 0) return;
 
       if (compactionTimer) { clearTimeout(compactionTimer); compactionTimer = undefined; }
-      if (compactionRunning) return;
+      if (compactionTask) return;
       if (rcVal === lastCheckedRc) return;
 
       compactionTimer = setTimeout(() => {
         lastCheckedRc = rc();
-        compactionRunning = true;
-
-        void (async () => {
-          try {
-            const cursor = cursorMs();
-            const sum = summary();
-            const compactEndpoint = chatConfig.compaction.model ?? chatConfig.primaryModel;
-
-            const trs = await loadTRs(chatId, cursor);
-            const ctx = composeContext(rc(), trs, chatConfig.compaction.maxContextEstTokens, compactEndpoint.model);
-            if (!ctx) return;
-            if (ctx.rawEstimatedTokens <= chatConfig.compaction.maxContextEstTokens) return;
-
-            const newCursorMs = findWorkingWindowCursor(rc(), trs, chatConfig.compaction.workingWindowEstTokens);
-
-            log.withFields({
-              chatId,
-              oldCursorMs: cursor ?? 0,
-              newCursorMs,
-              rawEstimatedTokens: ctx.rawEstimatedTokens,
-              triggerAt: chatConfig.compaction.maxContextEstTokens,
-              retainBudget: chatConfig.compaction.workingWindowEstTokens,
-            }).log('Triggering compaction');
-
-            const newMeta = await runCompaction({
-              apiBaseUrl: compactEndpoint.apiBaseUrl,
-              apiKey: compactEndpoint.apiKey,
-              model: compactEndpoint.model,
-              apiFormat: compactEndpoint.apiFormat,
-              timeoutSec: compactEndpoint.timeoutSec,
-              extraBody: compactEndpoint.extraBody,
-              chatId,
-              rcWindow: rc().filter(s => s.receivedAtMs >= (cursor ?? 0) && s.receivedAtMs < newCursorMs),
-              trsWindow: trs.filter(t => t.requestedAtMs >= (cursor ?? 0) && t.requestedAtMs < newCursorMs),
-              existingSummary: sum,
-              oldCursorMs: cursor ?? 0,
-              newCursorMs,
-              maxImagesAllowed: compactEndpoint.maxImagesAllowed,
-              log,
-            });
-
-            deps.persistCompaction(chatId, newMeta);
-
-            log.withFields({
-              chatId,
-              newCursorMs,
-              summaryLength: newMeta.summary.length,
-            }).log('Compaction complete');
-
-            compactionMeta(newMeta);
-          } catch (err) {
-            log.withError(err).withFields({ chatId }).error('Compaction failed');
-          } finally {
-            compactionRunning = false;
-          }
-        })();
+        void compact(false).catch(err => {
+          log.withError(err).withFields({ chatId }).error('Compaction failed');
+        });
       }, 0);
     });
 
     const cleanup = () => {
       schedulerController.stop();
       if (compactionTimer) clearTimeout(compactionTimer);
+      manualCompactionRequests.delete(chatId);
       disposeCursorEffect();
       disposeCompactionEffect();
     };
@@ -482,11 +508,17 @@ export const createDriver = (config: DriverConfig, deps: {
     log.withFields({ chatId, offline: isOffline }).log('Offline mode changed');
   };
 
+  const requestCompaction = (chatId: string): Promise<ManualCompactionResult> => {
+    if (!chatIds.has(chatId)) return Promise.resolve({ status: 'skipped', reason: 'no_content' });
+    getOrCreateScope(chatId);
+    return manualCompactionRequests.get(chatId)!();
+  };
+
   const stop = () => {
     for (const scope of chatScopes.values())
       scope.cleanup();
     chatScopes.clear();
   };
 
-  return { handleEvent, handleTyping, setOfflineMode, stop };
+  return { handleEvent, handleTyping, setOfflineMode, requestCompaction, stop };
 };

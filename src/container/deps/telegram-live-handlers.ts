@@ -22,6 +22,7 @@ export default function registerTelegramLiveHandlers({ get, register }: Registra
       driverControl: {
         handleTyping: (chatId, userId) => get(TOKENS.DRIVER).handleTyping(chatId, userId),
         setOfflineMode: (chatId, offline) => get(TOKENS.DRIVER).setOfflineMode(chatId, offline),
+        requestCompaction: chatId => get(TOKENS.DRIVER).requestCompaction(chatId),
       },
     });
   });

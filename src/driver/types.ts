@@ -30,6 +30,10 @@ export interface CompactionSessionMeta {
   outputTokens: number;
 }
 
+export type ManualCompactionResult =
+  | { status: 'completed'; meta: CompactionSessionMeta }
+  | { status: 'skipped'; reason: 'no_content' | 'within_working_window' };
+
 export type { ResolvedChatConfig } from '../config/config';
 
 // --- Platform adapter ---

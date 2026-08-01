@@ -5,6 +5,7 @@ import { resolveOneBotImageAltText } from './image-to-text';
 import type { OneBotApiClient } from './server';
 import type { OneBotMessageEvent, OneBotNoticeEvent } from './types';
 import type { CanonicalBlockedMessageEvent, CanonicalIMEvent, CanonicalMessageEvent } from '../adaption-types';
+import type { ManualCompactionResult } from '../driver/types';
 import type { MessageDedup } from '../ingress/message-dedup';
 import { createSessionIngressQueue } from '../ingress/session-ingress-queue';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
@@ -88,6 +89,7 @@ export interface OneBotIngressDeps {
   pushPipelineEvent: (chatId: string, event: PipelineEvent) => RenderedContext;
   onDriverEvent: (chatId: string, rc: RenderedContext) => void;
   setOfflineMode: (chatId: string, offline: boolean) => void;
+  requestCompaction: (chatId: string) => Promise<ManualCompactionResult>;
   sendPlatformMessage: (chatId: string, text: string) => Promise<void>;
   transformBudgetMs?: number;
   // Shared with the cold-start history pull so a message arriving in the overlap
@@ -168,6 +170,26 @@ export const createOneBotIngress = (deps: OneBotIngressDeps): OneBotIngress => {
             : 'Online mode enabled.';
           void deps.sendPlatformMessage(event.chatId, reply)
             .catch(err => log.withError(err).warn('Failed to send offline/online ack'));
+          return;
+        }
+        if (text === '/compact') {
+          void deps.requestCompaction(event.chatId)
+            .then(result => {
+              const reply = result.status === 'completed'
+                ? 'Context compaction complete.'
+                : result.reason === 'no_content'
+                  ? 'Nothing to compact.'
+                  : 'Nothing to compact: context is already within the working window.';
+              return deps.sendPlatformMessage(event.chatId, reply);
+            })
+            .catch(async err => {
+              log.withError(err).withFields({ chatId: event.chatId }).error('Manual context compaction failed');
+              try {
+                await deps.sendPlatformMessage(event.chatId, 'Context compaction failed. Check the logs for details.');
+              } catch (sendErr) {
+                log.withError(sendErr).warn('Failed to send manual compaction failure ack');
+              }
+            });
           return;
         }
       }

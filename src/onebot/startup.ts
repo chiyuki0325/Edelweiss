@@ -9,7 +9,7 @@ import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../ada
 import type { RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, loadEventsWithId, persistEvent, updateEventAttachments } from '../db';
 import type { getLastMessageId } from '../db/persistence';
-import type { PlatformAdapter } from '../driver/types';
+import type { ManualCompactionResult, PlatformAdapter } from '../driver/types';
 import { createMessageDedup } from '../ingress/message-dedup';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
@@ -37,6 +37,7 @@ export interface OneBotStartupDeps {
   getRenderedContext: (chatId: string) => RenderedContext | undefined;
   onDriverEvent: (chatId: string, rc: RenderedContext) => void;
   setOfflineMode: (chatId: string, offline: boolean) => void;
+  requestCompaction: (chatId: string) => Promise<ManualCompactionResult>;
   sendPlatformMessage: (chatId: string, text: string) => Promise<void>;
   loadCompaction: (chatId: string) => ReturnType<typeof loadCompaction>;
   loadEvents: (chatId: string, afterMs?: number) => ReturnType<typeof loadEvents>;
@@ -88,6 +89,7 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
     pushPipelineEvent: deps.pushPipelineEvent,
     onDriverEvent: deps.onDriverEvent,
     setOfflineMode: deps.setOfflineMode,
+    requestCompaction: deps.requestCompaction,
     sendPlatformMessage: deps.sendPlatformMessage,
     dedup,
   });

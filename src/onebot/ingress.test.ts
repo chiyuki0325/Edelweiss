@@ -74,6 +74,7 @@ const baseDeps = (overrides: Partial<OneBotIngressDeps>): OneBotIngressDeps => (
   pushPipelineEvent: () => ({} as never),
   onDriverEvent: () => {},
   setOfflineMode: () => {},
+  requestCompaction: () => Promise.resolve({ status: 'skipped', reason: 'no_content' }),
   sendPlatformMessage: () => Promise.resolve(),
   dedup: createMessageDedup(),
   ...overrides,
@@ -110,6 +111,27 @@ const stubApi = () => ({
 } as unknown as NonNullable<ReturnType<OneBotIngressDeps['getApi']>>);
 
 describe('createOneBotIngress', () => {
+  it('intercepts /compact and reports the result without persisting the command', async () => {
+    const persistEvent = vi.fn();
+    const requestCompaction = vi.fn(async () => ({
+      status: 'completed' as const,
+      meta: { oldCursorMs: 0, newCursorMs: 100, summary: 'summary', inputTokens: 10, outputTokens: 5 },
+    }));
+    const sendPlatformMessage = vi.fn(async () => {});
+    const ingress = createOneBotIngress(baseDeps({
+      getApi: stubApi,
+      persistEvent,
+      requestCompaction,
+      sendPlatformMessage,
+    }));
+
+    ingress.enqueue(groupMessage(100, 7, '/compact'), meta());
+
+    await vi.waitFor(() => expect(sendPlatformMessage).toHaveBeenCalledWith('100', 'Context compaction complete.'));
+    expect(requestCompaction).toHaveBeenCalledWith('100');
+    expect(persistEvent).not.toHaveBeenCalled();
+  });
+
   it('commits notice events through the queue and applies ingress meta', async () => {
     const persisted: CanonicalIMEvent[] = [];
     const ingress = createOneBotIngress(baseDeps({

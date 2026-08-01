@@ -12,6 +12,11 @@ const mocks = vi.hoisted(() => ({
   renderSystemPrompt: vi.fn(async () => 'system'),
   callModelStep: vi.fn(),
   executeToolStep: vi.fn(async () => []),
+  runCompaction: vi.fn(),
+}));
+
+vi.mock('./compaction', () => ({
+  runCompaction: mocks.runCompaction,
 }));
 
 vi.mock('./prompt', () => ({
@@ -161,6 +166,7 @@ describe('createDriver debounce scheduling', () => {
     mocks.renderSystemPrompt.mockClear();
     mocks.callModelStep.mockReset();
     mocks.executeToolStep.mockClear();
+    mocks.runCompaction.mockReset();
   });
 
   afterEach(() => {
@@ -325,6 +331,105 @@ describe('createDriver debounce scheduling', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(refreshAllowedReactionEmojis).toHaveBeenCalledTimes(2);
       expect(mocks.callModelStep).toHaveBeenCalledTimes(1);
+    } finally {
+      driver.stop();
+    }
+  });
+
+  it('manually compacts eligible history below the automatic high-water mark', async () => {
+    const persistCompaction = vi.fn();
+    mocks.runCompaction.mockImplementation(async params => ({
+      oldCursorMs: params.oldCursorMs,
+      newCursorMs: params.newCursorMs,
+      summary: 'summary',
+      inputTokens: 10,
+      outputTokens: 5,
+    }));
+    const driver = createTestDriver({
+      initialDelayMs: 1000,
+      typingExtendMs: 200,
+      maxDelayMs: 5000,
+      typingExemptUsers: [],
+    }, undefined, { persistCompaction });
+
+    try {
+      driver.handleEvent('chat', [
+        { receivedAtMs: 50, content: [{ type: 'text', text: 'x'.repeat(20_000) }] },
+        { receivedAtMs: 100, content: [{ type: 'text', text: 'x'.repeat(110_000) }] },
+        { receivedAtMs: 200, content: [{ type: 'text', text: 'recent' }] },
+      ]);
+
+      await expect(driver.requestCompaction('chat')).resolves.toMatchObject({ status: 'completed' });
+      expect(mocks.runCompaction).toHaveBeenCalledOnce();
+      expect(mocks.runCompaction).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'chat',
+        oldCursorMs: 0,
+        newCursorMs: 100,
+        rcWindow: [{ receivedAtMs: 50, content: [{ type: 'text', text: 'x'.repeat(20_000) }] }],
+      }));
+      expect(persistCompaction).toHaveBeenCalledOnce();
+    } finally {
+      driver.stop();
+    }
+  });
+
+  it('skips manual compaction when all context fits in the working window', async () => {
+    const driver = createTestDriver({
+      initialDelayMs: 1000,
+      typingExtendMs: 200,
+      maxDelayMs: 5000,
+      typingExemptUsers: [],
+    });
+
+    try {
+      driver.handleEvent('chat', rc(100, 200));
+      await expect(driver.requestCompaction('chat')).resolves.toEqual({
+        status: 'skipped',
+        reason: 'within_working_window',
+      });
+      expect(mocks.runCompaction).not.toHaveBeenCalled();
+    } finally {
+      driver.stop();
+    }
+  });
+
+  it('shares one in-flight task across concurrent manual compaction requests', async () => {
+    const completion = deferred<{
+      oldCursorMs: number;
+      newCursorMs: number;
+      summary: string;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
+    mocks.runCompaction.mockImplementation(() => completion.promise);
+    const driver = createTestDriver({
+      initialDelayMs: 1000,
+      typingExtendMs: 200,
+      maxDelayMs: 5000,
+      typingExemptUsers: [],
+    });
+
+    try {
+      driver.handleEvent('chat', [
+        { receivedAtMs: 50, content: [{ type: 'text', text: 'x'.repeat(20_000) }] },
+        { receivedAtMs: 100, content: [{ type: 'text', text: 'x'.repeat(110_000) }] },
+        { receivedAtMs: 200, content: [{ type: 'text', text: 'recent' }] },
+      ]);
+
+      const first = driver.requestCompaction('chat');
+      const second = driver.requestCompaction('chat');
+      expect(second).toBe(first);
+      await vi.waitFor(() => expect(mocks.runCompaction).toHaveBeenCalledOnce());
+
+      completion.resolve({
+        oldCursorMs: 0,
+        newCursorMs: 100,
+        summary: 'summary',
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+      await expect(first).resolves.toMatchObject({ status: 'completed' });
+      await expect(second).resolves.toMatchObject({ status: 'completed' });
     } finally {
       driver.stop();
     }

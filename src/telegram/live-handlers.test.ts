@@ -43,6 +43,8 @@ const countReaction = (overrides: Partial<TelegramReactionCountUpdate> = {}): Te
 
 const createHarness = async () => {
   let onReactionUpdate: ((update: TelegramReactionUpdate) => void) | undefined;
+  const commands = new Map<string, (chatId: string) => Promise<void>>();
+  const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1, text: '' }));
   const manager = {
     start: vi.fn(async () => {}),
     onMessage: vi.fn(),
@@ -53,7 +55,10 @@ const createHarness = async () => {
     }),
     onTyping: vi.fn(),
     bot: {
-      registerCommand: vi.fn(),
+      registerCommand: vi.fn((name: string, _description: string, handler: (chatId: string) => Promise<void>) => {
+        commands.set(name, handler);
+      }),
+      sendMessage,
     },
   } as unknown as TelegramManager;
 
@@ -77,6 +82,7 @@ const createHarness = async () => {
     }),
   } satisfies TelegramReactionStore;
 
+  const requestCompaction = vi.fn(async () => ({ status: 'skipped' as const, reason: 'no_content' as const }));
   const handlers = createTelegramLiveHandlers({
     manager,
     logger: useLogger('test'),
@@ -97,6 +103,7 @@ const createHarness = async () => {
     driverControl: {
       handleTyping: vi.fn(),
       setOfflineMode: vi.fn(),
+      requestCompaction,
     },
   });
   await handlers.start();
@@ -107,8 +114,22 @@ const createHarness = async () => {
     eventSink,
     emitReaction: onReactionUpdate,
     snapshots,
+    commands,
+    requestCompaction,
+    sendMessage,
   };
 };
+
+describe('createTelegramLiveHandlers commands', () => {
+  it('registers /compact and reports a no-op compaction', async () => {
+    const { commands, requestCompaction, sendMessage } = await createHarness();
+
+    await commands.get('compact')!('-100123');
+
+    expect(requestCompaction).toHaveBeenCalledWith('-100123');
+    expect(sendMessage).toHaveBeenCalledWith('-100123', 'Nothing to compact.');
+  });
+});
 
 describe('createTelegramLiveHandlers reaction debounce', () => {
   afterEach(() => {

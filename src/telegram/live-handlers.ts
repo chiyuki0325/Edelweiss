@@ -4,6 +4,7 @@ import { adaptDelete, adaptEdit, adaptMessage, adaptReaction, adaptServiceEvent,
 import type { TelegramEventSink } from './event-sink';
 import type { TelegramManager } from './manager';
 import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaption-types';
+import type { ManualCompactionResult } from '../driver/types';
 import type { TelegramReactionSnapshotEntry, TelegramReactionUpdate } from './message/types';
 import type { TelegramMessageStore, TelegramReactionStore } from './stores';
 
@@ -16,6 +17,7 @@ export interface TelegramChatPolicy {
 export interface TelegramDriverControl {
   handleTyping(chatId: string, userId: string): void;
   setOfflineMode(chatId: string, offline: boolean): void;
+  requestCompaction(chatId: string): Promise<ManualCompactionResult>;
 }
 
 export interface TelegramLiveHandlers {
@@ -278,6 +280,21 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
     deps.manager.bot.registerCommand('online', 'Resume automatic responses', async chatId => {
       deps.driverControl.setOfflineMode(chatId, false);
       await deps.manager.bot.sendMessage(chatId, 'Online mode enabled.');
+    });
+
+    deps.manager.bot.registerCommand('compact', 'Compact conversation context now', async chatId => {
+      try {
+        const result = await deps.driverControl.requestCompaction(chatId);
+        const reply = result.status === 'completed'
+          ? 'Context compaction complete.'
+          : result.reason === 'no_content'
+            ? 'Nothing to compact.'
+            : 'Nothing to compact: context is already within the working window.';
+        await deps.manager.bot.sendMessage(chatId, reply);
+      } catch (err) {
+        deps.logger.withError(err).withFields({ chatId }).error('Manual context compaction failed');
+        await deps.manager.bot.sendMessage(chatId, 'Context compaction failed. Check the logs for details.');
+      }
     });
 
     await deps.manager.start();
