@@ -76,6 +76,57 @@ describe('adaptOneBotSender', () => {
 });
 
 describe('adaptOneBotMessage', () => {
+  it('downloads image segments through the OneBot file API without requiring an event URL', async () => {
+    const downloadFile = vi.fn(async () => Buffer.from('image bytes'));
+    const api = {
+      getFriendRemark: vi.fn(async () => undefined),
+      downloadFile,
+    } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 1,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'photo.jpg' } }],
+      raw_message: '[CQ:image,file=photo.jpg]',
+      sender: { user_id: 42, nickname: 'Alice' },
+    };
+
+    const adapted = await adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 });
+
+    expect(downloadFile).toHaveBeenCalledWith('photo.jpg', '100');
+    expect(adapted.attachments).toEqual([{
+      type: 'photo',
+      fileName: 'photo.jpg',
+      fileRef: 'photo.jpg',
+    }]);
+  });
+
+  it('rejects image adaptation when the OneBot file API cannot download the image', async () => {
+    const api = {
+      getFriendRemark: vi.fn(async () => undefined),
+      downloadFile: vi.fn(async () => { throw new Error('file not found'); }),
+    } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 1,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'photo.jpg', url: 'https://expired.example/photo.jpg' } }],
+      raw_message: '[CQ:image,file=photo.jpg]',
+      sender: { user_id: 42, nickname: 'Alice' },
+    };
+
+    await expect(adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 }))
+      .rejects.toThrow('file not found');
+  });
+
   it('resolves the sender remark through the OneBot friend list API', async () => {
     const getFriendRemark = vi.fn(async () => '好友列表备注');
     const api = { getFriendRemark } as unknown as OneBotApiClient;
