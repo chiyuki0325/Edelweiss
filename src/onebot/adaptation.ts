@@ -26,14 +26,6 @@ export interface OneBotIngressMeta {
   utcOffsetMin: number;
 }
 
-export interface OneBotAdaptationOptions {
-  // Cold-start history can contain expired QQ media. Supplying this callback
-  // makes sticker/animation classification best-effort: the attachment is kept
-  // as a static sticker and the caller gets the original error for logging.
-  // Live ingress omits it and remains fail-closed.
-  onMediaClassificationFailure?: (err: unknown) => void;
-}
-
 export const captureOneBotIngressMeta = (): OneBotIngressMeta => ({
   receivedAtMs: Date.now(),
   utcOffsetMin: captureUtcOffset(),
@@ -109,7 +101,6 @@ const adaptSegment = async (
   chatId: string,
   seg: OneBotMessageSegment,
   attachments: CanonicalAttachment[],
-  options: OneBotAdaptationOptions,
 ): Promise<ContentNode | null> => {
   switch (seg.type) {
   case 'text':
@@ -126,22 +117,20 @@ const adaptSegment = async (
     return { type: 'mention', userId: String(seg.data.qq), children: [{ type: 'text', text: `@${userMentioned.displayName}` }] };
 
   case 'image': {
+    // Prefer NapCat's file lookup over the ephemeral URL carried by the event.
+    // get_image/get_file can refresh the QQ media URL/RKey and fall back to a
+    // local download, while a direct fetch may silently lose the image after
+    // the original URL expires.
+    const buffer = await api.downloadFile(seg.data.file, chatId);
+
     // 20260513 增加贴纸判断
     let attType: CanonicalAttachment['type'] = 'photo';
     const isStickerOrAnimation = seg.data.emoji_id != null || seg.data.emoji_pack_id != null || STICKER_REGEX.test(seg.data.summary ?? '');
     if (isStickerOrAnimation) {
-      attType = 'sticker';
-      try {
-        // Only sticker candidates need their bytes during adaptation. Ordinary
-        // photos are classified entirely from segment metadata and are
-        // downloaded later only when alt-text/thumbnail hydration is enabled.
-        const buffer = await api.downloadFile(seg.data.file, chatId);
-        const metadata = await sharp(buffer).metadata();
-        if (metadata.pages && metadata.pages > 1) attType = 'animation';
-      } catch (err) {
-        if (!options.onMediaClassificationFailure) throw err;
-        options.onMediaClassificationFailure(err);
-      }
+      // 采用 sharp 判断是否为动画贴纸（多帧图片）
+      const metadata = await sharp(buffer).metadata();
+      const isAnimated = metadata.pages && metadata.pages > 1;
+      attType = isAnimated ? 'animation' : 'sticker';
     }
     const att: CanonicalAttachment = {
       type: attType,
@@ -228,12 +217,7 @@ const adaptSegment = async (
 };
 
 // OneBotApiClient 传入用于某些消息（如 mention 的副作用）
-export const adaptOneBotMessage = async (
-  api: OneBotApiClient,
-  event: OneBotMessageEvent,
-  meta: OneBotIngressMeta,
-  options: OneBotAdaptationOptions = {},
-): Promise<CanonicalMessageEvent> => {
+export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent, meta: OneBotIngressMeta): Promise<CanonicalMessageEvent> => {
   const chatId = oneBotMessageChatId(event);
   const friendRemark = await api.getFriendRemark(String(event.sender.user_id)).catch(() => undefined);
 
@@ -246,7 +230,7 @@ export const adaptOneBotMessage = async (
       replyToMessageId = String(seg.data.id);
       continue;
     }
-    const node = await adaptSegment(api, chatId, seg, attachments, options);
+    const node = await adaptSegment(api, chatId, seg, attachments);
     if (node) content.push(node);
   }
 
