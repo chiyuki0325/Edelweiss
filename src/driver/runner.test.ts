@@ -48,6 +48,7 @@ const TR = (callId: string, payload: string, requiresFollowUp = true): Conversat
 });
 
 const LENGTH_ERROR = JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' });
+const AGREEMENT_REVIEW_ERROR = JSON.stringify({ ok: false, code: 'agreement_review_required', error: 'review draft' });
 const OK_RESULT = JSON.stringify({ ok: true, message_id: '42' });
 const OTHER_ERROR = JSON.stringify({ ok: false, error: 'Some other error' });
 
@@ -346,6 +347,18 @@ describe('pruneLengthLimitFailures', () => {
     expect(pendingPrune).toBe(true);
   });
 
+  it('removes agreement-review failures from persisted entries', () => {
+    const entries: ConversationEntry[] = [
+      MSG({ parts: [TEXT('I should agree first'), TC('send_message', 'tc1', '{"text":"确实"}')] }),
+      TR('tc1', AGREEMENT_REVIEW_ERROR, true),
+    ];
+
+    const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, false);
+
+    expect(pruned).toHaveLength(0);
+    expect(pendingPrune).toBe(true);
+  });
+
   it('preserves non-send_message ToolCallParts when pruning thinking content', () => {
     const entries: ConversationEntry[] = [
       MSG({ parts: [TEXT('pre-thinking'), TC('bash', 'tc_bash', '{"command":"echo hi"}'), TC('send_message', 'tc1')] }),
@@ -428,6 +441,22 @@ describe('pruneLengthLimitFailures', () => {
       expect(msg).toBeDefined();
       const parts = (msg as Extract<ConversationEntry, { kind: 'message' }>).parts;
       expect(parts).toHaveLength(2); // TextPart + bash TC preserved
+    });
+
+    it.each(['react_message', 'stay_silent'])('clears pendingPrune when %s resolves an agreement review', toolName => {
+      const entries: ConversationEntry[] = [
+        MSG({ parts: [TEXT('This only agrees'), REASONING('a reaction is enough'), TC(toolName, 'tc2')] }),
+        TR('tc2', '{"ok":true}', false),
+      ];
+
+      const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, true);
+
+      expect(pendingPrune).toBe(false);
+      const msg = pruned.find(e => e.kind === 'message' && e.role === 'assistant');
+      expect(msg).toBeDefined();
+      expect((msg as Extract<ConversationEntry, { kind: 'message' }>).parts).toEqual([
+        expect.objectContaining({ kind: 'toolCall', name: toolName }),
+      ]);
     });
   });
 

@@ -9,6 +9,7 @@ import { createTool } from './types';
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string, attachments?: SendMessageAttachment[]) => Promise<{ messageId: string }>,
   turnFlags?: SendMessageTurnFlags,
+  canReact = false,
 ): CahciuaTool => {
   let queshiFlaggedThisTurn = false;
 
@@ -75,8 +76,32 @@ export const createSendMessageTool = (
       }
       if (!queshiFlaggedThisTurn && text.includes('确实')) {
         queshiFlaggedThisTurn = true;
+        const agreementOnly = canReact
+          ? {
+              action: 'react_message',
+              ...(reply_to ? { suggested_message_id: reply_to } : {}),
+              instruction: reply_to
+                ? 'React to the replied-to message. Choose an allowed emoji that matches the intended acknowledgement.'
+                : 'Choose the relevant message id from the chat context and an allowed emoji that matches the intended acknowledgement.',
+              fallback: 'stay_silent',
+            }
+          : {
+              action: 'stay_silent',
+              instruction: 'Do not replace the draft with another text-only acknowledgement.',
+            };
         return {
-          content: JSON.stringify({ ok: false, error: '系统可能检测到你在进行无意义的附和。如果只是表示认同而没有新的信息要补充，可以保持沉默。如果你想表达的是别的意思，请直接说出来。' }),
+          content: JSON.stringify({
+            ok: false,
+            code: 'agreement_review_required',
+            error: 'The draft contains “确实” and needs a semantic review before it can be sent.',
+            next_actions: {
+              has_new_information: {
+                action: 'send_message',
+                instruction: 'Remove only the agreement or acknowledgement wording, then resend while preserving every substantive claim, reason, correction, suggestion, or question from the draft.',
+              },
+              agreement_only: agreementOnly,
+            },
+          }),
           requiresFollowUp: true,
         };
       }

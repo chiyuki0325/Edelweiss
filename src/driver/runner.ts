@@ -12,19 +12,21 @@ import type {
 
 ensureDumpDir();
 
-const isLengthLimitFailure = (tr: ToolResult): boolean => {
+const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
   if (typeof tr.payload !== 'string') return false;
   try {
     const parsed = JSON.parse(tr.payload);
-    return parsed.ok === false && typeof parsed.error === 'string' && parsed.error.includes('too long');
+    return parsed.ok === false
+      && (parsed.code === 'agreement_review_required'
+        || (typeof parsed.error === 'string' && parsed.error.includes('too long')));
   } catch {
     return false;
   }
 };
 
 /**
- * Prune failed send_message tool calls caused by the 256-byte length limit,
- * plus the thinking content between the failure and the next successful send_message.
+ * Prune recoverable send_message failures (length limit or agreement review),
+ * plus the thinking content between the failure and the next visible resolution.
  *
  * This is a few-shot cleanup: the pruned entries are what gets persisted (future context
  * won't see the "try long → fail → split" pattern). The live working context within the
@@ -49,19 +51,19 @@ export const pruneLengthLimitFailures = (
 
   let nextPendingPrune = pendingPrune;
 
-  // Step 1: If a previous step had a length-limit failure, remove all thinking
-  // (TextPart / ReasoningPart) that appears before the first send_message ToolCallPart
-  // in this step. This is the "from failure to next successful send_message" gap.
+  // Step 1: If a previous step had a recoverable failure, remove all thinking
+  // (TextPart / ReasoningPart) before the first visible resolution in this step.
   if (nextPendingPrune) {
     for (const entry of result) {
       if (entry.kind !== 'message' || entry.role !== 'assistant') continue;
       const parts = entry.parts;
-      const firstSendIdx = parts.findIndex(
-        p => p.kind === 'toolCall' && p.name === 'send_message',
+      const firstResolutionIdx = parts.findIndex(
+        p => p.kind === 'toolCall'
+          && (p.name === 'send_message' || p.name === 'react_message' || p.name === 'stay_silent'),
       );
-      if (firstSendIdx !== -1) {
+      if (firstResolutionIdx !== -1) {
         entry.parts = parts.filter((p, i) => {
-          if (i < firstSendIdx && (p.kind === 'text' || p.kind === 'reasoning'))
+          if (i < firstResolutionIdx && (p.kind === 'text' || p.kind === 'reasoning'))
             return false;
           return true;
         });
@@ -71,12 +73,12 @@ export const pruneLengthLimitFailures = (
     }
   }
 
-  // Step 2: Find and remove length-limit failures.
+  // Step 2: Find and remove recoverable send_message failures.
   // Iterate in reverse so splice indices stay valid during removal.
   for (let i = result.length - 1; i >= 0; i--) {
     const entry = result[i]!;
     if (entry.kind !== 'toolResult') continue;
-    if (!isLengthLimitFailure(entry)) continue;
+    if (!isRecoverableSendMessageFailure(entry)) continue;
 
     // Find the matching ToolCallPart in a preceding OutputMessage
     let found = false;

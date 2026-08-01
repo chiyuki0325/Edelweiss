@@ -57,6 +57,10 @@ export const createToolsForCapabilities = (
     downloadMessageMedia: deps.downloadMessageMedia,
     platformAdapter: platform,
   });
+  const canOfferReaction = capabilities.canReact
+    && chatConfig.platform === 'telegram'
+    && deps.sendReaction != null
+    && reactionEmojis.length > 0;
 
   const createChatTools = (): CahciuaTool[] => {
     const tools: CahciuaTool[] = [];
@@ -76,7 +80,7 @@ export const createToolsForCapabilities = (
           throw new Error(`OneBot adapter unavailable for chat ${chatId}; refusing Telegram fallback`);
         const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
         return { messageId: String(sent.messageId) };
-      }, sendMessageTurnFlags));
+      }, sendMessageTurnFlags, canOfferReaction));
     }
     tools.push(createEnterFocusTool({ focusMode: deps.focusMode, getActiveTurn: deps.getActiveTurn }));
     if (capabilities.canDismissMessage)
@@ -85,7 +89,7 @@ export const createToolsForCapabilities = (
   };
 
   const createReactionTools = (): CahciuaTool[] => {
-    if (!capabilities.canReact || chatConfig.platform !== 'telegram' || !deps.sendReaction || reactionEmojis.length === 0)
+    if (!canOfferReaction)
       return [];
     return [createReactMessageTool(reactionEmojis, async (messageId, emoji) => {
       const numericMessageId = Number(messageId);

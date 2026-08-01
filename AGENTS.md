@@ -26,7 +26,7 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 31 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, blocked-message placeholders as deleted messages, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Telegram-only `react_message`, per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Telegram-only `react_message`, semantic follow-up review for `send_message` drafts containing “确实” (preserve substantive content or react), per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -277,6 +277,7 @@ Top-level directories:
   - `skill-authoring.md` — reusable workflow for inspecting skill runtime info and writing new skill files
 - `evals/` — optional user-authored LLM eval suites, IC fixtures, prompt variants, and evaluator modules. These are run manually with `pnpm eval <suite.ts>` and are not part of ordinary Vitest unit tests.
   - `evals/skill-activation/` — compares the pre/post Skill Activation system prompts with fake skills and reports `load_skill` / correct-skill call rates.
+  - `evals/agreement-review/` — exercises the `agreement_review_required` recovery choice, checking that substantive drafts are rewritten while pure agreement becomes a reaction.
 - `docs/` — architecture and design documents (not prompts)
   - `dcp-design.md` — architecture rationale and Driver/TR design
   - `content-aware-frame-selection.md` — MSE-based frame selection findings and rationale
@@ -544,10 +545,13 @@ The following optimizations are always active in `composeContext()` (operates on
 - **trimStaleNoToolCallTurnResponses**: Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge.
 - **trimSelfMessagesCoveredBySendToolCalls**: Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results).
 - **trimToolResults**: Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with non-low detail. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded.
+- **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for both the 256-byte limit and `agreement_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
+
+`send_message` intercepts the first draft per turn containing “确实” and returns `agreement_review_required`. This is a request for semantic review, not a declaration that the whole draft is meaningless: the model must remove only acknowledgement wording and preserve substantive content, or use `react_message` when the draft only agrees. The factory receives the already-resolved reaction capability as a boolean; no TurnState, RC, or persistence schema fields are added. If the rejected call supplied `reply_to`, that id is returned as the suggested reaction target; otherwise the model chooses from message ids already present in rendered chat context. OneBot receives the silent fallback and never sees Telegram reaction instructions.
 
 ### Human-Likeness Heuristic Toggles
 
-Each of the 6 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
+Each of the 7 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
 
 | Config key | Check | Default |
 |------------|-------|---------|
@@ -557,6 +561,7 @@ Each of the 6 heuristic checks in `send-message-human-likeness.ts` can be disabl
 | `humanLikeness.markdownList` | Markdown list | `true` |
 | `humanLikeness.markdownHeader` | Markdown header | `true` |
 | `humanLikeness.newline` | Any newline in a send_message | `true` |
+| `humanLikeness.notErshi` | Rigid “不是…而是…” rhetorical pattern | `true` |
 
 Toggles are per-chat (deep-merged with `default` like all other config). Defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; passed to `collectRecentSendMessageAssessments()` via `chatConfig.humanLikeness` in the Driver.
 

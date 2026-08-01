@@ -330,6 +330,70 @@ describe('executeToolCall', () => {
 describe('createSendMessageTool', () => {
   const makeText = (len: number) => 'x'.repeat(len);
 
+  it('asks for a semantic review instead of classifying the whole draft as meaningless', async () => {
+    const send = vi.fn();
+    const tool = createSendMessageTool(send);
+
+    const result = await tool.execute(
+      { text: '确实，这里少传了 abort signal' },
+      { toolCallId: 'tc-review' },
+    );
+
+    expect(result.requiresFollowUp).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content as string)).toMatchObject({
+      ok: false,
+      code: 'agreement_review_required',
+      next_actions: {
+        has_new_information: {
+          action: 'send_message',
+        },
+        agreement_only: {
+          action: 'stay_silent',
+        },
+      },
+    });
+  });
+
+  it('prefers a reaction and forwards reply_to as its suggested target when available', async () => {
+    const send = vi.fn();
+    const tool = createSendMessageTool(send, undefined, true);
+
+    const result = await tool.execute(
+      { text: '确实', reply_to: '42' },
+      { toolCallId: 'tc-react' },
+    );
+
+    expect(JSON.parse(result.content as string)).toMatchObject({
+      code: 'agreement_review_required',
+      next_actions: {
+        agreement_only: {
+          action: 'react_message',
+          suggested_message_id: '42',
+          fallback: 'stay_silent',
+        },
+      },
+    });
+  });
+
+  it('allows a corrected follow-up after flagging only once per turn', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '46' });
+    const tool = createSendMessageTool(send, undefined, true);
+
+    await tool.execute(
+      { text: '确实，这里少传了 abort signal' },
+      { toolCallId: 'tc-review' },
+    );
+    const corrected = await tool.execute(
+      { text: '这里少传了 abort signal' },
+      { toolCallId: 'tc-corrected' },
+    );
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith('这里少传了 abort signal\n', undefined, undefined);
+    expect(JSON.parse(corrected.content as string)).toEqual({ ok: true, message_id: '46' });
+  });
+
   it('returns error and sets wasLengthLimited when message exceeds 256 bytes', async () => {
     const send = vi.fn();
     const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };

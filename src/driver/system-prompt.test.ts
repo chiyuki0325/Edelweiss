@@ -100,6 +100,8 @@ describe('primary-system.velin.md', () => {
     expect(rendered).toContain('Allowed reaction emoji: 👍 ❤️');
     expect(rendered).toContain('low-disturbance alternative');
     expect(rendered).toContain('only call `stay_silent` or `react_message`');
+    expect(rendered).toContain('If `send_message` returns `agreement_review_required`');
+    expect(rendered).toContain('use `react_message` on the relevant message instead');
     assertNoVueSyntaxLeak(rendered);
   });
 
@@ -115,6 +117,7 @@ describe('primary-system.velin.md', () => {
     expect(rendered).not.toContain('Allowed reaction emoji');
     expect(rendered).not.toContain('Telegram reaction');
     expect(rendered).not.toContain('reaction_added');
+    expect(rendered).toContain('stay silent instead of rephrasing the acknowledgement');
     expect(rendered).toContain('only call `stay_silent`');
     assertNoVueSyntaxLeak(rendered);
   });

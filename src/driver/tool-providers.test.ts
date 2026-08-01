@@ -50,4 +50,38 @@ describe('createToolsForCapabilities send routing', () => {
       .rejects.toThrow('refusing Telegram fallback');
     expect(telegramSend).not.toHaveBeenCalled();
   });
+
+  it('does not suggest react_message when the reaction tool is not assembled', async () => {
+    const capabilities = createDefaultTurnCapabilities('main');
+    const tool = createToolsForCapabilities(
+      deps('onebot', vi.fn(async () => ({ messageId: 1, date: 1 }))),
+      capabilities,
+      ['👍'],
+    ).find(candidate => candidate.function.name === 'send_message')!;
+
+    const result = await tool.execute({ text: '确实' }, { toolCallId: 'tc1' });
+    const payload = JSON.parse(result.content as string);
+
+    expect(payload.next_actions.agreement_only.action).toBe('stay_silent');
+    expect(result.content).not.toContain('react_message');
+  });
+
+  it('suggests react_message when the Telegram reaction tool is assembled', async () => {
+    const capabilities = createDefaultTurnCapabilities('main');
+    const telegramDeps = deps('telegram', vi.fn(async () => ({ messageId: 1, date: 1 })));
+    telegramDeps.sendReaction = vi.fn(async () => {});
+    const tool = createToolsForCapabilities(telegramDeps, capabilities, ['👍'])
+      .find(candidate => candidate.function.name === 'send_message')!;
+
+    const result = await tool.execute(
+      { text: '确实', reply_to: '42' },
+      { toolCallId: 'tc1' },
+    );
+    const payload = JSON.parse(result.content as string);
+
+    expect(payload.next_actions.agreement_only).toMatchObject({
+      action: 'react_message',
+      suggested_message_id: '42',
+    });
+  });
 });
