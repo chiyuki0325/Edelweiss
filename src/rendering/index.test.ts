@@ -80,6 +80,11 @@ describe('render', () => {
       expect(matchingLegacyId[0]?.isMyself).toBeUndefined();
       expect(xml(matchingLegacyId)).not.toContain('myself="true"');
     });
+
+    it('preserves the associated-channel marker for late prompt binding', () => {
+      const rendered = render(ic([message({ isAssociatedChannelPost: true })]));
+      expect(rendered[0]?.isAssociatedChannelPost).toBe(true);
+    });
   });
 
   describe('timestamp formatting', () => {

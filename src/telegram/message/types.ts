@@ -70,6 +70,12 @@ export interface TelegramMessage {
   messageId: number;
   chatId: string;
   sender?: TelegramUser;
+  // Present when Telegram identifies the sender as a chat (for example, a
+  // channel posting into its linked discussion group), rather than a user.
+  senderChatId?: string;
+  // Raw Bot API transport detail, consumed by Telegram ingress only.
+  isAutomaticForward?: boolean;
+  isAssociatedChannelPost?: boolean;
   date: number;
   editDate?: number;
   text: string;
@@ -101,6 +107,8 @@ export interface TelegramMessageEdit {
   messageId: number;
   chatId: string;
   sender?: TelegramUser;
+  senderChatId?: string;
+  isAssociatedChannelPost?: boolean;
   date: number;
   editDate: number;
   text: string;

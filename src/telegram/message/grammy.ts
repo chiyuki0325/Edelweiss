@@ -263,6 +263,8 @@ export const fromGrammyMessage = (message: GrammyMessage): TelegramMessage => {
     messageId: message.message_id,
     chatId: String(message.chat.id),
     sender,
+    senderChatId: message.sender_chat ? String(message.sender_chat.id) : undefined,
+    isAutomaticForward: message.is_automatic_forward === true,
     date: message.date,
     editDate: message.edit_date,
     text: textContent,

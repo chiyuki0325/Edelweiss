@@ -280,6 +280,11 @@ describe('adaptMessage', () => {
     expect(event.isMyself).toBeUndefined();
   });
 
+  it('preserves the associated-channel marker for the prompt pipeline', () => {
+    const event = adaptMessage(baseTelegramMessage({ isAssociatedChannelPost: true }));
+    expect(event.isAssociatedChannelPost).toBe(true);
+  });
+
   it('adapts sender with firstName + lastName → displayName', () => {
     const event = adaptMessage(baseTelegramMessage({
       sender: { id: '1', firstName: 'Alice', lastName: 'Smith', isBot: false, isPremium: false },

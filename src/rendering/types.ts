@@ -33,6 +33,8 @@ export interface RenderedContextSegment {
   mentionsMe?: boolean;
   // Reply-to target is a message sent by this bot
   repliesToMe?: boolean;
+  // Message was posted by the Telegram channel linked to this group.
+  isAssociatedChannelPost?: boolean;
   // Segment is a runtime event (e.g. background task completion). The bot always
   // responds to runtime notifications.
   isRuntimeEvent?: boolean;

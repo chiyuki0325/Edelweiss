@@ -258,6 +258,16 @@ const peerToTelegramUser = (peer?: Api.TypePeer): TelegramUser | undefined => {
 const resolveTelegramUser = (peer?: Api.TypePeer, entity?: unknown): TelegramUser | undefined =>
   entityToTelegramUser(entity) ?? peerToTelegramUser(peer);
 
+const resolveSenderChatId = (peer?: Api.TypePeer): string | undefined =>
+  peer instanceof Api.PeerChannel ? `-100${peer.channelId.toJSNumber()}` : undefined;
+
+// MTProto represents channel posts automatically forwarded to a linked
+// discussion group with the linked channel as `fromId`. Unlike the Bot API,
+// it has no `is_automatic_forward` field, so normalize that representation at
+// the platform boundary.
+const isGramjsAutomaticForward = (message: Api.Message): boolean =>
+  message.fromId instanceof Api.PeerChannel;
+
 export const resolveGramjsSender = (message: Api.Message): TelegramUser | undefined => {
   return resolveTelegramUser(message.fromId, message.sender);
 };
@@ -274,6 +284,8 @@ const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUse
     messageId: message.id,
     chatId: resolveChatId(message.peerId),
     sender: senderInfo,
+    senderChatId: resolveSenderChatId(message.fromId),
+    isAutomaticForward: isGramjsAutomaticForward(message),
     date: message.date,
     text: message.rawText,
     entities: convertGramjsEntities(message.entities),

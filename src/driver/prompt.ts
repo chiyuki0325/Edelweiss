@@ -67,6 +67,7 @@ export const renderLateBindingPrompt = async (params: {
   timeNow: string;
   isMentioned?: boolean;
   isReplied?: boolean;
+  isAssociatedChannelPost?: boolean;
   recentSendMessageHumanLikenessXml?: string;
   activeBackgroundTasks?: { id: number; typeName: string; intention?: string; liveSummary: string; startedMs: number; timeoutMs: number }[];
   isInterrupted?: boolean;

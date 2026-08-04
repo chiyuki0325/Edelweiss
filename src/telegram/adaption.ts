@@ -206,6 +206,7 @@ export const adaptMessage = (msg: TelegramMessage, botUserId?: string): Canonica
   };
   if (msg.sender) event.sender = adaptUser(msg.sender);
   if (botUserId != null && msg.sender?.id === botUserId) event.isMyself = true;
+  if (msg.isAssociatedChannelPost) event.isAssociatedChannelPost = true;
   if (msg.replyToMessageId != null) event.replyToMessageId = String(msg.replyToMessageId);
   if (msg.replyQuoteText != null) event.replyQuoteText = msg.replyQuoteText;
   const forwardInfo = adaptForwardInfo(msg.forwardInfo);

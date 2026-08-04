@@ -64,6 +64,7 @@ export interface BotClient {
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
   sendReaction(chatId: string | number, messageId: number, emoji: string): Promise<void>;
   getChatName(chatId: string | number): Promise<string>;
+  getLinkedChatId(chatId: string | number): Promise<string | undefined>;
   downloadFile(fileId: string): Promise<Buffer>;
   raw(): Bot;
   botUserId(): string;
@@ -311,6 +312,12 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     return String(chatId);
   };
 
+  const getLinkedChatId = async (chatId: string | number): Promise<string | undefined> => {
+    const chat = await bot.api.getChat(chatId);
+    const linkedChatId = (chat as { linked_chat_id?: number }).linked_chat_id;
+    return linkedChatId == null ? undefined : String(linkedChatId);
+  };
+
   return {
     start,
     stop,
@@ -328,6 +335,7 @@ export const createBotClient = (options: BotClientOptions, logger: Logger): BotC
     sendMediaGroup,
     sendReaction,
     getChatName,
+    getLinkedChatId,
     downloadFile,
     raw: () => bot,
     botUserId: () => userId,

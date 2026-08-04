@@ -79,6 +79,9 @@ const mergeAttachments = (target?: Attachment[], source?: Attachment[]) => {
 
 export const mergeTelegramMessageData = (target: TelegramMessage, source: TelegramMessage) => {
   target.sender = mergeTelegramUser(target.sender, source.sender);
+  target.senderChatId ??= source.senderChatId;
+  target.isAutomaticForward ??= source.isAutomaticForward;
+  target.isAssociatedChannelPost ??= source.isAssociatedChannelPost;
   target.editDate ??= source.editDate;
   if (!target.text) target.text = source.text;
   target.entities ??= source.entities;

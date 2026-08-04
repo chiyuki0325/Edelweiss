@@ -32,12 +32,15 @@ export const createPromptFeature = (deps: MainTurnFeatureDeps): DriverFeature =>
       seg.mentionsMe && seg.receivedAtMs > deps.lastProcessedMs());
     const isReplied = turn.rcAtStart.some(seg =>
       seg.repliesToMe && seg.receivedAtMs > deps.lastProcessedMs());
+    const isAssociatedChannelPost = turn.rcAtStart.some(seg =>
+      seg.isAssociatedChannelPost && seg.receivedAtMs > deps.lastProcessedMs());
 
     injectLateBindingPrompt(turn.entries, await renderLateBindingPrompt({
       timeNow: deps.nowString(),
       forceToolCall: deps.chatConfig.primaryModel.forceToolCall,
       isMentioned,
       isReplied,
+      isAssociatedChannelPost,
       recentSendMessageHumanLikenessXml: ctx.scratch.recentSendMessageHumanLikenessXml,
       isInterrupted,
       activeBackgroundTasks: deps.getActiveBackgroundTasks(deps.chatId),

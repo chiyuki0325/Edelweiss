@@ -59,6 +59,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
       const existingMessage = draft.nodes[existingIdx] as ICMessage;
       if (event.isMyself) existingMessage.isMyself = true;
       if (event.isSelfSent) existingMessage.isSelfSent = true;
+      if (event.isAssociatedChannelPost) existingMessage.isAssociatedChannelPost = true;
     }
     return;
   }
@@ -111,6 +112,7 @@ const reduceMessage = (draft: IntermediateContext, event: CanonicalMessageEvent)
   if (event.forwardInfo) message.forwardInfo = event.forwardInfo;
   if (event.isMyself) message.isMyself = true;
   if (event.isSelfSent) message.isSelfSent = true;
+  if (event.isAssociatedChannelPost) message.isAssociatedChannelPost = true;
   draft.nodes.push(message);
 
   // Update user state

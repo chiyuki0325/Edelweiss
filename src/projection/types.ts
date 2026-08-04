@@ -20,6 +20,7 @@ export interface ICMessage {
   deleted?: boolean;
   isMyself?: boolean;
   isSelfSent?: boolean;
+  isAssociatedChannelPost?: boolean;
 }
 
 export interface ICBlockedMessage {

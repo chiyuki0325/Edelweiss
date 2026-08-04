@@ -191,6 +191,11 @@ describe('primary-late-binding.velin.md', () => {
     expect(rendered).toContain('replied');
   });
 
+  it('renders associated-channel post state', async () => {
+    const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isAssociatedChannelPost: true });
+    expect(rendered).toContain('associated channel');
+  });
+
   it('renders interrupted state', async () => {
     const rendered = await renderLateBinding({ timeNow: '2025-01-01T00:00:00Z', isInterrupted: true });
     expect(rendered).toContain('interrupted by new messages');

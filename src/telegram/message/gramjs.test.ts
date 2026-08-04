@@ -2,7 +2,7 @@ import bigInt from 'big-integer';
 import { Api } from 'telegram';
 import { describe, expect, it } from 'vitest';
 
-import { fromGramjsAnyMessage, fromGramjsServiceMessage } from './gramjs';
+import { fromGramjsAnyMessage, fromGramjsMessage, fromGramjsServiceMessage } from './gramjs';
 import { mergeTelegramMessageData } from './index';
 import type { TelegramMessage } from './types';
 
@@ -89,6 +89,25 @@ describe('fromGramjsAnyMessage', () => {
       source: 'userbot',
       newChatTitle: 'Renamed',
       sender: { id: '99', firstName: 'Admin' },
+    });
+  });
+});
+
+describe('fromGramjsMessage', () => {
+  it('normalizes a channel sender as an automatic-forward candidate', () => {
+    const message = new Api.Message({
+      id: 1,
+      peerId: new Api.PeerChannel({ channelId: bigInt(123) }),
+      fromId: new Api.PeerChannel({ channelId: bigInt(777) }),
+      date: 1_700_000_000,
+      message: 'Channel post',
+    });
+
+    const result = fromGramjsMessage(message);
+
+    expect(result).toMatchObject({
+      senderChatId: '-100777',
+      isAutomaticForward: true,
     });
   });
 });

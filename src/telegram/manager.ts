@@ -61,6 +61,34 @@ type IngressEvent =
 export const shouldAutoDescribeImageAttachment = (attachment: Attachment): boolean =>
   attachment.type !== 'photo' || attachment.hasSpoiler !== true;
 
+/**
+ * Caches the Telegram linked-channel lookup per group for the lifetime of the
+ * process. The cache deliberately stores promises too, so simultaneous posts
+ * in one group share a single Bot API request.
+ */
+export const createAssociatedChannelResolver = (
+  getLinkedChatId: (groupChatId: string) => Promise<string | undefined>,
+) => {
+  const linkedChannels = new Map<string, Promise<string | undefined>>();
+
+  const linkedChannelFor = (groupChatId: string) => {
+    let pending = linkedChannels.get(groupChatId);
+    if (!pending) {
+      pending = getLinkedChatId(groupChatId).catch(err => {
+        linkedChannels.delete(groupChatId);
+        throw err;
+      });
+      linkedChannels.set(groupChatId, pending);
+    }
+    return pending;
+  };
+
+  return async (groupChatId: string, senderChatId?: string, isAutomaticForward?: boolean): Promise<boolean> => {
+    if (!senderChatId || !isAutomaticForward) return false;
+    return (await linkedChannelFor(groupChatId)) === senderChatId;
+  };
+};
+
 const captureIngressMeta = () => ({
   receivedAtMs: Date.now(),
   utcOffsetMin: -new Date().getTimezoneOffset(),
@@ -140,6 +168,17 @@ export const createTelegramManager = (
   const animationMaxFrames = options.animationMaxFrames;
   const customEmojiToText = options.customEmojiToText;
   const customEmojiToTextChatIds = options.customEmojiToTextChatIds;
+  const isAssociatedChannelPost = createAssociatedChannelResolver(chatId => bot.getLinkedChatId(chatId));
+
+  const markAssociatedChannelPost = async (message: TelegramMessage): Promise<TelegramMessage> => {
+    try {
+      if (await isAssociatedChannelPost(message.chatId, message.senderChatId, message.isAutomaticForward))
+        message.isAssociatedChannelPost = true;
+    } catch (err) {
+      log.withError(err).withFields({ chatId: message.chatId }).warn('Failed to resolve Telegram linked channel');
+    }
+    return message;
+  };
 
   // Pack title cache: set_name → display title (in-process, never changes)
   const packTitleCache = new Map<string, string>();
@@ -256,6 +295,7 @@ export const createTelegramManager = (
     transform: async event => {
       switch (event.kind) {
       case 'message':
+        await markAssociatedChannelPost(event.message);
         await hydrateAttachments(event.chatId, event.message.messageId, event.message.text, event.message.attachments, event.message.entities);
         return event;
       case 'edit':

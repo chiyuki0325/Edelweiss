@@ -118,11 +118,12 @@ const hasMention = (nodes: ContentNode[], userId: string): boolean =>
 
 // --- ICNode → content pieces ---
 
-const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean; mentionsMe: boolean; repliesToMe: boolean } => {
+const renderMessage = (msg: ICMessage, params: RenderParams): { content: RenderedContentPiece[]; isMyself: boolean; isSelfSent: boolean; mentionsMe: boolean; repliesToMe: boolean; isAssociatedChannelPost: boolean } => {
   const isMyself = !!msg.isMyself;
   const isSelfSent = !!msg.isSelfSent;
   const mentionsMe = !!(params.botUserId && hasMention(msg.content, params.botUserId));
   const repliesToMe = !!(params.botUserId && msg.replyToSender?.id === params.botUserId);
+  const isAssociatedChannelPost = !!msg.isAssociatedChannelPost;
   const attrs: string[] = [
     `id="${escapeXml(msg.messageId)}"`,
   ];
@@ -144,7 +145,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
 
   if (msg.deleted) {
     attrs.push('deleted="true"');
-    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself, isSelfSent, mentionsMe, repliesToMe };
+    return { content: [{ type: 'text', text: `<message ${attrs.join(' ')}/>` }], isMyself, isSelfSent, mentionsMe, repliesToMe, isAssociatedChannelPost };
   }
 
   const parts: string[] = [];
@@ -175,7 +176,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
       pieces.push({ type: 'image', image: sharp(Buffer.from(att.thumbnailWebp, 'base64')) });
   }
 
-  return { content: pieces, isMyself, isSelfSent, mentionsMe, repliesToMe };
+  return { content: pieces, isMyself, isSelfSent, mentionsMe, repliesToMe, isAssociatedChannelPost };
 };
 
 const renderBlockedMessage = (msg: ICBlockedMessage): RenderedContentPiece[] => {
@@ -264,8 +265,8 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
     if (params.compactCursorMs != null && node.receivedAtMs < params.compactCursorMs) continue;
 
     if (node.type === 'message') {
-      const { content, isMyself, isSelfSent, mentionsMe, repliesToMe } = renderMessage(node, params);
-      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }) });
+      const { content, isMyself, isSelfSent, mentionsMe, repliesToMe, isAssociatedChannelPost } = renderMessage(node, params);
+      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }), ...(isAssociatedChannelPost && { isAssociatedChannelPost }) });
     } else if (node.type === 'blocked_message') {
       segments.push({ receivedAtMs: node.receivedAtMs, content: renderBlockedMessage(node) });
     } else if (node.type === 'runtime_event') {

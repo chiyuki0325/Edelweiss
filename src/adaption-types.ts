@@ -63,6 +63,8 @@ export interface CanonicalMessageEvent {
   attachments: CanonicalAttachment[];
   isMyself?: boolean;
   isSelfSent?: boolean;
+  /** Message was posted by this group's linked Telegram channel. */
+  isAssociatedChannelPost?: boolean;
 }
 
 export interface CanonicalBlockedMessageEvent {
