@@ -90,6 +90,7 @@ export interface ChatScope {
   subagents: SubagentManager;
   allSkills: Map<string, SkillInfo>;
   compactionMeta: DriverSignal<CompactionSessionMeta | null>;
+  chatLoopBlocked: DriverSignal<boolean>;
   focusMode: DriverSignal<boolean>;
   scheduler: SchedulerState;
   activeTurn: TurnState | null;

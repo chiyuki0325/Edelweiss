@@ -98,6 +98,7 @@ export interface DriverSchedulerScope {
   lastTRInterrupted: DriverSignal<boolean>;
   failedRc: DriverSignal<RenderedContext | null>;
   focusMode: DriverSignal<boolean>;
+  chatLoopBlocked: DriverSignal<boolean>;
   scheduler: SchedulerState;
   getActiveTurn?: () => TurnState | null;
 }
@@ -210,6 +211,21 @@ export const createDriverScheduler = (
   const disposeReplyEffect = effect(() => {
     const rcVal = scope.rc();
     const isRunning = scope.running();
+    const isChatLoopBlocked = scope.chatLoopBlocked();
+
+    if (isChatLoopBlocked) {
+      notifyDebounceStopped();
+      stateController.clearWaitingState();
+      if (isRunning) {
+        if (state.abortLocked) {
+          state.pendingAbort = true;
+        } else if (state.abortController) {
+          state.abortController.abort(new Error('Context compaction requested, aborting current call'));
+          state.abortController = null;
+        }
+      }
+      return;
+    }
 
     if (isRunning) {
       notifyDebounceStopped();
@@ -285,7 +301,7 @@ export const createDriverScheduler = (
   });
 
   const beginTurn = (): StartedTurnInfo | null => {
-    if (scope.running()) return null;
+    if (scope.running() || scope.chatLoopBlocked()) return null;
     stateController.clearDebounceTimers();
     notifyDebounceStopped();
     state.debounceWaiting = false;

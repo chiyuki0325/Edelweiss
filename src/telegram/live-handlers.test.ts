@@ -127,7 +127,10 @@ describe('createTelegramLiveHandlers commands', () => {
     await commands.get('compact')!('-100123');
 
     expect(requestCompaction).toHaveBeenCalledWith('-100123');
-    expect(sendMessage).toHaveBeenCalledWith('-100123', 'Nothing to compact.');
+    expect(sendMessage.mock.calls).toEqual([
+      ['-100123', 'Compacting conversation context. Messages will not be processed until compaction completes.'],
+      ['-100123', 'Nothing to compact.'],
+    ]);
   });
 });
 

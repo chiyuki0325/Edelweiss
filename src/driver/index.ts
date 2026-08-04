@@ -130,6 +130,7 @@ export const createDriver = (config: DriverConfig, deps: {
     void getLastProcessedTime(chatId).then(v => lastProcessedMs(Math.max(lastProcessedMs(), v)));
     void loadTRs(chatId).then(trs => lastTRInterrupted(wasToolLoopInterrupted(trs)));
     const running = signal(false);
+    const chatLoopBlocked = signal(false);
     const failedRc = signal<RenderedContext | null>(null);
     const focusMode = signal(false);
     const scheduler = createSchedulerState();
@@ -340,6 +341,7 @@ export const createDriver = (config: DriverConfig, deps: {
       rc,
       offline,
       running,
+      chatLoopBlocked,
       lastProcessedMs,
       lastTRInterrupted,
       failedRc,
@@ -357,13 +359,30 @@ export const createDriver = (config: DriverConfig, deps: {
 
     // --- Independent compaction effect ---
     let compactionTask: Promise<ManualCompactionResult> | undefined;
+    let compactionBlocksChatLoop = false;
     let compactionTimer: ReturnType<typeof setTimeout> | undefined;
     let lastCheckedRc: RenderedContext | null = null;
 
+    const waitForChatLoopIdle = (): Promise<void> => {
+      if (!running()) return Promise.resolve();
+      return new Promise(resolve => {
+        const dispose = effect(() => {
+          if (running()) return;
+          dispose();
+          resolve();
+        });
+      });
+    };
+
     const compact = (manual: boolean): Promise<ManualCompactionResult> => {
+      if (manual && !compactionBlocksChatLoop) {
+        compactionBlocksChatLoop = true;
+        chatLoopBlocked(true);
+      }
       if (compactionTask) return compactionTask;
 
       compactionTask = (async (): Promise<ManualCompactionResult> => {
+        if (manual) await waitForChatLoopIdle();
         const cursor = cursorMs();
         const sum = summary();
         const compactEndpoint = chatConfig.compaction.model ?? chatConfig.primaryModel;
@@ -428,8 +447,13 @@ export const createDriver = (config: DriverConfig, deps: {
 
         compactionMeta(newMeta);
         return { status: 'completed', meta: newMeta };
-      })().finally(() => {
+      })().finally(async () => {
+        if (compactionBlocksChatLoop) await waitForChatLoopIdle();
         compactionTask = undefined;
+        if (compactionBlocksChatLoop) {
+          compactionBlocksChatLoop = false;
+          chatLoopBlocked(false);
+        }
       });
 
       return compactionTask!;
@@ -473,6 +497,7 @@ export const createDriver = (config: DriverConfig, deps: {
       subagents: subagentManager,
       allSkills,
       compactionMeta,
+      chatLoopBlocked,
       focusMode,
       scheduler,
       activeTurn: null,

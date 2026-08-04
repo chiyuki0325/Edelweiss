@@ -455,7 +455,7 @@ Scheduling lives in Driver (not a separate orchestration layer) because the Driv
 **Offline mode**: Each chat scope has an `offline` signal. When offline, `needsReply` only becomes true if there is an unprocessed RC segment with `mentionsMe` or `repliesToMe` — ordinary new messages are ignored. After the LLM call triggered by a mention/reply completes (success or failure), the Driver automatically resets `offline` to `false` (back to online). Sending `/offline` while an LLM call is already running leaves the call unaffected and keeps offline mode active after it finishes. Commands:
 - `/offline` — enter offline mode; bot responds only to @mentions and replies, then auto-returns online.
 - `/online` — return to online mode immediately.
-- `/compact` — manually compact all context before the configured working window; skips cleanly when there is nothing eligible to summarize.
+- `/compact` — immediately blocks the per-chat LLM loop, announces that compaction is in progress, waits for any active turn to abort and settle, then compacts all context before the configured working window. Messages arriving while blocked are persisted/projected but are not sent to the model until compaction finishes. The command itself is intercepted and never enters the LLM pipeline; no-op compactions still unlock cleanly.
 
 Commands are registered via `bot.registerCommand()` from `src/telegram/live-handlers.ts` and reported to Telegram via `setMyCommands` when the bot client starts. Command messages are intercepted before `bot.on('message')` in the grammY middleware chain so they do not enter the LLM pipeline.
 
@@ -631,7 +631,7 @@ Compaction proactively summarizes historical conversation context to prevent LLM
 4. Reply effect reads `cursorMs()` and `summary()` from signals — no runtime DB queries
 5. Compaction effect: when `estimatedTokens > maxContextEstTokens`, calls `runCompaction()` → `persistCompaction()` → updates `compactionMeta` signal → cursor effect auto-applies
 
-Manual `/compact` commands on Telegram and OneBot use the same per-chat compaction task, bypass the high-water trigger, and retain the configured low-water working window. Concurrent manual/automatic requests share one in-flight task.
+Manual `/compact` commands on Telegram and OneBot use the same per-chat compaction task, bypass the high-water trigger, and retain the configured low-water working window. A manual request immediately blocks that chat's reply scheduler, aborts and waits for an active turn to settle, and releases queued message processing only after compaction succeeds, fails, or skips. Concurrent manual/automatic requests share one in-flight task.
 
 **Compaction storage** (`compactions` table): append-only — each compaction inserts a new row. `loadCompaction` reads the latest by `ORDER BY id DESC LIMIT 1`. Rolling back = deleting the latest row. Never upsert.
 

@@ -173,23 +173,30 @@ export const createOneBotIngress = (deps: OneBotIngressDeps): OneBotIngress => {
           return;
         }
         if (text === '/compact') {
-          void deps.requestCompaction(event.chatId)
-            .then(result => {
+          const compaction = deps.requestCompaction(event.chatId);
+          void (async () => {
+            try {
+              await deps.sendPlatformMessage(event.chatId, 'Compacting conversation context. Messages will not be processed until compaction completes.');
+            } catch (err) {
+              log.withError(err).withFields({ chatId: event.chatId }).warn('Failed to send manual compaction start notice');
+            }
+            try {
+              const result = await compaction;
               const reply = result.status === 'completed'
                 ? 'Context compaction complete.'
                 : result.reason === 'no_content'
                   ? 'Nothing to compact.'
                   : 'Nothing to compact: context is already within the working window.';
-              return deps.sendPlatformMessage(event.chatId, reply);
-            })
-            .catch(async err => {
+              await deps.sendPlatformMessage(event.chatId, reply);
+            } catch (err) {
               log.withError(err).withFields({ chatId: event.chatId }).error('Manual context compaction failed');
               try {
                 await deps.sendPlatformMessage(event.chatId, 'Context compaction failed. Check the logs for details.');
               } catch (sendErr) {
                 log.withError(sendErr).warn('Failed to send manual compaction failure ack');
               }
-            });
+            }
+          })();
           return;
         }
       }

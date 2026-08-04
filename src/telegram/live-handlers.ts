@@ -283,8 +283,14 @@ export const createTelegramLiveHandlers = (deps: TelegramLiveHandlersDeps): Tele
     });
 
     deps.manager.bot.registerCommand('compact', 'Compact conversation context now', async chatId => {
+      const compaction = deps.driverControl.requestCompaction(chatId);
       try {
-        const result = await deps.driverControl.requestCompaction(chatId);
+        await deps.manager.bot.sendMessage(chatId, 'Compacting conversation context. Messages will not be processed until compaction completes.');
+      } catch (err) {
+        deps.logger.withError(err).withFields({ chatId }).warn('Failed to send manual compaction start notice');
+      }
+      try {
+        const result = await compaction;
         const reply = result.status === 'completed'
           ? 'Context compaction complete.'
           : result.reason === 'no_content'

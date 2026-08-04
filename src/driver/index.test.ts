@@ -373,6 +373,66 @@ describe('createDriver debounce scheduling', () => {
     }
   });
 
+  it('blocks the chat loop and queues new messages until manual compaction finishes', async () => {
+    const completion = deferred<{
+      oldCursorMs: number;
+      newCursorMs: number;
+      summary: string;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
+    let callCount = 0;
+    mocks.callModelStep.mockImplementation(async (_working, params) => {
+      callCount++;
+      if (callCount === 1) await waitForAbort(params.signal);
+      return { entries: [], toolCalls: [], usage, requestedAtMs: Date.now() };
+    });
+    mocks.runCompaction.mockImplementation(() => completion.promise);
+    const driver = createTestDriver({
+      initialDelayMs: 1000,
+      typingExtendMs: 200,
+      maxDelayMs: 5000,
+      typingExemptUsers: [],
+    });
+
+    try {
+      const initialRc: RenderedContext = [
+        { receivedAtMs: 50, content: [{ type: 'text', text: 'x'.repeat(20_000) }] },
+        { receivedAtMs: 100, content: [{ type: 'text', text: 'x'.repeat(110_000) }] },
+        { receivedAtMs: 200, content: [{ type: 'text', text: 'recent' }] },
+      ];
+      driver.handleEvent('chat', initialRc);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mocks.callModelStep).toHaveBeenCalledOnce();
+
+      const firstCall = mocks.callModelStep.mock.calls[0]![1] as { signal: AbortSignal };
+      const compaction = driver.requestCompaction('chat');
+      expect(firstCall.signal.aborted).toBe(true);
+      await vi.waitFor(() => expect(mocks.runCompaction).toHaveBeenCalledOnce());
+
+      driver.handleEvent('chat', [
+        ...initialRc,
+        { receivedAtMs: 300, content: [{ type: 'text', text: 'arrived while compacting' }] },
+      ]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(mocks.callModelStep).toHaveBeenCalledOnce();
+
+      completion.resolve({
+        oldCursorMs: 0,
+        newCursorMs: 100,
+        summary: 'summary',
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+      await expect(compaction).resolves.toMatchObject({ status: 'completed' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mocks.callModelStep).toHaveBeenCalledTimes(2);
+    } finally {
+      driver.stop();
+    }
+  });
+
   it('skips manual compaction when all context fits in the working window', async () => {
     const driver = createTestDriver({
       initialDelayMs: 1000,

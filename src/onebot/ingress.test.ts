@@ -127,7 +127,11 @@ describe('createOneBotIngress', () => {
 
     ingress.enqueue(groupMessage(100, 7, '/compact'), meta());
 
-    await vi.waitFor(() => expect(sendPlatformMessage).toHaveBeenCalledWith('100', 'Context compaction complete.'));
+    await vi.waitFor(() => expect(sendPlatformMessage).toHaveBeenCalledTimes(2));
+    expect(sendPlatformMessage.mock.calls).toEqual([
+      ['100', 'Compacting conversation context. Messages will not be processed until compaction completes.'],
+      ['100', 'Context compaction complete.'],
+    ]);
     expect(requestCompaction).toHaveBeenCalledWith('100');
     expect(persistEvent).not.toHaveBeenCalled();
   });
