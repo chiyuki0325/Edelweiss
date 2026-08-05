@@ -22,13 +22,13 @@ export const createReadImageTool = (deps: {
     lane: 'readonly',
     waitForWriters: input => Boolean((input as { path?: string }).path),
   },
-  description: 'Read and analyze an image from a chat attachment or the filesystem.',
+  description: 'Read and analyze an image from a chat attachment, an Instant View telegram:// photo URL, or the filesystem.',
   parameters: {
     type: 'object',
     properties: {
       file_id: {
         type: 'string',
-        description: 'The file-id from an attachment element (format: messageId:index).',
+        description: 'A file-id from an attachment element (messageId:index) or a telegram:// Instant View photo URL.',
       },
       path: {
         type: 'string',

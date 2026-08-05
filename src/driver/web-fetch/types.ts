@@ -17,6 +17,10 @@ export interface WebFetcher {
   fetch: (url: string) => Promise<WebFetchResult>;
 }
 
+export interface InstantViewFetcher {
+  fetch: (url: string) => Promise<{ title?: string; content: string } | undefined>;
+}
+
 export type WebFetchProvider = 'jina';
 
 export interface WebFetchConfig {

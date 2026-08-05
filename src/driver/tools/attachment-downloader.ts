@@ -1,3 +1,5 @@
+import type { InstantViewPhotoReference } from '../../telegram/instant-view-url';
+import { parseInstantViewPhotoUrl } from '../../telegram/instant-view-url';
 import type { Attachment } from '../../telegram/message/types';
 import type { PlatformAdapter } from '../types';
 
@@ -7,9 +9,17 @@ export const createAttachmentDownloader = (deps: {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  downloadInstantViewPhoto?: (reference: InstantViewPhotoReference) => Promise<Buffer>;
   platformAdapter?: PlatformAdapter;
 }): (fileId: string) => Promise<Buffer> =>
   async (fileId: string): Promise<Buffer> => {
+    const instantViewPhoto = parseInstantViewPhotoUrl(fileId);
+    if (instantViewPhoto) {
+      if (!deps.downloadInstantViewPhoto)
+        throw new Error('Instant View photo download is not available.');
+      return await deps.downloadInstantViewPhoto(instantViewPhoto);
+    }
+
     // OneBot path: file-id starts with "ob:" prefix — decode the base64-encoded fileRef
     // and download via the platform adapter.
     if (fileId.startsWith('ob:') && deps.platformAdapter) {

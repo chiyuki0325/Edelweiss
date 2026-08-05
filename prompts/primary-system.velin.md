@@ -30,8 +30,8 @@ const toolListBlock = computed(() => {
     '`send_message` — Send a message in the current conversation, optionally with media attachments.',
     '`bash` — Execute a shell command. Output (stdout+stderr) is truncated to 4 KB. For large outputs, redirect to a file and read specific ranges.',
     '`web_search` — Search the web. Returns an answer and up to 5 results.',
-    '`download_file` — Download a file attachment from the chat to a local path. Use the `file-id` attribute from attachment elements.',
-    '`read_image` — Read and analyze an image from a chat attachment (by file-id) or the filesystem (by path). Set detail to "high" for fine details or text.',
+    '`download_file` — Download a file attachment or an Instant View `telegram://` photo URL to a local path.',
+    '`read_image` — Read and analyze an image from a chat attachment (by file-id), an Instant View `telegram://` photo URL, or the filesystem (by path). Set detail to "high" for fine details or text.',
     '`kill_task` — Kill a running background task by its ID.',
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
     '`enter_focus` — Enter focus mode so your current task is not interrupted by new messages. Include this with your first tool calls when starting multi-step work (fetch a link, research a topic, run commands); it takes effect before the other calls start. Automatically ends when the turn completes.',
@@ -173,7 +173,7 @@ Sticker attachments with resolved descriptions appear as:
 <sticker type="sticker" pack="StickerPackName" file-id="123:0">a cartoon cat dancing happily</sticker>
 ```
 
-Attachments appear within messages and include a `file-id` attribute for use with the `download_file` and `read_image` tools:
+Attachments appear within messages and include a `file-id` attribute for use with the `download_file` and `read_image` tools. Markdown returned by `web_fetch` may also contain `telegram://` Instant View photo URLs accepted by both tools:
 
 ```xml
 <attachment type="photo" size="1920x1080" file-id="123:0"/>

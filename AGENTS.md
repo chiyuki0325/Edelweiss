@@ -20,13 +20,13 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 
 | Layer | Status | Notes |
 |-------|--------|-------|
-| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, associated-channel auto-forward detection (`is_automatic_forward` + cached group → linked-channel lookup, prompts active reply), blocking image-to-text (spoiler photos require manual `read_image`), blocking animation-to-text, blocking custom-emoji-to-text, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
+| Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, associated-channel auto-forward detection (`is_automatic_forward` + cached group → linked-channel lookup, prompts active reply), blocking image-to-text (spoiler photos require manual `read_image`), blocking animation-to-text, blocking custom-emoji-to-text, userbot Instant View fetch/photo download with `telegram://instant-view/photo/...` references, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown and latest-connection ownership, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, reconnect-safe send/download PlatformAdapter, fail-closed channel routing (never falls back to Telegram), entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering, platform-resolved `isMyself` identity |
 | DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 31 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, blocked-message placeholders as deleted messages, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Telegram-only `react_message`, semantic follow-up review for `send_message` drafts containing “确实” (preserve substantive content or react), per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), automatic and `/compact`-triggered context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Instant View-first `web_fetch` with X/Twitter mirror substitution and Jina fallback, shared `telegram://` photo reads via `read_image` / `download_file`, Telegram-only `react_message`, semantic follow-up review for `send_message` drafts containing “确实” (preserve substantive content or react), per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), automatic and `/compact`-triggered context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -148,6 +148,10 @@ src/
 │   │   └── *.ts            # One factory per feature: context, interruption, reaction, capability, tools, skill, prompt, mailbox, persistence, cleanup, etc.
 │   ├── prompt.ts           # Prompt rendering — loads all velin templates from prompts/; main prompt starts with sanitized chat_name/chat_id metadata
 │   ├── skills.ts           # Skill loader: reads markdown files/directories from skills/ folder → SkillInfo map
+│   ├── web-fetch/          # Hardcoded host substitution → Telegram Instant View → Jina fallback
+│   │   ├── index.ts        # Composite routing and x.com/twitter.com mirror substitution
+│   │   ├── jina.ts         # Jina Reader fallback backend
+│   │   └── types.ts        # WebFetcher / InstantViewFetcher contracts and config/result types
 │   ├── tools/               # Tool definitions, one file per tool + shared types/execution/barrel
 │   │   ├── types.ts          # CahciuaTool, ToolResult, createTool, SendMessageAttachment, SendMessageTurnFlags
 │   │   ├── bash.ts           # createBashTool + built-in pseudo commands (chat_info, skill_info)
@@ -162,7 +166,7 @@ src/
 │   │   ├── kill-task.ts      # createKillTaskTool
 │   │   ├── read-task-output.ts # createReadTaskOutputTool
 │   │   ├── sleep.ts          # createSleepTool
-│   │   ├── attachment-downloader.ts # Shared file_id→Buffer resolver (Telegram + OneBot)
+│   │   ├── attachment-downloader.ts # Shared file_id→Buffer resolver (Telegram + OneBot + Instant View telegram:// photos)
 │   │   ├── execution.ts      # extractToolCalls, extractLoadedSkillNames, executeToolCall
 │   │   ├── index.ts          # Barrel re-exports
 │   │   └── index.test.ts     # Tool unit tests
@@ -227,6 +231,9 @@ src/
 │   └── lottie-frame.d.ts    # Type declarations for lottie-frame native addon
 └── telegram/
     ├── index.ts             # Telegram public entry + startup handle aggregation
+    ├── instant-view.ts      # userbot messages.getWebPage retry/unwrap + referenced Photo download
+    ├── instant-view-markdown.ts # Instant View RichText/PageBlock AST → compact Markdown
+    ├── instant-view-url.ts  # Pure telegram://instant-view/photo URL formatter/parser
     ├── adaption.ts          # Telegram message/edit/delete/reaction/service → CanonicalIMEvent conversion, rich text parsing, contentToPlainText
     ├── adaption.test.ts     # Telegram adaptation and rich text parser tests
     ├── manager.ts           # TelegramManager — unified facade, session ingress queue, cached associated-channel detection, blocking media transforms (skips spoiler-photo auto-description), dedup dispatch
@@ -383,7 +390,7 @@ Messages from both clients are deduplicated by `(chatId, messageId)` in the Tele
 
 Telegram integration is intentionally split by runtime responsibility. Do not reintroduce a large `startup.ts` or a single giant `TelegramStartupDeps` object.
 
-- `src/telegram/manager.ts`: owns the Bot API client, optional userbot, dedup, ingress queue, blocking media transforms, reaction actor hydration, typing event capture, typing polling controls, and raw send/download methods. It does **not** know about DB persistence, Pipeline, Driver, compaction, or chat policy.
+- `src/telegram/manager.ts`: owns the Bot API client, optional userbot, dedup, ingress queue, blocking media transforms, Instant View Markdown/photo access, reaction actor hydration, typing event capture, typing polling controls, and raw send/download methods. It does **not** know about DB persistence, Pipeline, Driver, compaction, or chat policy.
 - `src/telegram/event-sink.ts`: owns the platform-neutral event side effect order for Telegram ingress: persist canonical event, optionally hydrate cached alt text, optionally push into Pipeline, optionally notify Driver. It exposes `persist()` and `publish()` separately because message/edit/delete handlers must write platform-specific message tables between those two steps.
 - `src/telegram/live-handlers.ts`: adapts manager callbacks into canonical events, applies blocked-user policy, writes message/edit/delete/reaction snapshot stores, handles typing events, and registers `/offline` / `/online`. Live reaction additions update Pipeline but intentionally do **not** notify Driver.
 - `src/telegram/driver-hooks.ts`: exposes Driver-facing Telegram capabilities: `send_message`, attachment reads, Bot API / userbot downloads, allowed reaction refresh, `react_message`, debounce typing polling, and synthetic self-message injection after a successful send.

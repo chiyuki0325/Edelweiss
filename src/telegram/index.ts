@@ -14,6 +14,8 @@ export { createTelegramManager, createTelegramStartupManager } from './manager';
 export type { TelegramManager, TelegramManagerDeps, TelegramManagerOptions } from './manager';
 export { createTelegramPostStartupTasks } from './post-startup';
 export type { TelegramPostStartupDeps, TelegramPostStartupTasks } from './post-startup';
+export { formatInstantViewPhotoUrl, parseInstantViewPhotoUrl } from './instant-view-url';
+export type { InstantViewPhotoReference } from './instant-view-url';
 export type { TelegramMessageStore, TelegramReactionStore } from './stores';
 
 export interface TelegramStartupHandle {

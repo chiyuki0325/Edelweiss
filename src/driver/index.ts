@@ -23,6 +23,7 @@ import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
 import type { RenderedContext } from '../rendering/types';
+import type { InstantViewPhotoReference } from '../telegram/instant-view-url';
 import type { Attachment } from '../telegram/message/types';
 
 /** Format current time in local timezone as ISO 8601 with offset (e.g. 2025-03-13T22:30:00+08:00). */
@@ -55,6 +56,8 @@ export const createDriver = (config: DriverConfig, deps: {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  fetchInstantView?: (url: string) => Promise<{ title?: string; content: string } | undefined>;
+  downloadInstantViewPhoto?: (reference: InstantViewPhotoReference) => Promise<Buffer>;
   refreshAllowedReactionEmojis?: (chatId: string, signal?: AbortSignal) => Promise<string[]>;
   getAllowedReactionEmojis?: (chatId: string) => string[];
   sendReaction?: (chatId: string, messageId: number, emoji: string) => Promise<void>;
@@ -189,6 +192,8 @@ export const createDriver = (config: DriverConfig, deps: {
       loadMessageAttachments: deps.loadMessageAttachments,
       downloadFile: deps.downloadFile,
       downloadMessageMedia: deps.downloadMessageMedia,
+      fetchInstantView: deps.fetchInstantView,
+      downloadInstantViewPhoto: deps.downloadInstantViewPhoto,
       sendMessage: deps.sendMessage,
       getPlatformAdapter: deps.getPlatformAdapter,
       sendReaction: deps.sendReaction,

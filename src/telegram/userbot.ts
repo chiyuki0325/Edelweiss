@@ -8,6 +8,9 @@ import { StringSession } from 'telegram/sessions';
 
 import { createEventBus } from './event-bus';
 import { createGramjsLogger } from './gramjs-logger';
+import { downloadInstantViewPhoto, fetchInstantViewPage } from './instant-view';
+import type { InstantViewPage } from './instant-view';
+import type { InstantViewPhotoReference } from './instant-view-url';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from './message';
 import { fromGramjsAnyMessage, fromGramjsDeletedMessage, fromGramjsEditedMessage, resolveGramjsChatId, resolveGramjsSender } from './message';
 import { isTypingLikeAction } from './typing-action';
@@ -32,6 +35,8 @@ export interface UserbotClient {
   onTyping: (handler: (event: TypingEvent) => void) => void;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
+  fetchInstantView(url: string): Promise<InstantViewPage | undefined>;
+  downloadInstantViewPhoto(reference: InstantViewPhotoReference): Promise<Buffer>;
   fetchMessageReactions(chatId: string, messageId: number): Promise<TelegramReactionSnapshotEntry[]>;
   downloadMessageMedia(chatId: string, messageId: number): Promise<Buffer | undefined>;
   refreshAvailableReactionEmojis(signal?: AbortSignal): Promise<string[]>;
@@ -367,6 +372,8 @@ export const createUserbotClient = (options: UserbotOptions, logger: Logger): Us
     onTyping: typingBus.on,
     fetchMessages,
     fetchSpecificMessages,
+    fetchInstantView: url => fetchInstantViewPage(client, url),
+    downloadInstantViewPhoto: reference => downloadInstantViewPhoto(client, reference),
     fetchMessageReactions,
     downloadMessageMedia,
     refreshAvailableReactionEmojis,

@@ -12,11 +12,11 @@ export const createDownloadFileTool = (deps: {
 }): CahciuaTool => createTool({
   name: 'download_file',
   execution: { lane: 'writer' },
-  description: 'Download a file attachment from the chat to a local path. Use the file-id attribute from attachment elements in the chat context.',
+  description: 'Download a chat attachment or Instant View telegram:// photo URL to a local path.',
   parameters: {
     type: 'object',
     properties: {
-      file_id: { type: 'string', description: 'The file-id attribute from an attachment element (format: messageId:index).' },
+      file_id: { type: 'string', description: 'An attachment file-id (messageId:index) or telegram:// Instant View photo URL.' },
       path: { type: 'string', description: 'Destination file path in the workspace.' },
     },
     required: ['file_id', 'path'],

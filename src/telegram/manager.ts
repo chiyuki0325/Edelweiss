@@ -3,6 +3,8 @@ import type { Logger } from '@guiiai/logg';
 import type { BotClient, MediaGroupItem, MediaSendOptions, SendOptions, SentMessage } from './bot';
 import { createBotClient } from './bot';
 import { createEventBus } from './event-bus';
+import { renderInstantViewMarkdown } from './instant-view-markdown';
+import type { InstantViewPhotoReference } from './instant-view-url';
 import { createMessageDedup, mergeTelegramMessageData } from './message';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, Attachment, MessageEntity } from './message';
 import { normalizeStickerSetMetadata } from './pack-title';
@@ -113,6 +115,8 @@ export interface TelegramManager {
   sendMediaGroup(chatId: string | number, media: MediaGroupItem[], options?: SendOptions): Promise<SentMessage[]>;
   fetchMessages(chatId: string, options: FetchOptions): Promise<TelegramMessage[]>;
   fetchSpecificMessages(chatId: string, messageIds: number[]): Promise<TelegramMessage[]>;
+  fetchInstantView(url: string): Promise<{ title?: string; content: string } | undefined>;
+  downloadInstantViewPhoto(reference: InstantViewPhotoReference): Promise<Buffer>;
   startTypingPolling(chatId: string): void;
   stopTypingPolling(chatId: string): void;
   resolvePackTitle(setName: string): Promise<string>;
@@ -456,6 +460,18 @@ export const createTelegramManager = (
     sendMediaGroup: (chatId, media, opts) => bot.sendMediaGroup(chatId, media, opts),
     fetchMessages: (chatId, opts) => userbot?.fetchMessages(chatId, opts) ?? Promise.resolve([]),
     fetchSpecificMessages: (chatId, ids) => userbot?.fetchSpecificMessages(chatId, ids) ?? Promise.resolve([]),
+    fetchInstantView: async url => {
+      const result = await userbot?.fetchInstantView(url);
+      if (!result) return undefined;
+      return {
+        ...result.title ? { title: result.title } : {},
+        content: renderInstantViewMarkdown(result.page, url).content,
+      };
+    },
+    downloadInstantViewPhoto: async reference => {
+      if (!userbot) throw new Error('Instant View photos require a configured Telegram userbot.');
+      return await userbot.downloadInstantViewPhoto(reference);
+    },
     resolvePackTitle,
     refreshAllowedReactionEmojis: (chatId, signal) => userbot?.refreshAllowedReactionEmojis(chatId, signal) ?? Promise.resolve([]),
     getAllowedReactionEmojis: chatId => userbot?.getAllowedReactionEmojis(chatId) ?? [],

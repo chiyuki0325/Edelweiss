@@ -36,6 +36,12 @@ export default function registerDriver({ get, register }: Registrar): void {
         ? fileId => telegram.driverHooks.downloadFile(fileId)
         : async () => { throw new Error('download_file not supported without Telegram'); },
       downloadMessageMedia: telegram?.driverHooks.downloadMessageMedia,
+      fetchInstantView: telegram
+        ? url => telegram.manager.fetchInstantView(url)
+        : undefined,
+      downloadInstantViewPhoto: telegram
+        ? reference => telegram.manager.downloadInstantViewPhoto(reference)
+        : undefined,
       refreshAllowedReactionEmojis: telegram?.driverHooks.refreshAllowedReactionEmojis,
       getAllowedReactionEmojis: telegram?.driverHooks.getAllowedReactionEmojis,
       sendReaction: telegram

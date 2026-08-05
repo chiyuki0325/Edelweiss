@@ -12,6 +12,7 @@ import type { RuntimeConfig, ResolvedChatConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
 import { renderImageToTextSystemPrompt } from '../media/image-to-text-prompt';
 import { callDescriptionLlm } from '../media/llm-description';
+import type { InstantViewPhotoReference } from '../telegram/instant-view-url';
 import type { Attachment } from '../telegram/message/types';
 
 export interface CapabilityToolProviderDeps {
@@ -22,6 +23,8 @@ export interface CapabilityToolProviderDeps {
   loadMessageAttachments: (chatId: string, messageId: number) => Attachment[] | undefined;
   downloadFile: (fileId: string) => Promise<Buffer>;
   downloadMessageMedia?: (chatId: string, messageId: number) => Promise<Buffer | undefined>;
+  fetchInstantView?: (url: string) => Promise<{ title?: string; content: string } | undefined>;
+  downloadInstantViewPhoto?: (reference: InstantViewPhotoReference) => Promise<Buffer>;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number, attachments?: SendMessageAttachment[]) => Promise<{ messageId: number; date: number }>;
   getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
   sendReaction?: (chatId: string, messageId: number, emoji: string) => Promise<void>;
@@ -55,6 +58,7 @@ export const createToolsForCapabilities = (
     loadMessageAttachments: deps.loadMessageAttachments,
     downloadFile: deps.downloadFile,
     downloadMessageMedia: deps.downloadMessageMedia,
+    downloadInstantViewPhoto: deps.downloadInstantViewPhoto,
     platformAdapter: platform,
   });
   const canOfferReaction = capabilities.canReact
@@ -117,7 +121,14 @@ export const createToolsForCapabilities = (
 
   const createWebTools = (): CahciuaTool[] => [
     ...(capabilities.canUseWebSearch ? [createWebSearchTool(chatConfig.tools.webSearch.tavilyKey)] : []),
-    ...(capabilities.canUseWebFetch && chatConfig.tools.webFetch ? [createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch))] : []),
+    ...(capabilities.canUseWebFetch && chatConfig.tools.webFetch
+      ? [createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch, {
+          ...(deps.fetchInstantView ? { instantView: { fetch: deps.fetchInstantView } } : {}),
+          onInstantViewError: (error, url) => {
+            log.withError(error).withFields({ url }).warn('Instant View fetch failed; falling back to Jina');
+          },
+        }))]
+      : []),
   ];
 
   const createDownloadTools = (): CahciuaTool[] =>
