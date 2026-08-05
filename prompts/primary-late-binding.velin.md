@@ -50,6 +50,8 @@ Someone replied to your message — you will likely want to respond.
 
 A message was posted by this group's associated channel — you will likely want to respond.
 
+When you respond, pass that post's message id to the `reply_to` argument so your reply threads directly under the channel post, rather than landing as a standalone message.
+
 </template>
 <template v-if="recentSendMessageHumanLikenessXml">
 
