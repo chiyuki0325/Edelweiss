@@ -18,7 +18,7 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
   chatConfig: {
     platform,
     tools: { bash: { backgroundThresholdSec: 10, compactOutput: false }, webSearch: { tavilyKey: '' } },
-    imageToText: { enabled: false, compress: false, pixelBudget: 0 },
+    imageToText: { enabled: false, compress: false, pixelBudget: 0, maxContextEstTokens: 200_000 },
   } as ResolvedChatConfig,
   allSkills: new Map(),
   runtimeConfig: runtime,
@@ -26,6 +26,10 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
   downloadFile: async () => Buffer.alloc(0),
   sendMessage,
   resolveModel: () => { throw new Error('unused'); },
+  imageConversations: {
+    start: async () => { throw new Error('unused'); },
+    ask: async () => { throw new Error('unused'); },
+  },
   backgroundTask: {
     startTask: () => 1,
     killTask: () => ({ ok: true }),
@@ -49,6 +53,56 @@ describe('createToolsForCapabilities send routing', () => {
     await expect(tool.execute({ text: 'hello' }, { toolCallId: 'tc1' }))
       .rejects.toThrow('refusing Telegram fallback');
     expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('starts read_image sessions with the actually rendered low/high prompts', async () => {
+    const tinyPng = await (await import('sharp')).default({
+      create: { width: 2, height: 2, channels: 3, background: 'red' },
+    }).png().toBuffer();
+    const toolDeps = deps('telegram', vi.fn(async () => ({ messageId: 1, date: 1 })));
+    toolDeps.chatConfig.imageToText = {
+      enabled: false,
+      model: 'vision',
+      compress: true,
+      pixelBudget: 75_000,
+      maxContextEstTokens: 200_000,
+    };
+    toolDeps.resolveModel = () => ({ apiBaseUrl: 'https://example.test', apiKey: 'key', model: 'vision' });
+    toolDeps.loadMessageAttachments = () => [{ type: 'photo', fileId: 'telegram-file' }];
+    toolDeps.downloadFile = async () => tinyPng;
+    const start = vi.fn(async params => ({ imageId: `img_${params.systemPrompt.length}`, description: 'description', reused: false }));
+    toolDeps.imageConversations = { start, ask: vi.fn() } as any;
+    const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
+      .find(candidate => candidate.function.name === 'read_image')!;
+
+    await tool.execute({ file_id: '1:0', detail: 'low' }, { toolCallId: 'low' });
+    await tool.execute({ file_id: '1:0', detail: 'high' }, { toolCallId: 'high' });
+
+    expect(start.mock.calls[0]![0].systemPrompt).toContain('under 100 words');
+    expect(start.mock.calls[0]![0].systemPrompt).not.toContain('Transcribe ALL visible text');
+    expect(start.mock.calls[1]![0].systemPrompt).toContain('Transcribe ALL visible text verbatim');
+    expect(start.mock.calls[0]![0].sourceKey).toContain(':low');
+    expect(start.mock.calls[1]![0].sourceKey).toContain(':high');
+  });
+
+  it('offers ask_for_image only to the main agent when a vision model is configured', () => {
+    const toolDeps = deps('telegram', vi.fn(async () => ({ messageId: 1, date: 1 })));
+    toolDeps.chatConfig.imageToText = {
+      enabled: false,
+      model: 'vision',
+      compress: true,
+      pixelBudget: 75_000,
+      maxContextEstTokens: 200_000,
+    };
+    toolDeps.resolveModel = () => ({ apiBaseUrl: 'https://example.test', apiKey: 'key', model: 'vision' });
+
+    const mainNames = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
+      .map(tool => tool.function.name);
+    const subagentNames = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('subagent'))
+      .map(tool => tool.function.name);
+
+    expect(mainNames).toContain('ask_for_image');
+    expect(subagentNames).not.toContain('ask_for_image');
   });
 
   it('does not suggest react_message when the reaction tool is not assembled', async () => {

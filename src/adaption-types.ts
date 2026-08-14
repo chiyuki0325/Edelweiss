@@ -17,6 +17,8 @@ export interface CanonicalAttachment {
   stickerSetId?: string;
   stickerSetName?: string;
   altText?: string;
+  /** Stable id of a persisted visual-model conversation for follow-up questions. */
+  imageId?: string;
   /** Platform-specific file reference for downloading (OneBot URL/base64, etc.). */
   fileRef?: string;
 }

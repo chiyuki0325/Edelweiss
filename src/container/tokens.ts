@@ -7,6 +7,7 @@ import type { DB } from '../db/client';
 import type { createDriver } from '../driver';
 import type { AnimationToTextResolver } from '../media/animation-to-text';
 import type { CustomEmojiToTextResolver } from '../media/custom-emoji-to-text';
+import type { ImageConversationManager } from '../media/image-conversation';
 import type { ImageToTextCompressionConfig, ImageToTextResolver } from '../media/image-to-text';
 import type { createSemaphore } from '../media/llm-description';
 import type { OneBotStartupHandle } from '../onebot/startup';
@@ -82,6 +83,7 @@ export const TOKENS = {
   CHAT_POLICY: token<ChatPolicy>('ChatPolicy'),
   ALT_TEXT_POLICY: token<AltTextPolicy>('AltTextPolicy'),
   IMAGE_TO_TEXT_RESOLVER: token<ImageToTextResolver>('ImageToTextResolver'),
+  IMAGE_CONVERSATION_MANAGER: token<ImageConversationManager>('ImageConversationManager'),
   ANIMATION_TO_TEXT_RESOLVER: token<AnimationToTextResolver>('AnimationToTextResolver'),
   CUSTOM_EMOJI_RESOLVER: token<CustomEmojiToTextResolver>('CustomEmojiToTextResolver'),
   TELEGRAM_MANAGER: token<TelegramManager | undefined>('TelegramManager'),

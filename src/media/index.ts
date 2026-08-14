@@ -6,7 +6,9 @@ export type { FrameExtractionResult } from './frame-extractor';
 export { generateThumbnail, canGenerateThumbnail } from './thumbnail';
 
 export { prepareImageToTextBuffer, computeThumbnailHash, createImageToTextResolver } from './image-to-text';
-export type { ImageToTextCompressionConfig, ImageToTextResolveOptions, ImageAltTextRecord, ImageToTextResolver } from './image-to-text';
+export type { ImageToTextCompressionConfig, ImageToTextResolveOptions, ImageAltTextRecord, ImageToTextResolveResult, ImageToTextResolver } from './image-to-text';
+export { createImageConversationManager, createImageConversationId, createImageSourceFingerprint } from './image-conversation';
+export type { ImageConversationManager, ImageConversationModelCallParams, ImageConversationModelCallResult, ImageConversationRecord, ImageConversationStore, ImageConversationTurn } from './image-conversation';
 export { renderImageToTextSystemPrompt } from './image-to-text-prompt';
 
 export { createAnimationToTextResolver } from './animation-to-text';

@@ -61,6 +61,7 @@ export default function registerDriver({ get, register }: Registrar): void {
         ? (chatId, isDebouncing) => telegram.driverHooks.onDebounceStateChange(chatId, isDebouncing)
         : undefined,
       resolveModel: name => resolveModel(config, name),
+      imageConversations: get(TOKENS.IMAGE_CONVERSATION_MANAGER),
       backgroundTask: {
         startTask: (typeName, sessionId, params, intention, timeoutMs) =>
           backgroundTaskManager.startTask(typeName, sessionId, params, intention, timeoutMs),

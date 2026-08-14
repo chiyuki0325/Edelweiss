@@ -76,6 +76,7 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     enabled: false,
     compress: false,
     pixelBudget: 75_000,
+    maxContextEstTokens: 200_000,
   },
   animationToText: {
     enabled: false,
@@ -146,6 +147,10 @@ const createTestDriver = (
   loadMessageAttachments: () => undefined,
   downloadFile: async () => Buffer.alloc(0),
   resolveModel: () => endpoint,
+  imageConversations: {
+    start: async () => { throw new Error('unused'); },
+    ask: async () => { throw new Error('unused'); },
+  },
   backgroundTask: {
     startTask: () => 1,
     killTask: () => ({ ok: true }),

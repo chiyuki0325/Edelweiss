@@ -16,6 +16,7 @@ const props = defineProps({
   hasLoadSkillTool: { type: Boolean, default: false },
   hasSubagentTools: { type: Boolean, default: false },
   hasReactTool: { type: Boolean, default: false },
+  hasAskForImageTool: { type: Boolean, default: false },
   availableReactionEmojis: { type: Array, default: () => [] },
   availableSkills: { type: Array, default: () => [] },
   forceToolCall: { type: Boolean, default: false },
@@ -36,6 +37,9 @@ const toolListBlock = computed(() => {
     '`read_task_output` — Read the full output of a completed background task. Supports line-based pagination (offset, limit).',
     '`enter_focus` — Enter focus mode so your current task is not interrupted by new messages. Include this with your first tool calls when starting multi-step work (fetch a link, research a topic, run commands); it takes effect before the other calls start. Automatically ends when the turn completes.',
   ]
+  if (props.hasAskForImageTool) {
+    lines.push('`ask_for_image` — Ask follow-up questions about an image using an `image-id` from chat context or returned by `read_image`.')
+  }
   if (props.hasReactTool) {
     lines.push('`react_message` — Add a lightweight emoji reaction to a Telegram message. Use it as a low-disturbance alternative when a small acknowledgement, agreement, thanks, or amusement is enough.')
   }
@@ -173,10 +177,11 @@ Sticker attachments with resolved descriptions appear as:
 <sticker type="sticker" pack="StickerPackName" file-id="123:0">a cartoon cat dancing happily</sticker>
 ```
 
-Attachments appear within messages and include a `file-id` attribute for use with the `download_file` and `read_image` tools. Markdown returned by `web_fetch` may also contain `telegram://` Instant View photo URLs accepted by both tools:
+Attachments appear within messages and include a `file-id` attribute for use with the `download_file` and `read_image` tools. Images with a persisted visual conversation also include `image-id`; use it with `ask_for_image` for follow-up questions. `read_image` likewise returns an `image_id` that can be queried repeatedly. Markdown returned by `web_fetch` may also contain `telegram://` Instant View photo URLs accepted by both tools:
 
 ```xml
-<attachment type="photo" size="1920x1080" file-id="123:0"/>
+<image type="photo" size="1920x1080" file-id="123:0" image-id="img_...">a landscape</image>
+<attachment type="photo" size="1920x1080" file-id="124:0"/>
 <attachment type="document" name="report.pdf" mime="application/pdf" file-id="123:1"/>
 ```
 

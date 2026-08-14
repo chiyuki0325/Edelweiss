@@ -112,8 +112,16 @@ export const createOneBotIngress = (deps: OneBotIngressDeps): OneBotIngress => {
     if (!deps.imageToTextChatIds.has(event.chatId) || event.attachments.length === 0) return;
     const caption = contentToPlainText(event.content);
     const compression = deps.getImageToTextCompression(event.chatId);
-    await Promise.all(event.attachments.map(att =>
-      resolveOneBotImageAltText(att, caption, api, deps.imageToTextResolver, deps.animationToTextResolver, compression)));
+    await Promise.all(event.attachments.map((att, attachmentIndex) =>
+      resolveOneBotImageAltText(
+        att,
+        caption,
+        api,
+        deps.imageToTextResolver,
+        deps.animationToTextResolver,
+        compression,
+        { chatId: event.chatId, messageId: event.messageId, attachmentIndex },
+      )));
   };
 
   const transformMessage = async (item: OneBotIngressItem): Promise<void> => {

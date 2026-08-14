@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createSendMessageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools/index';
+import { createAskForImageTool, createBashTool, createLoadSkillTool, createReactMessageTool, createReadImageTool, createSendMessageTool, createTool, executeToolCall, extractLoadedSkillNames } from './tools/index';
 import type { SendMessageTurnFlags } from './tools/index';
 import type { RuntimeConfig } from '../config/config';
 import type { ConversationEntry } from '../unified-api/types';
@@ -88,7 +88,7 @@ describe('createReadImageTool', () => {
   it('resolves image-to-text description via attachment file_id', async () => {
     const tinyPng = await createTinyPng();
     const downloadAttachment = vi.fn(async () => tinyPng);
-    const resolveImageToText = vi.fn(async () => 'tiny image');
+    const resolveImageToText = vi.fn(async () => ({ description: 'tiny image', imageId: 'img_1', reused: false }));
     const readFile = vi.fn(async () => tinyPng);
     const tool = createReadImageTool({ downloadAttachment, readFile, resolveImageToText });
 
@@ -99,7 +99,7 @@ describe('createReadImageTool', () => {
     expect(downloadAttachment).toHaveBeenCalledWith('1:0');
     expect(resolveImageToText).toHaveBeenCalled();
     expect(result).toEqual({
-      content: JSON.stringify({ ok: true, description: 'tiny image' }),
+      content: JSON.stringify({ ok: true, description: 'tiny image', image_id: 'img_1', reused: false }),
       requiresFollowUp: true,
     });
   });
@@ -127,10 +127,28 @@ describe('createReadImageTool', () => {
 
     const result = await tool.execute({ path: '/tmp/test.png' }, { toolCallId: 'tc1' });
     expect(readFile).toHaveBeenCalledWith('/tmp/test.png');
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       requiresFollowUp: true,
-      content: [{ kind: 'image', detail: 'low' }],
+      content: JSON.stringify({ error: 'read_image requires an imageToText.model because the primary model is not multimodal.' }),
     });
+  });
+});
+
+describe('createAskForImageTool', () => {
+  it('returns a follow-up answer and reset state', async () => {
+    const ask = vi.fn(async () => ({ answer: 'the sign says hello', historyReset: true }));
+    const tool = createAskForImageTool({ ask });
+
+    const result = await tool.execute({ image_id: 'img_1', question: 'What does it say?' }, { toolCallId: 'tc1' });
+
+    expect(ask).toHaveBeenCalledWith('img_1', 'What does it say?');
+    expect(JSON.parse(result.content as string)).toEqual({
+      ok: true,
+      image_id: 'img_1',
+      answer: 'the sign says hello',
+      history_reset: true,
+    });
+    expect(result.requiresFollowUp).toBe(true);
   });
 });
 

@@ -32,6 +32,7 @@ export const renderSystemPrompt = async (params: {
   hasLoadSkillTool?: boolean;
   hasSubagentTools?: boolean;
   hasReactTool?: boolean;
+  hasAskForImageTool?: boolean;
   availableReactionEmojis?: string[];
   availableSkills?: AvailableSkillPromptInfo[];
   forceToolCall?: boolean | 'api' | 'local';
@@ -45,6 +46,7 @@ export const renderSystemPrompt = async (params: {
     hasLoadSkillTool: params.hasLoadSkillTool,
     hasSubagentTools: params.hasSubagentTools,
     hasReactTool: params.hasReactTool,
+    hasAskForImageTool: params.hasAskForImageTool,
     availableReactionEmojis: params.availableReactionEmojis,
     availableSkills: params.availableSkills,
     forceToolCall: params.forceToolCall !== false && params.forceToolCall !== undefined,

@@ -74,10 +74,15 @@ export const startApp = async () => {
 
     if (feature.imageToTextChatIds.has(chatId)) {
       const tasks: Promise<void>[] = [];
-      for (const event of events) {
+      for (const { id: eventId, event } of filteredEventsWithId) {
         if ((event.type === 'message' || event.type === 'edit') && event.attachments.length > 0) {
           const caption = contentToPlainText(event.content);
-          tasks.push(imageToTextResolver.hydrateCanonicalAttachments(event.attachments, caption, altText.getImageToTextCompression(chatId)));
+          tasks.push(imageToTextResolver.hydrateCanonicalAttachments(
+            event.attachments,
+            caption,
+            altText.getImageToTextCompression(chatId),
+            { chatId, messageId: event.messageId },
+          ).then(() => updateEventAttachments(db, eventId, event.attachments)));
         }
       }
       if (tasks.length > 0) await Promise.all(tasks);

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
+import type { ImageConversationManager } from './image-conversation';
 import { renderImageToTextSystemPrompt } from './image-to-text-prompt';
 import { callDescriptionLlm, createSemaphore } from './llm-description';
 import type { CanonicalAttachment } from '../adaption-types';
@@ -16,6 +17,11 @@ export interface ImageToTextCompressionConfig {
 export interface ImageToTextResolveOptions {
   isSticker?: boolean;
   compression?: ImageToTextCompressionConfig;
+  conversation?: {
+    chatId: string;
+    messageId: string;
+    attachmentIndex: number;
+  };
 }
 
 const DEFAULT_IMAGE_TO_TEXT_COMPRESSION: ImageToTextCompressionConfig = {
@@ -57,11 +63,22 @@ export interface ImageAltTextRecord {
   altText: string;
   altTextTokens: number;
   stickerSetName?: string;
+  seedSystemPrompt?: string;
+  seedUserText?: string;
+}
+
+export interface ImageToTextResolveResult extends ImageAltTextRecord {
+  imageId?: string;
 }
 
 export interface ImageToTextResolver {
-  resolve(thumbnailBuffer: Buffer, caption: string, highResBuffer?: Buffer, options?: ImageToTextResolveOptions): Promise<ImageAltTextRecord>;
-  hydrateCanonicalAttachments(attachments: CanonicalAttachment[], caption: string, compression?: ImageToTextCompressionConfig): Promise<void>;
+  resolve(thumbnailBuffer: Buffer, caption: string, highResBuffer?: Buffer, options?: ImageToTextResolveOptions): Promise<ImageToTextResolveResult>;
+  hydrateCanonicalAttachments(
+    attachments: CanonicalAttachment[],
+    caption: string,
+    compression?: ImageToTextCompressionConfig,
+    conversation?: { chatId: string; messageId: string },
+  ): Promise<void>;
 }
 
 const hashBuffer = (buffer: Buffer): string =>
@@ -78,6 +95,7 @@ export const createImageToTextResolver = (params: {
   logger: Logger;
   lookupByHash: (imageHash: string) => ImageAltTextRecord | null;
   persist: (record: ImageAltTextRecord) => void;
+  conversations: ImageConversationManager;
 }): ImageToTextResolver => {
   const log = params.logger.withContext('image-to-text');
   const semaphore = params.semaphore ?? createSemaphore(3);
@@ -110,11 +128,12 @@ export const createImageToTextResolver = (params: {
 
         const imageBuffer = await prepareImageToTextBuffer(highResBuffer ?? thumbnailBuffer, options.compression ?? DEFAULT_IMAGE_TO_TEXT_COMPRESSION, options);
         const system = await renderImageToTextSystemPrompt({ caption });
+        const userText = 'Describe this image.';
 
         const result = await callDescriptionLlm({
           model,
           system,
-          userText: 'Describe this image.',
+          userText,
           images: [imageBuffer],
           log,
           label: 'image-to-text',
@@ -126,6 +145,8 @@ export const createImageToTextResolver = (params: {
           imageHash,
           altText,
           altTextTokens: result.outputTokens,
+          seedSystemPrompt: system,
+          seedUserText: userText,
         };
         params.persist(record);
         return record;
@@ -139,18 +160,52 @@ export const createImageToTextResolver = (params: {
     return task;
   };
 
-  return {
-    resolve(thumbnailBuffer, caption, highResBuffer, options) {
-      return resolveByBuffer(thumbnailBuffer, caption, highResBuffer, options);
-    },
+  const resolve = async (
+    thumbnailBuffer: Buffer,
+    caption: string,
+    highResBuffer?: Buffer,
+    options: ImageToTextResolveOptions = {},
+  ): Promise<ImageToTextResolveResult> => {
+    const record = await resolveByBuffer(thumbnailBuffer, caption, highResBuffer, options);
+    const scope = options.conversation;
+    if (!scope || !record.seedSystemPrompt || !record.seedUserText) return record;
 
-    async hydrateCanonicalAttachments(attachments, caption, compression) {
+    const preparedImage = await prepareImageToTextBuffer(
+      highResBuffer ?? thumbnailBuffer,
+      options.compression ?? DEFAULT_IMAGE_TO_TEXT_COMPRESSION,
+      options,
+    );
+    const model = params.model;
+    if (!model) return record;
+    const session = await params.conversations.start({
+      chatId: scope.chatId,
+      sourceKey: `auto:${scope.messageId}:${scope.attachmentIndex}`,
+      imageHash: hashBuffer(thumbnailBuffer),
+      preparedImage,
+      systemPrompt: record.seedSystemPrompt,
+      initialUserText: record.seedUserText,
+      initialResponse: record.altText,
+      initialOutputTokens: record.altTextTokens,
+      model,
+      label: 'image-to-text',
+    });
+    return { ...record, imageId: session.imageId };
+  };
+
+  return {
+    resolve,
+
+    async hydrateCanonicalAttachments(attachments, caption, compression, conversation) {
       if (!params.enabled) return;
-      await Promise.all(attachments.map(async att => {
-        if (att.altText || !att.thumbnailWebp) return;
+      await Promise.all(attachments.map(async (att, attachmentIndex) => {
+        if (att.altText || att.imageId || !att.thumbnailWebp || att.animationHash) return;
         const buffer = Buffer.from(att.thumbnailWebp, 'base64');
-        const record = await resolveByBuffer(buffer, caption, undefined, { compression });
+        const record = await resolve(buffer, caption, undefined, {
+          compression,
+          ...(conversation ? { conversation: { ...conversation, attachmentIndex } } : {}),
+        });
         att.altText = record.altText;
+        if (record.imageId) att.imageId = record.imageId;
       }));
     },
   };

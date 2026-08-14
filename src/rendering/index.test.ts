@@ -352,6 +352,18 @@ describe('render', () => {
       });
     });
 
+    it('renders the persisted image conversation id when available', () => {
+      const rc = render(ic([message({
+        attachments: [{
+          type: 'photo',
+          altText: 'a cat',
+          imageId: 'img_abc',
+        }],
+      })]));
+      expect((rc[0]!.content[0] as { text: string }).text)
+        .toContain('<image type="photo" image-id="img_abc" file-id="42:0">a cat</image>');
+    });
+
     it('shows [thumbnail] placeholder in rcToXml', () => {
       const rc = render(ic([message({
         attachments: [{ type: 'photo', width: 800, height: 600, thumbnailWebp: 'AAAA' }],

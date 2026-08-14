@@ -1,17 +1,18 @@
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import type { Logger } from '@guiiai/logg';
 
 import type { SkillInfo } from './skills';
-import { createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
+import { createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { DriverSignal, TurnCapabilities, TurnState } from './turn-state';
 import type { PlatformAdapter } from './types';
 import { createWebFetcher } from './web-fetch';
 import type { RuntimeConfig, ResolvedChatConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
+import type { ImageConversationManager } from '../media/image-conversation';
 import { renderImageToTextSystemPrompt } from '../media/image-to-text-prompt';
-import { callDescriptionLlm } from '../media/llm-description';
 import type { InstantViewPhotoReference } from '../telegram/instant-view-url';
 import type { Attachment } from '../telegram/message/types';
 
@@ -29,6 +30,7 @@ export interface CapabilityToolProviderDeps {
   getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
   sendReaction?: (chatId: string, messageId: number, emoji: string) => Promise<void>;
   resolveModel: (name: string) => LlmEndpoint;
+  imageConversations: ImageConversationManager;
   backgroundTask: {
     startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
     killTask: (taskId: number) => { ok: boolean; error?: string };
@@ -139,23 +141,21 @@ export const createToolsForCapabilities = (
   const createReadImageTools = (): CahciuaTool[] => {
     if (!capabilities.canReadImage) return [];
     const readFileCmd = runtimeConfig.readFile;
-    const resolveImageToText = chatConfig.imageToText.enabled && chatConfig.imageToText.model
-      ? async (buffer: Buffer, detail: 'low' | 'high') => {
-        const maxEdge = detail === 'high' ? 1024 : 512;
-        const { default: sharp } = await import('sharp');
-        const resized = await sharp(buffer)
-          .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
-          .png()
-          .toBuffer();
+    const resolveImageToText = chatConfig.imageToText.model
+      ? async (buffer: Buffer, detail: 'low' | 'high', sourceKey: string) => {
         const system = await renderImageToTextSystemPrompt({ caption: '', detail });
         const model = deps.resolveModel(chatConfig.imageToText.model!);
-        const result = await callDescriptionLlm({
-          model, system,
-          userText: 'Describe this image.',
-          images: [resized],
-          log, label: 'read-image',
+        const result = await deps.imageConversations.start({
+          chatId,
+          sourceKey: `read_image:${sourceKey}:${detail}`,
+          imageHash: createHash('sha256').update(buffer).digest('hex'),
+          preparedImage: buffer,
+          systemPrompt: system,
+          initialUserText: 'Describe this image.',
+          model,
+          label: 'read-image',
         });
-        return result.text.trim();
+        return { description: result.description, imageId: result.imageId, reused: result.reused };
       }
       : undefined;
 
@@ -180,6 +180,20 @@ export const createToolsForCapabilities = (
     })];
   };
 
+  const createAskForImageTools = (): CahciuaTool[] => {
+    if (!capabilities.canAskForImage || !chatConfig.imageToText.model) return [];
+    const model = deps.resolveModel(chatConfig.imageToText.model);
+    return [createAskForImageTool({
+      ask: async (imageId, question) => await deps.imageConversations.ask({
+        chatId,
+        imageId,
+        question,
+        model,
+        maxContextEstTokens: chatConfig.imageToText.maxContextEstTokens,
+      }),
+    })];
+  };
+
   const createBackgroundTaskTools = (): CahciuaTool[] =>
     capabilities.canUseBackgroundTasks
       ? [
@@ -196,6 +210,7 @@ export const createToolsForCapabilities = (
     ...createWebTools(),
     ...createDownloadTools(),
     ...createReadImageTools(),
+    ...createAskForImageTools(),
     ...createBackgroundTaskTools(),
   ];
 };

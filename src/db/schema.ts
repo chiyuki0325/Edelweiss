@@ -181,9 +181,47 @@ export const imageAltTexts = sqliteTable('image_alt_texts', {
   altText: text('alt_text').notNull(),
   altTextTokens: integer('alt_text_tokens').notNull(),
   stickerSetName: text('sticker_set_name'),
+  seedSystemPrompt: text('seed_system_prompt'),
+  seedUserText: text('seed_user_text'),
   createdAt: integer('created_at').notNull(),
 }, table => [
   uniqueIndex('image_alt_texts_hash_idx').on(table.imageHash),
+]);
+
+export const imageConversations = sqliteTable('image_conversations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: text('chat_id').notNull(),
+  imageId: text('image_id').notNull(),
+  sourceFingerprint: text('source_fingerprint').notNull(),
+  imageHash: text('image_hash').notNull(),
+  preparedImageBase64: text('prepared_image_base64').notNull(),
+  systemPrompt: text('system_prompt').notNull(),
+  initialUserText: text('initial_user_text').notNull(),
+  initialResponse: text('initial_response').notNull(),
+  initialOutputTokens: integer('initial_output_tokens').notNull().default(0),
+  modelName: text('model_name').notNull().default(''),
+  currentGeneration: integer('current_generation').notNull().default(0),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, table => [
+  uniqueIndex('image_conversations_chat_image_idx').on(table.chatId, table.imageId),
+]);
+
+export const imageConversationTurns = sqliteTable('image_conversation_turns', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  conversationId: integer('conversation_id').notNull().references(() => imageConversations.id),
+  generation: integer('generation').notNull(),
+  sequence: integer('sequence').notNull(),
+  question: text('question').notNull(),
+  answer: text('answer').notNull(),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  modelName: text('model_name').notNull().default(''),
+  createdAtMs: integer('created_at_ms').notNull(),
+}, table => [
+  uniqueIndex('image_conversation_turns_generation_sequence_idx')
+    .on(table.conversationId, table.generation, table.sequence),
+  index('image_conversation_turns_conversation_idx').on(table.conversationId),
 ]);
 
 export const backgroundTasks = sqliteTable('background_tasks', {

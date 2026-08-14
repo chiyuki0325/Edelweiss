@@ -23,10 +23,10 @@ Key design goals: KV Cache friendly (append-only history, static system prompt, 
 | Telegram integration | Done | Bot + userbot, dedup, fileId merge, credential redaction, per-session ingress queue, associated-channel auto-forward detection (`is_automatic_forward` + cached group → linked-channel lookup, prompts active reply), blocking image-to-text (spoiler photos require manual `read_image`), blocking animation-to-text, blocking custom-emoji-to-text, userbot Instant View fetch/photo download with `telegram://instant-view/photo/...` references, send message reactions via bot, receive message reactions via Bot API updates with 500ms add/remove debounce, fetch reaction actors via userbot for count-only updates |
 | OneBot integration | Done | OneBot 11 reverse WebSocket server with graceful shutdown and latest-connection ownership, access-token check, message/notice adaptation, NapCat QQ display names (`get_friend_list` remark → `raw.sendRemarkName` → `raw.sendMemberName` / card → `raw.sendNickName` / nickname), QQ face descriptions, image-to-text hydration, reconnect-safe send/download PlatformAdapter, fail-closed channel routing (never falls back to Telegram), entry-time ingress timestamp capture, per-chat ordered ingress queue (bounded-retry-then-drop, fail-closed), shared (chatId, messageId) dedup across live ingress and cold-start history pull, cold-start alt-text backfill (best-effort), self-sent synthetic event injection on send |
 | Adaptation | Done | Types, conversion, dual timestamps, rich text parsing, string IDs, phantom edit filtering, platform-resolved `isMyself` identity |
-| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 31 migrations |
+| DB / Persistence | Done | events, messages, turn_responses, turn_responses_v2, compactions, image_alt_texts, image_conversations, image_conversation_turns, subagents, subagent_messages, background_tasks, message_reaction_snapshots tables; 32 migrations |
 | Projection | Done | Reducer (message/blocked-message/edit/delete/reaction), MetaReducer (user rename detection), Immer-based immutability |
 | Rendering | Done | `render(IC, RenderParams) → RC`, XML serialization, viewport filtering, thumbnail content pieces, passive reaction event rendering, blocked-message placeholders as deleted messages, inline `<image>` / `<animation>` / `<sticker>` / `<custom-emoji>` alt text rendering |
-| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Instant View-first `web_fetch` with X/Twitter mirror substitution and Jina fallback, shared `telegram://` photo reads via `read_image` / `download_file`, Telegram-only `react_message`, semantic follow-up review for `send_message` drafts containing “确实” (preserve substantive content or react), per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), automatic and `/compact`-triggered context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
+| Driver | Done | Triple-provider SSE streaming (OpenAI Chat Completions via xsai + Responses API via fetch + Anthropic Messages API via fetch), unified API codec layer (provider-agnostic IR with format conversion at boundaries), platform-resolved `chat_name` / `chat_id` system-prompt prefix, lane-based tool execution (`enter_focus` prelude, parallel reads, serialized writers/messages, attachment writer barrier), Instant View-first `web_fetch` with X/Twitter mirror substitution and Jina fallback, shared `telegram://` photo reads via `read_image` / `download_file`, persistent image conversations from automatic alt text and `read_image`, main-agent-only multi-turn `ask_for_image` follow-ups with reset-on-context-overflow, Telegram-only `react_message`, semantic follow-up review for `send_message` drafts containing “确实” (preserve substantive content or react), per-step TR persistence (v2 schema), lightweight turn lifecycle (`TurnContext` + `TurnScratch` + internal `DriverFeature` hooks), mid-turn interruption, reasoning sanitization (per-provider format), reactive orchestration (alien-signals), automatic and `/compact`-triggered context compaction (LLM-based summarization with append-only history), subagent delegation with isolated helper context and mailbox communication, skills system (user-facing tool definitions loaded from markdown files), background tasks (long-running shell tasks with lifecycle management), typing-aware debounce scheduling (debounce-scoped Telegram typing presence with online heartbeat / markAsRead / supergroup channel-difference fallback), offline/online reply gating via /offline /online commands, rtk output compaction (optional argv0 rewriting + pipe fallback for bash tool) |
 | Eval harness | Initial | Offline LLM eval suites for comparing prompt variants against fixed IC fixtures, repeated runs, custom TypeScript evaluators, side-effect-free tool traces, and probability summaries |
 
 ## Tech Stack
@@ -96,6 +96,8 @@ src/
 │   ├── frame-extractor.ts     # Frame extraction from animations (MP4/WEBM via ffmpeg, GIF via sharp, TGS via lottie-frame)
 │   ├── frame-extractor.test.ts # Frame extraction tests
 │   ├── thumbnail.ts         # sharp-based thumbnail generation (pixel-budget ≤75k pixels ≈ 100 Claude tokens)
+│   ├── image-conversation.ts # Persistent vision conversation manager, exact seed replay, generation reset, per-image serialization
+│   ├── image-conversation.test.ts # Vision conversation persistence, replay, reuse, and reset tests
 │   ├── image-to-text.ts     # Blocking image→alt text workflow + cache lookup/persist + model calls
 │   ├── image-to-text.test.ts # Image-to-text workflow tests
 │   ├── image-to-text-prompt.ts # Velin prompt renderer for image description workflow
@@ -160,6 +162,7 @@ src/
 │   │   ├── web-fetch.ts      # createWebFetchTool
 │   │   ├── download-file.ts  # createDownloadFileTool
 │   │   ├── read-image.ts     # createReadImageTool
+│   │   ├── ask-for-image.ts  # Main-agent multi-turn questions against a persisted image conversation
 │   │   ├── load-skill.ts     # createLoadSkillTool
 │   │   ├── stay-silent.ts    # createStaySilentTool
 │   │   ├── react-message.ts  # createReactMessageTool (Telegram only)
@@ -200,8 +203,8 @@ src/
 │   └── index.ts            # Public eval harness exports
 ├── db/
 │   ├── client.ts           # Database init (better-sqlite3 + Drizzle), WAL mode
-│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, imageAltTexts, subagents, subagentMessages, backgroundTasks, messageReactionSnapshots tables
-│   ├── persistence.ts      # CRUD: persistEvent, persistTurnResponseV2, persistCompaction, image alt text cache lookups, loadEvents, loadTurnResponsesV2, loadCompaction, subagent lifecycle, background task persistence
+│   ├── schema.ts           # Drizzle schema: users, messages, events, turnResponses, turnResponsesV2, compactions, imageAltTexts, imageConversations, imageConversationTurns, subagents, subagentMessages, backgroundTasks, messageReactionSnapshots tables
+│   ├── persistence.ts      # CRUD: events/TRs/compactions, image alt-text cache and conversation stores, subagent lifecycle, background task persistence
 │   ├── codec.ts            # ConversationEntry ↔ JSON serialization helpers
 │   ├── migrate-v2.ts       # v1 → v2 data migration (turnResponses → turnResponsesV2)
 │   └── index.ts            # Barrel exports
@@ -534,7 +537,7 @@ Before any actual provider request is sent, the Driver applies a final request-l
 - `toMessagesInput()`: converts into Anthropic Messages API messages — parses `ToolCallPart.args` JSON strings into `input` objects, normalizes opaque-only reasoning to `redacted_thinking` blocks.
 - Model image limits (`maxImagesAllowed`) are enforced at this final send boundary on **every** request, not just once when a turn starts. This ensures tool-generated images (for example `read_image`) cannot bypass per-model image caps in later steps or compaction calls.
 
-`read_image` supports attachment file-id and local filesystem path modes.
+`read_image` supports attachment file-id and local filesystem path modes. It always uses the configured image model (the primary agent is not assumed multimodal), seeds or reuses a persisted vision conversation with the exact low/high-detail prompt actually sent, and returns its `image_id`. The main agent can pass that id to `ask_for_image` for serialized multi-turn follow-up questions; subagents do not receive `ask_for_image`.
 
 ### Self Identity and isSelfSent Pipeline
 
@@ -674,6 +677,7 @@ Optional blocking ingress transform that resolves image attachments into cached 
 - The LLM input image is encoded as PNG. By default it is resized with a 512×512 pixel budget (`fit: inside`, no enlargement); `imageToText.compress=false` sends the original image pixels to the description model. Static stickers always force compression regardless of this config.
 - If alt text is present on an attachment, Rendering emits inline `<image ...>alt text</image>` and does **not** attach a separate image buffer content piece.
 - Alt text is **never** stored in the `events` table — it is always queried transiently from the `image_alt_texts` table at runtime.
+- A newly generated alt text also seeds a persisted image conversation and places its opaque `image-id` on the rendered `<image>` element. Cache rows created before seed prompts were recorded remain usable as alt text but do not fabricate a conversation; `read_image` can create one explicitly.
 - Only whitelisted chats (`driver.chatIds`) trigger image-to-text resolution.
 
 **Storage** (`image_alt_texts` table): keyed by thumbnail hash.
@@ -685,13 +689,18 @@ Optional blocking ingress transform that resolves image attachments into cached 
 | alt_text | TEXT NOT NULL | resolved image description |
 | alt_text_tokens | INTEGER NOT NULL | model output token count for the stored alt text |
 | sticker_set_name | TEXT | sticker pack name (nullable, for stickers and custom emoji) |
+| seed_system_prompt | TEXT | exact rendered system prompt used for the initial description (nullable for legacy/cache-only rows) |
+| seed_user_text | TEXT | exact initial user text sent with the image (nullable for legacy/cache-only rows) |
 | created_at | INTEGER NOT NULL | millisecond timestamp |
+
+**Image conversations** (`image_conversations` + `image_conversation_turns`): scoped by chat and opaque `image_id`. The conversation stores the prepared original image bytes, exact initial system/user prompts, initial alt text, model metadata, and follow-up turns. Automatic alt text and `read_image` have distinct source identities; `read_image` low/high detail also remain distinct. No compaction is performed. Before a request estimated above `imageToText.maxContextEstTokens`, or after a provider context-limit error, the manager starts a new generation containing only the original image, exact initial prompt/alt-text exchange, and the current question. A failed retry does not discard the previously committed generation.
 
 **Config** (`imageToText` section in `config.yaml`):
 - `enabled` (boolean, default `false`): whether to block ingress on image-to-text
 - `model`: model for the image-to-text workflow (references a key in the `models` registry)
 - `compress` (boolean, default `true`): whether to resize normal image inputs before calling the model; static stickers always compress
 - `pixelBudget` (number, default `262144`): maximum pixel count when compression is enabled (`512 * 512`)
+- `maxContextEstTokens` (number, default `200000`): estimated-token ceiling for an image conversation before generation reset; this is a reset threshold, not compaction
 
 ### Animation To Text
 

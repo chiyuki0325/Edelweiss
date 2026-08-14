@@ -77,6 +77,7 @@ export const createOneBotPostStartupTasks = (deps: OneBotPostStartupDeps): OneBo
           try {
             await resolveOneBotImageAltText(
               att, caption, api, deps.imageToTextResolver, deps.animationToTextResolver, compression,
+              { chatId, messageId: event.messageId, attachmentIndex: event.attachments.indexOf(att) },
             );
             if (att.altText) {
               updated = true;
