@@ -17,6 +17,7 @@ export default function registerImageToTextResolver({ get, register }: Registrar
       logger: get(TOKENS.LOGGER),
       lookupByHash: imageHash => loadImageAltTextByHash(db, imageHash),
       persist: record => persistImageAltText(db, record),
+      conversations: get(TOKENS.IMAGE_CONVERSATION_MANAGER),
     });
   });
 }

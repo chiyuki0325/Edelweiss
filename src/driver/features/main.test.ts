@@ -46,6 +46,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
       enabled: false,
       compress: false,
       pixelBudget: 75_000,
+      maxContextEstTokens: 200_000,
     },
     animationToText: {
       enabled: false,

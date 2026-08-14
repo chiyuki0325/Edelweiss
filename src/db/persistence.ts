@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
-import { backgroundTasks, compactions, events, imageAltTexts, messageReactionSnapshots, messages, subagentMessages, subagents, turnResponsesV2, users } from './schema';
+import { backgroundTasks, compactions, events, imageAltTexts, imageConversations, imageConversationTurns, messageReactionSnapshots, messages, subagentMessages, subagents, turnResponsesV2, users } from './schema';
 import type {
   CanonicalAttachment,
   CanonicalBlockedMessageEvent,
@@ -14,6 +14,7 @@ import type {
 } from '../adaption-types';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
 import type { CompactionSessionMeta, TurnResponseV2 } from '../driver/types';
+import type { ImageConversationRecord, ImageConversationStore, ImageConversationTurn } from '../media/image-conversation';
 import type { ImageAltTextRecord } from '../media/image-to-text';
 import type { PipelineEvent } from '../projection/reduce';
 import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
@@ -538,6 +539,8 @@ const reconstructImageAltTextRecord = (row: typeof imageAltTexts.$inferSelect): 
   altText: row.altText,
   altTextTokens: row.altTextTokens,
   ...row.stickerSetName && { stickerSetName: row.stickerSetName },
+  ...row.seedSystemPrompt && { seedSystemPrompt: row.seedSystemPrompt },
+  ...row.seedUserText && { seedUserText: row.seedUserText },
 });
 
 export const loadImageAltTextByHash = (db: DB, imageHash: string): ImageAltTextRecord | null => {
@@ -555,6 +558,8 @@ export const persistImageAltText = (db: DB, record: ImageAltTextRecord) => {
       altText: record.altText,
       altTextTokens: record.altTextTokens,
       stickerSetName: record.stickerSetName ?? null,
+      seedSystemPrompt: record.seedSystemPrompt ?? null,
+      seedUserText: record.seedUserText ?? null,
       createdAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -563,10 +568,100 @@ export const persistImageAltText = (db: DB, record: ImageAltTextRecord) => {
         altText: record.altText,
         altTextTokens: record.altTextTokens,
         stickerSetName: record.stickerSetName ?? null,
+        seedSystemPrompt: record.seedSystemPrompt ?? null,
+        seedUserText: record.seedUserText ?? null,
       },
     })
     .run();
 };
+
+const reconstructImageConversation = (row: typeof imageConversations.$inferSelect): ImageConversationRecord => ({
+  id: row.id,
+  chatId: row.chatId,
+  imageId: row.imageId,
+  sourceFingerprint: row.sourceFingerprint,
+  imageHash: row.imageHash,
+  preparedImageBase64: row.preparedImageBase64,
+  systemPrompt: row.systemPrompt,
+  initialUserText: row.initialUserText,
+  initialResponse: row.initialResponse,
+  initialOutputTokens: row.initialOutputTokens,
+  modelName: row.modelName,
+  currentGeneration: row.currentGeneration,
+  createdAtMs: row.createdAtMs,
+  updatedAtMs: row.updatedAtMs,
+});
+
+export const createImageConversationStore = (db: DB): ImageConversationStore => ({
+  load(chatId, imageId) {
+    const row = db.select().from(imageConversations)
+      .where(and(eq(imageConversations.chatId, chatId), eq(imageConversations.imageId, imageId)))
+      .limit(1)
+      .get();
+    return row ? reconstructImageConversation(row) : null;
+  },
+
+  create(record) {
+    const row = db.insert(imageConversations).values(record).returning().get();
+    return reconstructImageConversation(row);
+  },
+
+  loadTurns(conversationId, generation) {
+    const rows = db.select().from(imageConversationTurns)
+      .where(and(
+        eq(imageConversationTurns.conversationId, conversationId),
+        eq(imageConversationTurns.generation, generation),
+      ))
+      .orderBy(imageConversationTurns.sequence)
+      .all();
+    return rows.map((row): ImageConversationTurn => ({
+      generation: row.generation,
+      sequence: row.sequence,
+      question: row.question,
+      answer: row.answer,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      modelName: row.modelName,
+      createdAtMs: row.createdAtMs,
+    }));
+  },
+
+  appendTurn(params) {
+    return db.transaction(tx => {
+      const current = tx.select().from(imageConversations)
+        .where(eq(imageConversations.id, params.conversationId))
+        .limit(1)
+        .get();
+      if (!current) throw new Error('Image conversation disappeared while appending a turn');
+      if (current.currentGeneration !== params.expectedGeneration)
+        throw new Error('Image conversation generation changed concurrently');
+
+      const generation = params.reset ? current.currentGeneration + 1 : current.currentGeneration;
+      const latest = params.reset
+        ? undefined
+        : tx.select({ sequence: imageConversationTurns.sequence }).from(imageConversationTurns)
+            .where(and(
+              eq(imageConversationTurns.conversationId, params.conversationId),
+              eq(imageConversationTurns.generation, generation),
+            ))
+            .orderBy(desc(imageConversationTurns.sequence))
+            .limit(1)
+            .get();
+      const sequence = (latest?.sequence ?? 0) + 1;
+      tx.insert(imageConversationTurns).values({
+        conversationId: params.conversationId,
+        generation,
+        sequence,
+        ...params.turn,
+      }).run();
+      tx.update(imageConversations).set({
+        currentGeneration: generation,
+        updatedAtMs: params.turn.createdAtMs,
+      }).where(eq(imageConversations.id, params.conversationId)).run();
+      return { generation, sequence };
+    });
+  },
+});
 
 /** Update attachments JSON on an existing event row (for backfilling animationHash). */
 export const updateEventAttachments = (db: DB, eventId: number, attachments: CanonicalAttachment[]) => {

@@ -33,6 +33,7 @@ export const resolveOneBotImageAltText = async (
   imageResolver: ImageToTextResolver,
   animationResolver: AnimationToTextResolver,
   compression?: ImageToTextCompressionConfig,
+  conversation?: { chatId: string; messageId: string; attachmentIndex: number },
 ): Promise<void> => {
   if (!['sticker', 'photo', 'animation'].includes(att.type)) return;
   if (!att.fileRef) return;
@@ -69,8 +70,13 @@ export const resolveOneBotImageAltText = async (
     if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
 
   } else {
-    const record = await imageResolver.resolve(Buffer.from(att.thumbnailWebp, 'base64'), caption, buffer, { isSticker: att.type === 'sticker', compression });
+    const record = await imageResolver.resolve(Buffer.from(att.thumbnailWebp, 'base64'), caption, buffer, {
+      isSticker: att.type === 'sticker',
+      compression,
+      conversation,
+    });
     att.altText = record.altText;
+    if (record.imageId) att.imageId = record.imageId;
     if (record.stickerSetName) att.stickerSetName = record.stickerSetName;
   }
 };

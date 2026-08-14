@@ -34,3 +34,5 @@ If this is a screenshot, please consider:
 - Describe the content of the elements and texts within as much detail as possible.
 
 <span v-if="caption">The image has the following caption: {{ caption }}</span>
+
+In later turns, answer the user's specific follow-up question directly using the image and conversation history. Do not repeat the full initial description unless asked.

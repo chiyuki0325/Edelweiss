@@ -105,6 +105,14 @@ describe('primary-system.velin.md', () => {
     assertNoVueSyntaxLeak(rendered);
   });
 
+  it('renders ask_for_image guidance only when available', async () => {
+    const rendered = await renderSystem({ modelName: 'gpt-4o', hasAskForImageTool: true });
+    expect(rendered).toContain('`ask_for_image`');
+    expect(rendered).toContain('image-id');
+    expect(rendered).toContain('read_image');
+    assertNoVueSyntaxLeak(rendered);
+  });
+
   it('does not leak Telegram reaction wording when the tool is unavailable', async () => {
     const rendered = await renderSystem({
       modelName: 'gpt-4o',

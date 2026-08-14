@@ -22,6 +22,7 @@ import type { CompactionSessionMeta, DriverConfig, ManualCompactionResult, Platf
 import type { ActiveTaskInfo } from '../background-task/types';
 import type { RuntimeConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
+import type { ImageConversationManager } from '../media/image-conversation';
 import type { RenderedContext } from '../rendering/types';
 import type { InstantViewPhotoReference } from '../telegram/instant-view-url';
 import type { Attachment } from '../telegram/message/types';
@@ -62,6 +63,7 @@ export const createDriver = (config: DriverConfig, deps: {
   getAllowedReactionEmojis?: (chatId: string) => string[];
   sendReaction?: (chatId: string, messageId: number, emoji: string) => Promise<void>;
   resolveModel: (name: string) => LlmEndpoint;
+  imageConversations: ImageConversationManager;
   backgroundTask: {
     startTask: (typeName: string, sessionId: string, params: unknown, intention: string | undefined, timeoutMs: number) => number;
     killTask: (taskId: number) => { ok: boolean; error?: string };
@@ -198,6 +200,7 @@ export const createDriver = (config: DriverConfig, deps: {
       getPlatformAdapter: deps.getPlatformAdapter,
       sendReaction: deps.sendReaction,
       resolveModel: deps.resolveModel,
+      imageConversations: deps.imageConversations,
       backgroundTask: {
         startTask: deps.backgroundTask.startTask,
         killTask: deps.backgroundTask.killTask,

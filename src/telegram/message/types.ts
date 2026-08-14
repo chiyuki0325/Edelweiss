@@ -53,6 +53,9 @@ export interface Attachment {
 
   // Set by hydrateAttachments for animation-to-text cache key (not from Telegram API)
   animationHash?: string;
+
+  // Set when the attachment has a persisted image conversation.
+  imageId?: string;
 }
 
 // --- Telegram message types ---

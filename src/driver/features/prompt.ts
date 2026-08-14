@@ -17,6 +17,7 @@ export const createPromptFeature = (deps: MainTurnFeatureDeps): DriverFeature =>
       hasLoadSkillTool: deps.allSkills.size > 0,
       hasSubagentTools: deps.chatConfig.subagents.enabled,
       hasReactTool: deps.chatConfig.platform === 'telegram' && turn.reactionEmojis.length > 0,
+      hasAskForImageTool: Boolean(deps.chatConfig.imageToText.model && turn.capabilities.canAskForImage),
       availableReactionEmojis: turn.reactionEmojis,
       availableSkills: [...deps.allSkills.values()]
         .map(s => ({

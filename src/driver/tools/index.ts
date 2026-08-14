@@ -14,6 +14,7 @@ export { createLoadSkillTool } from './load-skill';
 export { createStaySilentTool } from './stay-silent';
 export { createReactMessageTool } from './react-message';
 export { createReadImageTool } from './read-image';
+export { createAskForImageTool } from './ask-for-image';
 export { createSleepTool } from './sleep';
 export { createEnterFocusTool } from './focus-mode';
 

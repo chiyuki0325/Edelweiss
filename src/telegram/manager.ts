@@ -239,14 +239,16 @@ export const createTelegramManager = (
 
       // Phase 2: Call image-to-text resolver for each attachment with a thumbnail.
       if (imageToText && (!imageToTextChatIds || imageToTextChatIds.has(chatId))) {
-        await Promise.all(attachments.map(async att => {
+        await Promise.all(attachments.map(async (att, attachmentIndex) => {
           if (!shouldAutoDescribeImageAttachment(att) || !att.thumbnailWebp) return;
           const thumbnailBuffer = Buffer.from(att.thumbnailWebp, 'base64');
           const highResBuffer = originalBuffers.get(att);
-          await imageToText.resolve(thumbnailBuffer, text, highResBuffer, {
+          const record = await imageToText.resolve(thumbnailBuffer, text, highResBuffer, {
             isSticker: att.type === 'sticker',
             compression: getImageToTextCompression?.(chatId),
+            conversation: { chatId, messageId: String(messageId), attachmentIndex },
           });
+          if (record.imageId) att.imageId = record.imageId;
         }));
       }
 

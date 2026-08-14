@@ -55,6 +55,7 @@ const ChatConfigSchema = v.object({
     model: v.optional(v.string(), ''),
     compress: v.optional(v.boolean(), true),
     pixelBudget: v.optional(v.number(), 512 * 512),
+    maxContextEstTokens: v.optional(v.number(), 200000),
   }), {}),
   animationToText: v.optional(v.object({
     enabled: v.optional(v.boolean(), false),
@@ -123,6 +124,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     model: v.string(),
     compress: v.boolean(),
     pixelBudget: v.number(),
+    maxContextEstTokens: v.number(),
   })),
   animationToText: v.partial(v.object({
     enabled: v.boolean(),
@@ -229,7 +231,7 @@ export interface ResolvedChatConfig {
     maxConcurrent: number;
     maxSteps: number;
   };
-  imageToText: { enabled: boolean; model?: string; compress: boolean; pixelBudget: number };
+  imageToText: { enabled: boolean; model?: string; compress: boolean; pixelBudget: number; maxContextEstTokens: number };
   animationToText: { enabled: boolean; model?: string; maxFrames: number };
   customEmojiToText: { enabled: boolean; model?: string; maxFrames: number };
   debounce: {
@@ -322,6 +324,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
       model: merged.imageToText.model || undefined,
       compress: merged.imageToText.compress,
       pixelBudget: merged.imageToText.pixelBudget,
+      maxContextEstTokens: merged.imageToText.maxContextEstTokens,
     },
     animationToText: {
       enabled: merged.animationToText.enabled,

@@ -2,7 +2,6 @@ import sharp from 'sharp';
 
 import type { CahciuaTool } from './types';
 import { createTool } from './types';
-import type { InputPart } from '../../unified-api/types';
 
 const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buffer> => {
   const maxEdge = detail === 'high' ? 1024 : 512;
@@ -15,7 +14,11 @@ const prepareImage = async (buffer: Buffer, detail: 'low' | 'high'): Promise<Buf
 export const createReadImageTool = (deps: {
   downloadAttachment: (fileId: string) => Promise<Buffer>;
   readFile: (path: string) => Promise<Buffer>;
-  resolveImageToText?: (buffer: Buffer, detail: 'low' | 'high') => Promise<string>;
+  resolveImageToText?: (
+    buffer: Buffer,
+    detail: 'low' | 'high',
+    sourceKey: string,
+  ) => Promise<{ description: string; imageId: string; reused: boolean }>;
 }): CahciuaTool => createTool({
   name: 'read_image',
   execution: {
@@ -70,12 +73,28 @@ export const createReadImageTool = (deps: {
 
     // 4. Return
     if (deps.resolveImageToText) {
-      const description = await deps.resolveImageToText(resizedBuffer, detail);
-      return { content: JSON.stringify({ ok: true, description }), requiresFollowUp: true };
+      try {
+        const result = await deps.resolveImageToText(
+          resizedBuffer,
+          detail,
+          file_id ? `file_id:${file_id}` : `path:${path!}`,
+        );
+        return {
+          content: JSON.stringify({
+            ok: true,
+            description: result.description,
+            image_id: result.imageId,
+            reused: result.reused,
+          }),
+          requiresFollowUp: true,
+        };
+      } catch (err) {
+        return { content: JSON.stringify({ error: String(err instanceof Error ? err.message : err) }), requiresFollowUp: true };
+      }
     }
 
     return {
-      content: [{ kind: 'image', image: sharp(resizedBuffer), detail }] satisfies InputPart[],
+      content: JSON.stringify({ error: 'read_image requires an imageToText.model because the primary model is not multimodal.' }),
       requiresFollowUp: true,
     };
   },
