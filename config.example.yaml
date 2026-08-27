@@ -51,6 +51,7 @@ chats:
   default:
     platform: telegram          # 'telegram' (default) or 'onebot'
     model: "primary"            # references a key in models
+    identityName: "Edelweiss"  # identity name passed to the primary system prompt
     # systemFiles:              # identity files injected into the system prompt (read at startup)
     #   - "./prompts/IDENTITY.md"
     #   - "./prompts/SOUL.md"

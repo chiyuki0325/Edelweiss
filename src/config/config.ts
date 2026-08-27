@@ -38,6 +38,7 @@ const RuntimeSchema = v.object({
 const ChatConfigSchema = v.object({
   platform: v.optional(v.picklist(['telegram', 'onebot']), 'telegram'),
   model: v.optional(v.string(), 'primary'),
+  identityName: v.optional(v.string(), 'Edelweiss'),
   systemFiles: v.optional(v.array(v.string()), []),
   compaction: v.optional(v.object({
     maxContextEstTokens: v.optional(v.number(), 200000),
@@ -107,6 +108,7 @@ const ChatConfigSchema = v.object({
 const ChatOverrideSchema = v.optional(v.partial(v.object({
   platform: v.picklist(['telegram', 'onebot']),
   model: v.string(),
+  identityName: v.string(),
   systemFiles: v.array(v.string()),
   compaction: v.partial(v.object({
     maxContextEstTokens: v.number(),
@@ -220,6 +222,7 @@ export interface BackgroundTasksConfig {
 
 export interface ResolvedChatConfig {
   platform: 'telegram' | 'onebot';
+  identityName: string;
   primaryModel: LlmEndpoint;
   primaryApiFormat: ProviderFormat;
   systemFiles: { filename: string; content: string }[];
@@ -305,6 +308,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
 
   return {
     platform: merged.platform,
+    identityName: merged.identityName,
     primaryModel,
     primaryApiFormat,
     systemFiles,
