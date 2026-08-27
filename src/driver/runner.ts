@@ -18,6 +18,7 @@ const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
     const parsed = JSON.parse(tr.payload);
     return parsed.ok === false
       && (parsed.code === 'agreement_review_required'
+        || parsed.code === 'contrast_review_required'
         || (typeof parsed.error === 'string' && parsed.error.includes('too long')));
   } catch {
     return false;
@@ -25,7 +26,7 @@ const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
 };
 
 /**
- * Prune recoverable send_message failures (length limit or agreement review),
+ * Prune recoverable send_message failures (length limit or draft review),
  * plus the thinking content between the failure and the next visible resolution.
  *
  * This is a few-shot cleanup: the pruned entries are what gets persisted (future context

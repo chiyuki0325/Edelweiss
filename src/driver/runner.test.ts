@@ -49,6 +49,7 @@ const TR = (callId: string, payload: string, requiresFollowUp = true): Conversat
 
 const LENGTH_ERROR = JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' });
 const AGREEMENT_REVIEW_ERROR = JSON.stringify({ ok: false, code: 'agreement_review_required', error: 'review draft' });
+const CONTRAST_REVIEW_ERROR = JSON.stringify({ ok: false, code: 'contrast_review_required', error: 'regenerate draft' });
 const OK_RESULT = JSON.stringify({ ok: true, message_id: '42' });
 const OTHER_ERROR = JSON.stringify({ ok: false, error: 'Some other error' });
 
@@ -351,6 +352,18 @@ describe('pruneLengthLimitFailures', () => {
     const entries: ConversationEntry[] = [
       MSG({ parts: [TEXT('I should agree first'), TC('send_message', 'tc1', '{"text":"确实"}')] }),
       TR('tc1', AGREEMENT_REVIEW_ERROR, true),
+    ];
+
+    const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, false);
+
+    expect(pruned).toHaveLength(0);
+    expect(pendingPrune).toBe(true);
+  });
+
+  it('removes contrast-review failures from persisted entries', () => {
+    const entries: ConversationEntry[] = [
+      MSG({ parts: [TEXT('I should use a contrast template'), TC('send_message', 'tc1', '{"text":"不是A而是B"}')] }),
+      TR('tc1', CONTRAST_REVIEW_ERROR, true),
     ];
 
     const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, false);

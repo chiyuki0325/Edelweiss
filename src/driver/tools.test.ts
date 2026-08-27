@@ -412,6 +412,69 @@ describe('createSendMessageTool', () => {
     expect(JSON.parse(corrected.content as string)).toEqual({ ok: true, message_id: '46' });
   });
 
+  it.each([
+    ['不是…而是…', '这不是接口问题，而是模型问题'],
+    ['是…不是…', '这是接口问题，不是模型问题'],
+    ['不是…是…', '这不是接口问题，是模型问题'],
+    ['不是…但是…', '这不是接口问题，但是模型问题'],
+  ])('regenerates drafts using the %s contrast pattern', async (_pattern, text) => {
+    const send = vi.fn();
+    const tool = createSendMessageTool(send);
+
+    const result = await tool.execute({ text }, { toolCallId: 'tc-contrast' });
+    const payload = JSON.parse(result.content as string);
+
+    expect(result.requiresFollowUp).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(payload).toMatchObject({
+      ok: false,
+      code: 'contrast_review_required',
+      next_action: { action: 'send_message' },
+    });
+    expect(payload.error).toContain('may contain a meaningless transition');
+    expect(payload.next_action.instruction).toContain('Decide whether the contrast is meaningful');
+  });
+
+  it('does not treat adjacent 是不是 or repeated 不是 as a contrast template', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '47' });
+    const tool = createSendMessageTool(send);
+
+    await tool.execute({ text: '是不是要现在处理' }, { toolCallId: 'tc-question' });
+    await tool.execute({ text: '这不是接口问题，也不是模型问题' }, { toolCallId: 'tc-negative-list' });
+
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows contrast templates when the notErshi filter is disabled', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '48' });
+    const tool = createSendMessageTool(send, undefined, false, false);
+
+    const result = await tool.execute(
+      { text: '这不是接口问题，而是模型问题' },
+      { toolCallId: 'tc-contrast-disabled' },
+    );
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '48' });
+  });
+
+  it('allows a regenerated contrast draft after flagging only once per turn', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '48' });
+    const tool = createSendMessageTool(send);
+
+    await tool.execute(
+      { text: '这不是接口问题，而是模型问题' },
+      { toolCallId: 'tc-contrast-review' },
+    );
+    const corrected = await tool.execute(
+      { text: '问题出在模型层，接口层的输入正常' },
+      { toolCallId: 'tc-contrast-corrected' },
+    );
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(JSON.parse(corrected.content as string)).toEqual({ ok: true, message_id: '48' });
+  });
+
   it('returns error and sets wasLengthLimited when message exceeds 256 bytes', async () => {
     const send = vi.fn();
     const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };

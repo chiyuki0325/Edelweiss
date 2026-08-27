@@ -18,6 +18,15 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
   chatConfig: {
     platform,
     tools: { bash: { backgroundThresholdSec: 10, compactOutput: false }, webSearch: { tavilyKey: '' } },
+    humanLikeness: {
+      trailingPeriod: true,
+      denseClausePunctuation: true,
+      multipleMarkdownBold: true,
+      markdownList: true,
+      markdownHeader: true,
+      newline: true,
+      notErshi: true,
+    },
     imageToText: { enabled: false, compress: false, pixelBudget: 0, maxContextEstTokens: 200_000 },
   } as ResolvedChatConfig,
   allSkills: new Map(),
@@ -103,6 +112,22 @@ describe('createToolsForCapabilities send routing', () => {
 
     expect(mainNames).toContain('ask_for_image');
     expect(subagentNames).not.toContain('ask_for_image');
+  });
+
+  it('passes the notErshi toggle to the send boundary filter', async () => {
+    const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
+    const toolDeps = deps('telegram', sendMessage);
+    toolDeps.chatConfig.humanLikeness.notErshi = false;
+    const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
+      .find(candidate => candidate.function.name === 'send_message')!;
+
+    const result = await tool.execute(
+      { text: '这不是接口问题，而是模型问题' },
+      { toolCallId: 'tc-contrast-disabled' },
+    );
+
+    expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '1' });
+    expect(sendMessage).toHaveBeenCalledOnce();
   });
 
   it('does not suggest react_message when the reaction tool is not assembled', async () => {

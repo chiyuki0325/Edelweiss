@@ -173,7 +173,7 @@ src/
 │   │   ├── execution.ts      # extractToolCalls, extractLoadedSkillNames, executeToolCall
 │   │   ├── index.ts          # Barrel re-exports
 │   │   └── index.test.ts     # Tool unit tests
-│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (7 configurable checks)
+│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (6 configurable checks)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
 │   ├── turn-state.ts      # Explicit ChatScope / SchedulerState / TurnState / capability types for driver turn-loop refactors
 │   ├── turn-state.test.ts # Driver turn/scheduler default-state tests
@@ -556,13 +556,15 @@ The following optimizations are always active in `composeContext()` (operates on
 - **trimStaleNoToolCallTurnResponses**: Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge.
 - **trimSelfMessagesCoveredBySendToolCalls**: Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results).
 - **trimToolResults**: Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with non-low detail. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded.
-- **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for both the 256-byte limit and `agreement_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
+- **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for the 256-byte limit, `agreement_review_required`, and `contrast_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
 
 `send_message` intercepts the first draft per turn containing “确实” and returns `agreement_review_required`. This is a request for semantic review, not a declaration that the whole draft is meaningless: the model must remove only acknowledgement wording and preserve substantive content, or use `react_message` when the draft only agrees. The factory receives the already-resolved reaction capability as a boolean; no TurnState, RC, or persistence schema fields are added. If the rejected call supplied `reply_to`, that id is returned as the suggested reaction target; otherwise the model chooses from message ids already present in rendered chat context. OneBot receives the silent fallback and never sees Telegram reaction instructions.
 
+When `humanLikeness.notErshi` is enabled (the default), the same send boundary intercepts the first draft per turn matching a short “不是…而是…”, “是…不是…”, or “不是…是…” contrast template and returns `contrast_review_required`. The response says the transition may be meaningless rather than assuming all contrasts are invalid: the model must decide whether to preserve the contrast in a more natural form or remove it while regenerating the draft. This toggle controls the send-boundary rejection only; the contrast pattern is not part of recent-message feedback.
+
 ### Human-Likeness Heuristic Toggles
 
-Each of the 7 heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling a check removes it from both detection and the late-binding XML feedback.
+The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling one of those checks removes it from both detection and the late-binding XML feedback. `humanLikeness.notErshi` is a seventh key that controls the separate send-boundary contrast filter.
 
 | Config key | Check | Default |
 |------------|-------|---------|
@@ -572,9 +574,9 @@ Each of the 7 heuristic checks in `send-message-human-likeness.ts` can be disabl
 | `humanLikeness.markdownList` | Markdown list | `true` |
 | `humanLikeness.markdownHeader` | Markdown header | `true` |
 | `humanLikeness.newline` | Any newline in a send_message | `true` |
-| `humanLikeness.notErshi` | Rigid “不是…而是…” rhetorical pattern | `true` |
+| `humanLikeness.notErshi` | Send-boundary regeneration for rigid “不是…而是…”, “是…不是…”, and “不是…是…” templates | `true` |
 
-Toggles are per-chat (deep-merged with `default` like all other config). Defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; passed to `collectRecentSendMessageAssessments()` via `chatConfig.humanLikeness` in the Driver.
+Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles are passed to `collectRecentSendMessageAssessments()`, while `notErshi` is passed to `createSendMessageTool()`.
 
 ### Unified API Layer
 

@@ -80,7 +80,7 @@ chats:
     #   markdownList: true            # flag Markdown lists
     #   markdownHeader: true          # flag Markdown headers
     #   newline: true                 # flag any newline in a send_message
-    #   notErshi: true                # flag when >50% of recent send_message contain "不是…而是…" pattern
+    #   notErshi: true                # reject rigid 不是…而是… / 是…不是… / 不是…是… drafts for regeneration
     # Tools: configuration for enabled tools.
     tools:
       # bash:

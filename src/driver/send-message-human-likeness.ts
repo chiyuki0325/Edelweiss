@@ -4,7 +4,6 @@ import type { ConversationEntry } from '../unified-api/types';
 export const RECENT_SEND_MESSAGE_WINDOW = 5;
 const SHORT_MESSAGE_CHAR_LIMIT = 32;
 const DENSE_CLAUSE_PUNCTUATION_THRESHOLD = 2;
-const NOT_ERSHI_OVERUSE_RATIO = 0.5;
 
 export interface HumanLikenessToggles {
   trailingPeriod: boolean;
@@ -13,7 +12,6 @@ export interface HumanLikenessToggles {
   markdownList: boolean;
   markdownHeader: boolean;
   newline: boolean;
-  notErshi: boolean;
 }
 
 const ALL_ENABLED: HumanLikenessToggles = {
@@ -23,7 +21,6 @@ const ALL_ENABLED: HumanLikenessToggles = {
   markdownList: true,
   markdownHeader: true,
   newline: true,
-  notErshi: true,
 };
 
 export const potentiallyNotHumanFeatureDefinitions = [
@@ -50,10 +47,6 @@ export const potentiallyNotHumanFeatureDefinitions = [
   {
     name: 'newline',
     description: 'Used a newline.',
-  },
-  {
-    name: 'not-ershi',
-    description: "Used '不是…而是…' (it's not…but…) — a rigid rhetorical pattern.",
   },
 ] as const;
 
@@ -119,8 +112,6 @@ export const assessSendMessageHumanLikeness = (
     features.push('markdown-header');
   if (toggles.newline && NEWLINE_RE.test(text))
     features.push('newline');
-  if (toggles.notErshi && /不是(.{0,20})而是/.test(text))
-    features.push('not-ershi');
   return features;
 };
 
@@ -173,11 +164,7 @@ export const renderRecentSendMessageHumanLikenessXml = (
       ...feature,
       count: recentMessages.filter(message => message.features.includes(feature.name)).length,
     }))
-    .filter(feature => {
-      if (feature.count === 0) return false;
-      if (feature.name === 'not-ershi' && feature.count / recentMessages.length <= NOT_ERSHI_OVERUSE_RATIO) return false;
-      return true;
-    });
+    .filter(feature => feature.count > 0);
 
   if (featureCounts.length === 0)
     return '';
@@ -189,12 +176,7 @@ export const renderRecentSendMessageHumanLikenessXml = (
   for (const feature of featureCounts)
     lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
 
-  const hasNotErshi = featureCounts.some(f => f.name === 'not-ershi');
-  const guidanceParts = ['If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.'];
-  if (hasNotErshi) {
-    guidanceParts.push('Avoid rigid "不是…而是…" rhetorical patterns. Express contrast naturally instead.');
-  }
-  lines.push(`<guidance>${guidanceParts.join(' ')}</guidance>`);
+  lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.</guidance>');
 
   lines.push('</human-likeness>');
   return lines.join('\n');

@@ -71,16 +71,6 @@ describe('send-message-human-likeness', () => {
     ]);
   });
 
-  it('detects not-ershi pattern', () => {
-    expect(assessSendMessageHumanLikeness('这不是A而是B')).toEqual(['not-ershi']);
-    expect(assessSendMessageHumanLikeness('不是技术问题而是心态问题')).toEqual(['not-ershi']);
-    expect(assessSendMessageHumanLikeness('不是我不愿意而是真的做不到')).toEqual(['not-ershi']);
-  });
-
-  it('does not flag not-ershi with too many chars between', () => {
-    expect(assessSendMessageHumanLikeness('不是这个AAAAAAAAAAAAAAAAAAAAAAA而是那个')).toEqual([]);
-  });
-
   it('collects only successful send_message calls and keeps the latest five', () => {
     const collected = collectRecentSendMessageAssessments([
       tr(1000, [sendCall('tc1', 'one'), okResult('tc1', '1')]),
