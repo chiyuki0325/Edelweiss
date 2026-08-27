@@ -17,6 +17,7 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
   chatId: '100',
   chatConfig: {
     platform,
+    identityName: 'Edelweiss',
     tools: { bash: { backgroundThresholdSec: 10, compactOutput: false }, webSearch: { tavilyKey: '' } },
     humanLikeness: {
       trailingPeriod: true,

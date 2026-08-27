@@ -20,6 +20,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
   getChatName: async () => 'Test Chat',
   chatConfig: {
     platform: 'telegram',
+    identityName: 'Edelweiss',
     primaryModel: {
       apiBaseUrl: '',
       apiKey: '',

@@ -25,6 +25,7 @@ export interface AvailableSkillPromptInfo {
 export const renderSystemPrompt = async (params: {
   chatId: string;
   chatName: string;
+  identityName: string;
   language?: string;
   modelName: string;
   currentChannel?: string;
@@ -40,6 +41,7 @@ export const renderSystemPrompt = async (params: {
   return await renderPromptTemplate(systemPromptTemplate, {
     chatId: params.chatId.replace(/\s+/g, ' ').trim(),
     chatName: params.chatName.replace(/\s+/g, ' ').trim(),
+    identityName: params.identityName.replace(/\s+/g, ' ').trim(),
     language: params.language,
     modelName: params.modelName,
     currentChannel: params.currentChannel,

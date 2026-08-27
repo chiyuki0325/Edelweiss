@@ -10,6 +10,7 @@ export const createPromptFeature = (deps: MainTurnFeatureDeps): DriverFeature =>
     turn.system = await renderSystemPrompt({
       chatId: deps.chatId,
       chatName: await deps.getChatName(),
+      identityName: deps.chatConfig.identityName,
       currentChannel: deps.chatConfig.platform,
       modelName: deps.chatConfig.primaryModel.model,
       forceToolCall: deps.chatConfig.primaryModel.forceToolCall,

@@ -121,51 +121,69 @@ describe('render', () => {
   describe('rich text content', () => {
     it('renders bold', () => {
       const content: ContentNode[] = [{ type: 'bold', children: [{ type: 'text', text: 'strong' }] }];
-      expect(xml(render(ic([message({ content })])))).toContain('<b>strong</b>');
+      expect(xml(render(ic([message({ content })])))).toContain('**strong**');
     });
 
     it('renders italic', () => {
       const content: ContentNode[] = [{ type: 'italic', children: [{ type: 'text', text: 'em' }] }];
-      expect(xml(render(ic([message({ content })])))).toContain('<i>em</i>');
+      expect(xml(render(ic([message({ content })])))).toContain('*em*');
     });
 
     it('renders code', () => {
       const content: ContentNode[] = [{ type: 'code', text: 'foo()' }];
-      expect(xml(render(ic([message({ content })])))).toContain('<code>foo()</code>');
+      expect(xml(render(ic([message({ content })])))).toContain('`foo()`');
     });
 
     it('renders pre with language', () => {
       const content: ContentNode[] = [{ type: 'pre', text: 'x = 1', language: 'py' }];
-      expect(xml(render(ic([message({ content })])))).toContain('<pre lang="py">x = 1</pre>');
+      expect(xml(render(ic([message({ content })])))).toContain('```py\nx = 1\n```');
     });
 
     it('renders pre without language', () => {
       const content: ContentNode[] = [{ type: 'pre', text: 'x = 1' }];
-      expect(xml(render(ic([message({ content })])))).toContain('<pre>x = 1</pre>');
+      expect(xml(render(ic([message({ content })])))).toContain('```\nx = 1\n```');
     });
 
     it('renders link', () => {
       const content: ContentNode[] = [{ type: 'link', url: 'https://example.com', children: [{ type: 'text', text: 'click' }] }];
-      expect(xml(render(ic([message({ content })])))).toContain('<a href="https://example.com">click</a>');
+      expect(xml(render(ic([message({ content })])))).toContain('[click](https://example.com)');
     });
 
-    it('renders mention with userId', () => {
+    it('escapes Markdown syntax in plain text', () => {
+      const content: ContentNode[] = [{ type: 'text', text: '**literal** [text]\n# heading\n- item' }];
+      expect(xml(render(ic([message({ content })])))).toContain('\\*\\*literal\\*\\* \\[text\\]\n\\# heading\n\\- item');
+    });
+
+    it('uses a longer delimiter for code containing backticks', () => {
+      const content: ContentNode[] = [{ type: 'code', text: '`value`' }];
+      expect(xml(render(ic([message({ content })])))).toContain('`` `value` ``');
+    });
+
+    it('renders mention text without nested XML', () => {
       const content: ContentNode[] = [{ type: 'mention', userId: '99', children: [{ type: 'text', text: '@bob' }] }];
-      expect(xml(render(ic([message({ content })])))).toContain('<mention uid="99">@bob</mention>');
+      const result = xml(render(ic([message({ content })])));
+      expect(result).toContain('@bob');
+      expect(result).not.toContain('<mention');
     });
 
     it('renders mention without userId', () => {
       const content: ContentNode[] = [{ type: 'mention', children: [{ type: 'text', text: '@bob' }] }];
       const result = xml(render(ic([message({ content })])));
-      expect(result).toContain('<mention>@bob</mention>');
-      expect(result).not.toContain('uid=');
+      expect(result).toContain('@bob');
+      expect(result).not.toContain('<mention');
     });
 
-    it('renders custom_emoji as children only', () => {
-      const content: ContentNode[] = [{ type: 'custom_emoji', customEmojiId: '999', children: [{ type: 'text', text: '🎉' }] }];
+    it('renders custom_emoji as text only', () => {
+      const content: ContentNode[] = [{
+        type: 'custom_emoji',
+        customEmojiId: '999',
+        children: [{ type: 'text', text: '🎉' }],
+        altText: 'party cat',
+        stickerSetName: 'Cats',
+      }];
       const result = xml(render(ic([message({ content })])));
-      expect(result).toContain('🎉');
-      expect(result).not.toContain('custom_emoji');
+      expect(result).toContain('party cat');
+      expect(result).not.toContain('custom-emoji');
     });
 
     it('renders nested content', () => {
@@ -177,7 +195,7 @@ describe('render', () => {
           ],
         },
       ];
-      expect(xml(render(ic([message({ content })])))).toContain('<b>say <i>hi</i></b>');
+      expect(xml(render(ic([message({ content })])))).toContain('**say *hi***');
     });
 
     it('renders strikethrough, underline, spoiler, blockquote', () => {
@@ -188,10 +206,10 @@ describe('render', () => {
         { type: 'blockquote', children: [{ type: 'text', text: 'd' }] },
       ];
       const result = xml(render(ic([message({ content })])));
-      expect(result).toContain('<s>a</s>');
-      expect(result).toContain('<u>b</u>');
-      expect(result).toContain('<spoiler>c</spoiler>');
-      expect(result).toContain('<blockquote>d</blockquote>');
+      expect(result).toContain('~~a~~');
+      expect(result).toContain('__b__');
+      expect(result).toContain('||c||');
+      expect(result).toContain('> d');
     });
   });
 
@@ -212,7 +230,7 @@ describe('render', () => {
     it('escapes code content', () => {
       const content: ContentNode[] = [{ type: 'code', text: 'x < y && z > w' }];
       const result = xml(render(ic([message({ content })])));
-      expect(result).toContain('<code>x &lt; y &amp;&amp; z &gt; w</code>');
+      expect(result).toContain('`x &lt; y &amp;&amp; z &gt; w`');
     });
   });
 
@@ -267,6 +285,15 @@ describe('render', () => {
       })])));
       expect(result).toContain('<in-reply-to id="99">');
       expect(result).not.toContain('<in-reply-to id="99" sender=');
+    });
+
+    it('does not split a surrogate pair when truncating rendered reply content', () => {
+      const result = xml(render(ic([message({
+        replyToMessageId: '99',
+        replyToContent: [{ type: 'text', text: `${'a'.repeat(99)}😀tail` }],
+      })])));
+      expect(result).toContain(`<in-reply-to id="99">${'a'.repeat(99)}…</in-reply-to>`);
+      expect(result).not.toContain('�');
     });
   });
 

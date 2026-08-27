@@ -38,36 +38,52 @@ const formatTimestamp = (epochSec: number, utcOffsetMin: number): string => {
   return `${date}T${time}${offset}`;
 };
 
-// --- ContentNode → XML ---
+// --- ContentNode → Markdown ---
+
+const escapeMarkdownText = (text: string): string => {
+  const escaped = text
+    .replace(/([\\`*_[\]~|!])/g, '\\$1')
+    .replace(/^(\s*)(#{1,6}|[>+-])(?=\s)/gm, '$1\\$2')
+    .replace(/^(\s*)(\d+)\.(?=\s)/gm, '$1$2\\.');
+  return escapeXml(escaped);
+};
+
+const inlineCode = (text: string): string => {
+  const longestRun = Math.max(0, ...([...text.matchAll(/`+/g)].map(match => match[0].length)));
+  const delimiter = '`'.repeat(longestRun + 1);
+  const padding = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${delimiter}${padding}${escapeXml(text)}${padding}${delimiter}`;
+};
+
+const fencedCode = (text: string, language?: string): string => {
+  const longestRun = Math.max(2, ...([...text.matchAll(/`+/g)].map(match => match[0].length)));
+  const fence = '`'.repeat(longestRun + 1);
+  const safeLanguage = language?.replace(/[^\w+.-]/g, '') ?? '';
+  return `${fence}${safeLanguage}\n${escapeXml(text)}\n${fence}`;
+};
 
 const renderContentNode = (node: ContentNode): string => {
   switch (node.type) {
-  case 'text': return escapeXml(node.text);
-  case 'code': return `<code>${escapeXml(node.text)}</code>`;
-  case 'pre': return node.language
-    ? `<pre lang="${escapeXml(node.language)}">${escapeXml(node.text)}</pre>`
-    : `<pre>${escapeXml(node.text)}</pre>`;
-  case 'bold': return `<b>${renderContent(node.children)}</b>`;
-  case 'italic': return `<i>${renderContent(node.children)}</i>`;
-  case 'underline': return `<u>${renderContent(node.children)}</u>`;
-  case 'strikethrough': return `<s>${renderContent(node.children)}</s>`;
-  case 'spoiler': return `<spoiler>${renderContent(node.children)}</spoiler>`;
-  case 'blockquote': return `<blockquote>${renderContent(node.children)}</blockquote>`;
-  case 'link': return `<a href="${escapeXml(node.url)}">${renderContent(node.children)}</a>`;
-  case 'mention': return node.userId
-    ? `<mention uid="${escapeXml(node.userId)}">${renderContent(node.children)}</mention>`
-    : `<mention>${renderContent(node.children)}</mention>`;
-  case 'face':
-    return `<face id="${escapeXml(node.faceId)}">${escapeXml(node.text)}</face>`;
+  case 'text': return escapeMarkdownText(node.text);
+  case 'code': return inlineCode(node.text);
+  case 'pre': return fencedCode(node.text, node.language);
+  case 'bold': return `**${renderContent(node.children)}**`;
+  case 'italic': return `*${renderContent(node.children)}*`;
+  case 'underline': return `__${renderContent(node.children)}__`;
+  case 'strikethrough': return `~~${renderContent(node.children)}~~`;
+  case 'spoiler': return `||${renderContent(node.children)}||`;
+  case 'blockquote': return renderContent(node.children)
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n');
+  case 'link': return `[${renderContent(node.children)}](${escapeXml(node.url.replace(/([\\()])/g, '\\$1'))})`;
+  case 'mention': return renderContent(node.children);
+  case 'face': return escapeMarkdownText(node.text);
   case 'custom_emoji':
-    if (node.altText) {
-      const packAttr = node.stickerSetName ? ` pack="${escapeXml(node.stickerSetName)}"` : '';
-      return `<custom-emoji${packAttr}>${escapeXml(node.altText)}</custom-emoji>`;
-    }
-    if (node.altTextError)
-      return `<custom-emoji error="${escapeXml(node.altTextError)}"/>`;
+    if (node.altText) return escapeMarkdownText(node.altText);
+    if (node.altTextError) return renderContent(node.children);
     return renderContent(node.children);
-  case 'rich': return `<rich>${node.text}</rich>`;
+  case 'rich': return escapeMarkdownText(node.text);
   }
 };
 
@@ -76,18 +92,12 @@ const renderContent = (nodes: ContentNode[]): string =>
 
 const REPLY_PREVIEW_MAX_CHARS = 100;
 
-/** Truncate rendered XML without breaking tags. */
-const truncateXml = (xml: string, maxLen: number): string => {
-  if (xml.length <= maxLen) return xml;
+const truncateRenderedContent = (content: string, maxLen: number): string => {
+  if (content.length <= maxLen) return content;
   let cutAt = maxLen;
-  const lastClose = xml.lastIndexOf('>', cutAt);
-  const lastOpen = xml.lastIndexOf('<', cutAt);
-  // If we're inside a tag, truncate before the opening '<'
-  if (lastOpen > lastClose) cutAt = lastOpen;
-  if (cutAt <= 0) return '';
   // Don't split a surrogate pair — step back if the char before cutAt is a high surrogate.
-  if ((xml.charCodeAt(cutAt - 1) & 0xFC00) === 0xD800) cutAt--;
-  return `${xml.slice(0, cutAt)}…`;
+  if ((content.charCodeAt(cutAt - 1) & 0xFC00) === 0xD800) cutAt--;
+  return `${content.slice(0, cutAt)}…`;
 };
 
 // --- Attachment → XML ---
@@ -157,7 +167,7 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
     if (msg.replyToSender) replyAttrs.push(`sender="${escapeXml(formatSender(msg.replyToSender, params.contactNames))}"`);
     if (msg.replyQuoteText != null) replyAttrs.push(`quote="${escapeXml(msg.replyQuoteText)}"`);
     const preview = msg.replyToContent
-      ? truncateXml(renderContent(msg.replyToContent), REPLY_PREVIEW_MAX_CHARS)
+      ? truncateRenderedContent(renderContent(msg.replyToContent), REPLY_PREVIEW_MAX_CHARS)
       : (msg.replyToPreview ? escapeXml(msg.replyToPreview) : '');
     parts.push(`<in-reply-to ${replyAttrs.join(' ')}>${preview}</in-reply-to>`);
   }

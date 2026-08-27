@@ -58,6 +58,7 @@ const usage: Usage = {
 
 const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfig => ({
   platform: 'telegram',
+  identityName: 'Edelweiss',
   primaryModel: endpoint,
   primaryApiFormat: 'openai-chat',
   systemFiles: [],
@@ -215,6 +216,7 @@ describe('createDriver debounce scheduling', () => {
       expect(mocks.renderSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
         chatId: 'chat',
         chatName: 'Test Chat',
+        identityName: 'Edelweiss',
       }));
 
       driver.handleEvent('chat', rc(100, 200));
