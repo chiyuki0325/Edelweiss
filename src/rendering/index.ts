@@ -19,6 +19,7 @@ const formatSender = (user: CanonicalUser, contactNames?: Map<string, string>): 
   const contactName = contactNames?.get(user.id);
   const displayName = contactName ?? (user.displayName !== '' ? user.displayName : (user.username ?? user.id));
   if (user.username && user.username !== displayName) return `${displayName} (@${user.username})`;
+  if (user.id.length < 12) return `${displayName} (${user.id})`;
   return displayName;
 };
 

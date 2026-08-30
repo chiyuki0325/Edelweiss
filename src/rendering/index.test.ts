@@ -52,8 +52,15 @@ describe('render', () => {
       expect(result).toContain('</message>');
     });
 
-    it('formats sender without username', () => {
-      const result = xml(render(ic([message({ sender: bob })])));
+    it('formats a numeric sender ID shorter than 12 digits as a QQ UID', () => {
+      const sender: CanonicalUser = { id: '12345678', displayName: '昵称', isBot: false };
+      const result = xml(render(ic([message({ sender })])));
+      expect(result).toContain('sender="昵称 (12345678)"');
+    });
+
+    it('does not format a 12-digit numeric sender ID as a QQ UID', () => {
+      const sender: CanonicalUser = { id: '123456789012', displayName: 'Bob', isBot: false };
+      const result = xml(render(ic([message({ sender })])));
       expect(result).toContain('sender="Bob"');
     });
 
@@ -199,7 +206,7 @@ describe('render', () => {
     it('escapes sender displayName in attributes', () => {
       const sender: CanonicalUser = { id: '3', displayName: 'A "B" <C>', isBot: false };
       const result = xml(render(ic([message({ sender })])));
-      expect(result).toContain('sender="A &quot;B&quot; &lt;C&gt;"');
+      expect(result).toContain('sender="A &quot;B&quot; &lt;C&gt; (3)"');
     });
 
     it('escapes code content', () => {
@@ -251,7 +258,7 @@ describe('render', () => {
         replyToSender: bob,
         replyToPreview: 'previous message',
       })])));
-      expect(result).toContain('<in-reply-to id="99" sender="Bob">previous message</in-reply-to>');
+      expect(result).toContain('<in-reply-to id="99" sender="Bob (2)">previous message</in-reply-to>');
     });
 
     it('renders in-reply-to without sender when not available', () => {
@@ -271,11 +278,11 @@ describe('render', () => {
       expect(result).toContain('forwarded_from="Alice (@alice)"');
     });
 
-    it('renders forwarded_from with sender without username', () => {
+    it('renders forwarded_from with an inferred QQ UID', () => {
       const result = xml(render(ic([message({
         forwardInfo: { sender: { id: '555', displayName: 'Alice', isBot: false } },
       })])));
-      expect(result).toContain('forwarded_from="Alice"');
+      expect(result).toContain('forwarded_from="Alice (555)"');
     });
 
     it('falls back to senderName for hidden forwards', () => {
@@ -427,7 +434,7 @@ describe('render', () => {
       const result = xml(render(ic([event])));
       expect(result).toContain('type="members_joined"');
       expect(result).toContain('actor="Alice (@alice)"');
-      expect(result).toContain('members="Alice (@alice), Bob"');
+      expect(result).toContain('members="Alice (@alice), Bob (2)"');
       expect(result).toContain('/>');
     });
 
@@ -443,8 +450,8 @@ describe('render', () => {
       };
       const result = xml(render(ic([event])));
       expect(result).toContain('type="member_left"');
-      expect(result).toContain('actor="Bob"');
-      expect(result).toContain('member="Bob"');
+      expect(result).toContain('actor="Bob (2)"');
+      expect(result).toContain('member="Bob (2)"');
     });
 
     it('renders chat_renamed event with from and to', () => {
@@ -559,7 +566,7 @@ describe('render', () => {
       expect(result).toContain('message_id="42"');
       expect(result).toContain('emoji="👍"');
       expect(result).toContain('count="2"');
-      expect(result).toContain('sender="Bob"');
+      expect(result).toContain('sender="Bob (2)"');
       expect(rc[0]!.isPassiveEvent).toBe(true);
     });
 
