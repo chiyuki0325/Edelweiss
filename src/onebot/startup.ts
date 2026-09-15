@@ -127,6 +127,9 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
   };
 
   const onebotGroupChats = onebotChatIds.filter(id => !id.startsWith('private:'));
+  // Register outbound adapters before historical replay. Replay may spend time
+  // resolving old media, but live chats must remain able to send replies.
+  for (const chatId of onebotChatIds) getAdapter(chatId);
   for (const chatId of onebotGroupChats) {
     const pulledMessages = [];
     let lastMessageId = deps.getLastMessageId(chatId);
