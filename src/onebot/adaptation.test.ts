@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { adaptOneBotMessage, adaptOneBotSender, adaptUser } from './adaptation';
 import type { OneBotApiClient } from './server';
@@ -7,6 +7,8 @@ import { latestExternalEventMs, latestInterruptingExternalEventMs } from '../dri
 import { createEmptyIC, reduce } from '../projection';
 import type { IntermediateContext } from '../projection';
 import { render } from '../rendering';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('adaptUser', () => {
   it('prefers remark over group card and nickname', () => {
@@ -96,6 +98,92 @@ describe('adaptOneBotMessage', () => {
 
     expect(getFriendRemark).toHaveBeenCalledWith('42');
     expect(adapted.sender?.displayName).toBe('好友列表备注');
+  });
+
+  it('does not fetch the temporary URL for ordinary images', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw Object.assign(new TypeError('fetch failed'), {
+        cause: { name: 'ConnectTimeoutError', code: 'UND_ERR_CONNECT_TIMEOUT' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = { getFriendRemark: vi.fn(async () => undefined) } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 999,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'ordinary.jpg', url: 'http://unreachable.invalid/ordinary.jpg', summary: '' } }],
+      raw_message: '[图片]',
+      sender: { user_id: 42, nickname: 'sender' },
+    };
+
+    const adapted = await adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adapted.attachments).toEqual([{
+      type: 'photo',
+      fileName: 'ordinary.jpg',
+      fileRef: 'ordinary.jpg',
+    }]);
+  });
+
+  it('keeps live sticker classification fail-closed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    const api = { getFriendRemark: vi.fn(async () => undefined) } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 999,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'sticker.gif', url: 'http://unreachable.invalid/sticker.gif', summary: '[动画表情]' } }],
+      raw_message: '[动画表情]',
+      sender: { user_id: 42, nickname: 'sender' },
+    };
+
+    await expect(adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 }))
+      .rejects.toThrow('fetch failed');
+  });
+
+  it('keeps historical sticker candidates when classification times out', async () => {
+    const timeout = Object.assign(new TypeError('fetch failed'), {
+      cause: { name: 'ConnectTimeoutError', code: 'UND_ERR_CONNECT_TIMEOUT' },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw timeout; }));
+    const onMediaClassificationFailure = vi.fn();
+    const api = { getFriendRemark: vi.fn(async () => undefined) } as unknown as OneBotApiClient;
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 999,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'image', data: { file: 'sticker.gif', url: 'http://unreachable.invalid/sticker.gif', summary: '[动画表情]' } }],
+      raw_message: '[动画表情]',
+      sender: { user_id: 42, nickname: 'sender' },
+    };
+
+    const adapted = await adaptOneBotMessage(
+      api,
+      event,
+      { receivedAtMs: 1000, utcOffsetMin: 480 },
+      { onMediaClassificationFailure },
+    );
+
+    expect(onMediaClassificationFailure).toHaveBeenCalledWith(timeout);
+    expect(adapted.attachments).toEqual([{
+      type: 'sticker',
+      fileName: 'sticker.gif',
+      fileRef: 'sticker.gif',
+    }]);
   });
 
   it('keeps an echoed self message transparent to Driver scheduling', async () => {

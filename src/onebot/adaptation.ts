@@ -26,6 +26,10 @@ export interface OneBotIngressMeta {
   utcOffsetMin: number;
 }
 
+export interface OneBotAdaptationOptions {
+  onMediaClassificationFailure?: (err: unknown) => void;
+}
+
 export const captureOneBotIngressMeta = (): OneBotIngressMeta => ({
   receivedAtMs: Date.now(),
   utcOffsetMin: captureUtcOffset(),
@@ -101,6 +105,7 @@ const adaptSegment = async (
   chatId: string,
   seg: OneBotMessageSegment,
   attachments: CanonicalAttachment[],
+  options: OneBotAdaptationOptions,
 ): Promise<ContentNode | null> => {
   switch (seg.type) {
   case 'text':
@@ -117,18 +122,19 @@ const adaptSegment = async (
     return { type: 'mention', userId: String(seg.data.qq), children: [{ type: 'text', text: `@${userMentioned.displayName}` }] };
 
   case 'image': {
-    const response = await fetch(seg.data.url!, { signal: AbortSignal.timeout(60_000) });
-    if (!response.ok) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    // 20260513 增加贴纸判断
     let attType: CanonicalAttachment['type'] = 'photo';
     const isStickerOrAnimation = seg.data.emoji_id != null || seg.data.emoji_pack_id != null || STICKER_REGEX.test(seg.data.summary ?? '');
     if (isStickerOrAnimation) {
-      // 采用 sharp 判断是否为动画贴纸（多帧图片）
-      const metadata = await sharp(buffer).metadata();
-      const isAnimated = metadata.pages && metadata.pages > 1;
-      attType = isAnimated ? 'animation' : 'sticker';
+      attType = 'sticker';
+      try {
+        const response = await fetch(seg.data.url!, { signal: AbortSignal.timeout(60_000) });
+        if (!response.ok) throw new Error(`QQ media download failed with HTTP ${response.status}`);
+        const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+        if (metadata.pages && metadata.pages > 1) attType = 'animation';
+      } catch (err) {
+        if (!options.onMediaClassificationFailure) throw err;
+        options.onMediaClassificationFailure(err);
+      }
     }
     const att: CanonicalAttachment = {
       type: attType,
@@ -215,7 +221,12 @@ const adaptSegment = async (
 };
 
 // OneBotApiClient 传入用于某些消息（如 mention 的副作用）
-export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMessageEvent, meta: OneBotIngressMeta): Promise<CanonicalMessageEvent> => {
+export const adaptOneBotMessage = async (
+  api: OneBotApiClient,
+  event: OneBotMessageEvent,
+  meta: OneBotIngressMeta,
+  options: OneBotAdaptationOptions = {},
+): Promise<CanonicalMessageEvent> => {
   const chatId = oneBotMessageChatId(event);
   const friendRemark = await api.getFriendRemark(String(event.sender.user_id)).catch(() => undefined);
 
@@ -228,7 +239,7 @@ export const adaptOneBotMessage = async (api: OneBotApiClient, event: OneBotMess
       replyToMessageId = String(seg.data.id);
       continue;
     }
-    const node = await adaptSegment(api, chatId, seg, attachments);
+    const node = await adaptSegment(api, chatId, seg, attachments, options);
     if (node) content.push(node);
   }
 
