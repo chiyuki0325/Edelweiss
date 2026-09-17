@@ -154,13 +154,22 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
 
     if (pulledMessages.length === 0) continue;
 
-    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(server.api!, msg, {
-      // Historical replay: derive the ordering timestamp from the message's
-      // server time rather than the wall clock, so replayed events keep their
-      // original order relative to one another and to live events.
-      receivedAtMs: msg.time * 1000,
-      utcOffsetMin: -new Date().getTimezoneOffset(),
-    }))))
+    const events = (await Promise.all(pulledMessages.map(msg => adaptOneBotMessage(
+      server.api!,
+      msg,
+      {
+        // Historical replay: derive the ordering timestamp from the message's
+        // server time rather than the wall clock, so replayed events keep their
+        // original order relative to one another and to live events.
+        receivedAtMs: msg.time * 1000,
+        utcOffsetMin: -new Date().getTimezoneOffset(),
+      },
+      {
+        onMediaClassificationFailure: err => deps.logger.withError(err)
+          .withFields({ chatId, messageId: String(msg.message_id) })
+          .warn('OneBot replay media classification failed; keeping attachment as sticker'),
+      },
+    ))))
       .map(deps.redactBlockedMessage);
 
     if (deps.imageToTextChatIds.has(chatId) && server.api) {
