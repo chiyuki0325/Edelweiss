@@ -134,6 +134,9 @@ export const renderCodeBlockWithSilicon: CodeBlockRenderer = async (code, langua
       '--background', '#ffffff',
       '--pad-horiz', '4',
       '--pad-vert', '4',
+      // Silicon does not reliably auto-fallback to an installed CJK font.
+      // https://github.com/Aloxaf/silicon/issues/191
+      '--font', 'Noto Sans Mono CJK SC',
     ];
     if (language)
       args.push('--language', language);
