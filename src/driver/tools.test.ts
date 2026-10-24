@@ -458,6 +458,18 @@ describe('createSendMessageTool', () => {
     expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '48' });
   });
 
+  it('can skip Markdown formatting so platform-specific plain text stays literal', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: '49' });
+    const tool = createSendMessageTool(send, undefined, false, true, { formatMarkdown: false });
+
+    await tool.execute(
+      { text: '_literal_ __also_literal__ user_name' },
+      { toolCallId: 'tc-plain-text' },
+    );
+
+    expect(send).toHaveBeenCalledWith('_literal_ __also_literal__ user_name', undefined, undefined);
+  });
+
   it('allows a regenerated contrast draft after flagging only once per turn', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '48' });
     const tool = createSendMessageTool(send);

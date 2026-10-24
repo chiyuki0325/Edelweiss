@@ -58,4 +58,15 @@ describe('renderTextToSegments', () => {
     ]);
     expect(renderCodeBlock).not.toHaveBeenCalled();
   });
+
+  it('preserves underscores literally in OneBot text', async () => {
+    await expect(renderTextToSegments(
+      'user_name a_b_c _literal_ __also_literal__ /tmp/file_name',
+    )).resolves.toEqual([
+      {
+        type: 'text',
+        data: { text: 'user_name a_b_c _literal_ __also_literal__ /tmp/file_name' },
+      },
+    ]);
+  });
 });

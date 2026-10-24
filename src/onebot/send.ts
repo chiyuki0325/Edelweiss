@@ -11,11 +11,10 @@ import type { RuntimeConfig } from '../config/config';
 /** Convert LLM markdown output to plain text suitable for QQ. */
 const markdownToPlainText = (text: string): string =>
   text
-    // Bold/italic markers
+    // Bold/italic markers. Keep underscores literal because QQ does not
+    // render Markdown and they commonly occur in identifiers and paths.
     .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/__(.+?)__/g, '$1')
     .replace(/\*(.+?)\*/g, '$1')
-    .replace(/_(.+?)_/g, '$1')
     // Links [text](url)
     .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
     // Code blocks

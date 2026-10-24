@@ -8,11 +8,16 @@ import { createTool } from './types';
 
 const RIGID_CONTRAST_RE = /(?:不是[\s\S]{1,20}?(?:而是|(?<![不而])是)|(?<!不)是[\s\S]{1,20}?不是)/u;
 
+interface SendMessageToolOptions {
+  formatMarkdown?: boolean;
+}
+
 export const createSendMessageTool = (
   send: (text: string, replyTo?: string, attachments?: SendMessageAttachment[]) => Promise<{ messageId: string }>,
   turnFlags?: SendMessageTurnFlags,
   canReact = false,
   rejectRigidContrast = true,
+  options?: SendMessageToolOptions,
 ): CahciuaTool => {
   let queshiFlaggedThisTurn = false;
   let rigidContrastFlaggedThisTurn = false;
@@ -124,8 +129,10 @@ export const createSendMessageTool = (
           requiresFollowUp: true,
         };
       }
-      const formattedText = prettier.format(text, { parser: 'markdown', plugins: [markdownParser], embeddedLanguageFormatting: 'auto' });
-      const result = await send(formattedText, reply_to, attachments);
+      const outgoingText = options?.formatMarkdown !== false
+        ? prettier.format(text, { parser: 'markdown', plugins: [markdownParser], embeddedLanguageFormatting: 'auto' })
+        : text;
+      const result = await send(outgoingText, reply_to, attachments);
       return {
         content: JSON.stringify({ ok: true, message_id: result.messageId }),
         requiresFollowUp: still_working ?? (turnFlags?.wasLengthLimited ?? false),
