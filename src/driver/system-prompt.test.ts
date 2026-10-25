@@ -42,7 +42,7 @@ const renderSystem = (data: Record<string, unknown> = {}) =>
 
 describe('primary-system.velin.md', () => {
   it.each(['force', 'local-force', 'none', 'local-none', undefined])('preserves silence instructions for toolChoice %s', async toolChoice => {
-    const rendered = await renderSystem({ toolChoice });
+    const rendered = await renderSystem({ modelName: 'gpt-4o', toolChoice });
     const forced = toolChoice === 'force' || toolChoice === 'local-force';
     expect(rendered.includes('To stay silent, call `stay_silent`.')).toBe(forced);
     expect(rendered.includes('To stay silent, simply do not call `send_message`.')).toBe(!forced);
