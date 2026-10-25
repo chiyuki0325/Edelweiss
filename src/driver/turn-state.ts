@@ -54,7 +54,6 @@ export const createDefaultTurnCapabilities = (kind: TurnKind): TurnCapabilities 
 
 export interface SchedulerState {
   debounceTimer?: ReturnType<typeof setTimeout>;
-  maxDelayTimer?: ReturnType<typeof setTimeout>;
   debounceWaiting: boolean;
   replyBatchDeadlineMs: number | null;
   startNextDebounceWithExtendDelay: boolean;
@@ -96,6 +95,8 @@ export interface ChatScope {
   focusMode: DriverSignal<boolean>;
   scheduler: SchedulerState;
   activeTurn: TurnState | null;
+  updateRenderedContext(rc: RenderedContext): void;
+  setOfflineMode(offline: boolean): void;
   extendDebounce(): void;
   notifyTyping(): void;
   cleanup(): void;

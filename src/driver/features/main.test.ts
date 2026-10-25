@@ -112,9 +112,8 @@ const createDeps = (): MainTurnFeatureDeps => ({
     inFocusMode: false,
   })),
   schedulerController: {
-    clearAbortController: vi.fn(),
+    finishTurn: vi.fn(),
     markFailed: vi.fn(),
-    onTurnSettled: vi.fn(),
   },
   getActiveBackgroundTasks: vi.fn(() => []),
   lastTRInterrupted: signal(false),

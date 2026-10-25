@@ -6,21 +6,16 @@ export const createCleanupFeature = (deps: MainTurnFeatureDeps): DriverFeature =
   name: 'cleanup',
   cleanupTurn: async ctx => {
     const { turn } = ctx;
-    // Refresh interrupted state before flipping running, so needsReply
-    // recomputes with both signals settled atomically.
+    // 中断信息在运行状态释放前刷新，下一次调度读取的是完整 Turn 结果。
     try {
       const trs = await deps.loadTRs(deps.chatId, deps.cursorMs());
       deps.lastTRInterrupted(wasToolLoopInterrupted(trs));
     } catch (err) {
       deps.log.withError(err).withFields({ chatId: deps.chatId }).warn('Failed to refresh lastTRInterrupted');
     }
-    deps.schedulerController.onTurnSettled();
-    deps.schedulerController.clearAbortController(turn.abortController);
     turn.scope.activeTurn = null;
-    deps.running(false);
-    if (deps.focusMode()) deps.focusMode(false);
+    deps.schedulerController.finishTurn(turn.abortController, turn.flags.wasOfflineAtStart);
     if (turn.flags.wasOfflineAtStart) {
-      deps.offline(false);
       deps.log.withFields({ chatId: deps.chatId }).log('Offline mode: auto-returning to online after response');
     }
   },
