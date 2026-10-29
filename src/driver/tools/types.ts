@@ -1,9 +1,9 @@
 import { Validator } from '@cfworker/json-schema';
 
-import type { InputPart } from '../../unified-api/types';
+import type { DriverInputBlock } from '../messages';
 
 export interface ToolResult {
-  content: string | InputPart[];
+  content: string | DriverInputBlock[];
   requiresFollowUp: boolean;
 }
 

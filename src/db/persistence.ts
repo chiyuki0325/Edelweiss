@@ -1,3 +1,4 @@
+import { mapChatMessagesToStoredMessages, type StoredMessage } from '@langchain/core/messages';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { DB } from './client';
@@ -12,6 +13,10 @@ import type {
   CanonicalReactionEvent,
   CanonicalServiceEvent,
 } from '../adaption-types';
+import {
+  legacyEntriesToMessages,
+  storedMessagesToDriverMessages,
+} from '../driver/messages';
 import type { AgentMessage, AgentMessageType, SubagentStatus } from '../driver/subagents/types';
 import type { CompactionSessionMeta, TurnResponseV2 } from '../driver/types';
 import type { ImageConversationRecord, ImageConversationStore, ImageConversationTurn } from '../media/image-conversation';
@@ -21,7 +26,7 @@ import type { RuntimeEvent, RuntimeEventData } from '../runtime-event';
 import { contentToPlainText } from '../telegram/adaption';
 import type { TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionSnapshotEntry, TelegramUser } from '../telegram/message';
 import type { Attachment } from '../telegram/message/types';
-import type { ConversationEntry } from '../unified-api/types';
+import type { ConversationEntry as LegacyConversationEntry } from '../unified-api/types';
 
 export const upsertUser = (db: DB, user: TelegramUser) => {
   db.insert(users)
@@ -393,7 +398,7 @@ export const loadKnownChatIds = (db: DB): string[] => {
 };
 
 export const persistTurnResponse = async (db: DB, chatId: string, tr: TurnResponseV2): Promise<void> => {
-  const entriesJson = await codec.stringify(tr.entries);
+  const entriesJson = await codec.stringify(mapChatMessagesToStoredMessages(tr.entries));
   db.insert(turnResponsesV2).values({
     chatId,
     requestedAt: tr.requestedAtMs,
@@ -408,7 +413,10 @@ export const persistTurnResponse = async (db: DB, chatId: string, tr: TurnRespon
 type TurnResponseV2Row = typeof turnResponsesV2.$inferSelect;
 
 const reconstructTurnResponseV2 = async (row: TurnResponseV2Row): Promise<TurnResponseV2> => {
-  const entries = await codec.parse(row.entries) as ConversationEntry[];
+  const stored = await codec.parse(row.entries) as StoredMessage[] | LegacyConversationEntry[];
+  const entries = stored.length > 0 && 'kind' in stored[0]!
+    ? legacyEntriesToMessages(stored as LegacyConversationEntry[])
+    : storedMessagesToDriverMessages(stored as StoredMessage[]);
   return {
     requestedAtMs: row.requestedAt,
     entries,

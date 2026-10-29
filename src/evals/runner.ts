@@ -18,6 +18,7 @@ import type {
   EvalSystemFileSource,
 } from './types';
 import { composeContext, injectLateBindingPrompt } from '../driver/context';
+import type { DriverMessage } from '../driver/messages';
 import { renderLateBindingPrompt } from '../driver/prompt';
 import { createRunner, pruneLengthLimitFailures } from '../driver/runner';
 import { loadSkillsFromFolder } from '../driver/skills';
@@ -32,7 +33,6 @@ import type { LlmEndpoint, Usage } from '../llm/types';
 import type { IntermediateContext } from '../projection/types';
 import { renderPromptTemplate } from '../prompt-template';
 import { render } from '../rendering';
-import type { ConversationEntry } from '../unified-api/types';
 
 const PACKAGE_BASE_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../package.json');
 const ZERO_USAGE: Usage = {
@@ -61,13 +61,13 @@ const loadEvaluator = async (source: string | EvalEvaluator, baseDir: string): P
 const runEvalStepLoop = async (params: {
   runner: ReturnType<typeof createRunner>;
   chatId: string;
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   system: string;
   tools: CahciuaTool[];
   maxSteps: number;
   maxImagesAllowed?: number;
   log: Logger;
-  onStepComplete: (entries: ConversationEntry[], usage: Usage) => void;
+  onStepComplete: (entries: DriverMessage[], usage: Usage) => void;
 }): Promise<void> => {
   const turn: TurnState = {
     id: `eval-${params.chatId}`,
@@ -230,7 +230,7 @@ const buildEntries = async (
   endpoint: LlmEndpoint,
   scenario: EvalScenario,
   suite: EvalSuite,
-): Promise<ConversationEntry[]> => {
+): Promise<DriverMessage[]> => {
   const rc = render(fixture.ic, scenario.renderParams ?? {});
   const maxTokens = scenario.maxContextEstTokens ?? suite.maxContextEstTokens ?? 200_000;
   const context = composeContext(rc, fixture.turnResponses ?? [], maxTokens, endpoint.model, fixture.compactSummary);
@@ -295,7 +295,7 @@ const runOne = async (params: {
     log: params.log,
   });
   const tools: CahciuaTool[] = [...evalTools.tools, ...(extraTools ?? [])];
-  const stepEntries: ConversationEntry[] = [];
+  const stepEntries: DriverMessage[] = [];
   let usage = { ...ZERO_USAGE };
 
   try {

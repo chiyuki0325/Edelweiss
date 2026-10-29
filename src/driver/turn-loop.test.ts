@@ -1,12 +1,12 @@
 import type { Logger } from '@guiiai/logg';
 import { describe, expect, it, vi } from 'vitest';
 
+import { aiMessage, humanMessage, toolMessage, type DriverMessage, type DriverToolCall } from './messages';
 import { createTurnContext } from './turn-features';
 import { runTurnStepLoop } from './turn-loop';
 import { createDefaultTurnCapabilities } from './turn-state';
 import type { ChatScope, TurnState } from './turn-state';
 import type { Usage } from '../llm/types';
-import type { ConversationEntry, OutputMessage, ToolResult } from '../unified-api/types';
 
 const log = {
   withFields: vi.fn(() => log),
@@ -20,28 +20,13 @@ const usage: Usage = {
   cacheReadTokens: -1,
 };
 
-const userText = (text: string): ConversationEntry => ({
-  kind: 'message',
-  role: 'user',
-  parts: [{ kind: 'text', text }],
-});
+const userText = (text: string): DriverMessage => humanMessage(text);
 
-const assistantToolCall = (text: string): OutputMessage => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [
-    { kind: 'text', text },
-    { kind: 'toolCall', callId: 'call-1', name: 'tool', args: '{}' },
-  ],
-  reasoning: undefined,
-});
+const assistantToolCall = (text: string) =>
+  aiMessage({ content: text, tool_calls: [{ id: 'call-1', name: 'tool', args: {} }] });
 
-const toolResult = (payload: string, requiresFollowUp: boolean): ToolResult => ({
-  kind: 'toolResult',
-  callId: 'call-1',
-  payload,
-  requiresFollowUp,
-});
+const toolResult = (payload: string, requiresFollowUp: boolean) =>
+  toolMessage('call-1', payload, requiresFollowUp);
 
 const createTurn = (): TurnState => ({
   id: 'turn-1',
@@ -86,12 +71,12 @@ describe('runTurnStepLoop', () => {
     const afterModelCall = vi.fn();
     const afterToolResults = vi.fn();
     const runner = {
-      callModelStep: vi.fn(async (working: ConversationEntry[]) => {
+      callModelStep: vi.fn(async (working: DriverMessage[]) => {
         seenWorkingLengths.push(working.length);
         if (seenWorkingLengths.length === 1) {
           return {
             entries: [rawMessage],
-            toolCalls: [rawMessage.parts[1] as Extract<OutputMessage['parts'][number], { kind: 'toolCall' }>],
+            toolCalls: [rawMessage.tool_calls![0]! as DriverToolCall],
             usage,
             requestedAtMs: 100,
           };
@@ -106,7 +91,7 @@ describe('runTurnStepLoop', () => {
       executeToolStep: vi.fn(async () =>
         seenWorkingLengths.length === 1 ? [rawToolResult] : []),
     };
-    const persisted: ConversationEntry[][] = [];
+    const persisted: DriverMessage[][] = [];
 
     await runTurnStepLoop(createTurnContext(turn), {
       runner,

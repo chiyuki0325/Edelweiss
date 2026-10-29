@@ -1,11 +1,11 @@
 import type { Logger } from '@guiiai/logg';
 
+import type { DriverMessage, DriverToolCall } from '../driver/messages';
 import type { CahciuaTool } from '../driver/tools';
 import type { TurnResponseV2 } from '../driver/types';
 import type { LlmEndpoint, Usage } from '../llm/types';
 import type { IntermediateContext } from '../projection/types';
 import type { RenderParams } from '../rendering/types';
-import type { ConversationEntry, ToolCallPart } from '../unified-api/types';
 
 export type EvalToolName = 'send_message' | 'stay_silent' | 'load_skill';
 
@@ -117,9 +117,9 @@ export interface EvalRun {
   repeatIndex: number;
   modelName: string;
   system: string;
-  entries: ConversationEntry[];
-  stepEntries: ConversationEntry[];
-  toolCalls: ToolCallPart[];
+  entries: DriverMessage[];
+  stepEntries: DriverMessage[];
+  toolCalls: DriverToolCall[];
   toolTrace: EvalToolTrace;
   usage: Usage;
   requestedAtMs: number;

@@ -1,5 +1,7 @@
+import { isAIMessage, isToolMessage } from '@langchain/core/messages';
+
+import type { DriverMessage } from './messages';
 import type { TurnResponseV2 } from './types';
-import type { ConversationEntry } from '../unified-api/types';
 
 export const RECENT_SEND_MESSAGE_WINDOW = 5;
 const SHORT_MESSAGE_CHAR_LIMIT = 32;
@@ -72,9 +74,8 @@ const parseJsonRecord = (text: string): Record<string, unknown> | null => {
   }
 };
 
-const extractSendMessageText = (args: string): string | null => {
-  const parsed = parseJsonRecord(args);
-  return typeof parsed?.text === 'string' ? parsed.text : null;
+const extractSendMessageText = (args: Record<string, unknown>): string | null => {
+  return typeof args.text === 'string' ? args.text : null;
 };
 
 const isSuccessfulSendMessageResult = (output: string): boolean =>
@@ -115,22 +116,20 @@ export const assessSendMessageHumanLikeness = (
   return features;
 };
 
-const extractSendMessageAssessments = (entries: ConversationEntry[], toggles: HumanLikenessToggles = ALL_ENABLED): SendMessageHumanLikenessAssessment[] => {
+const extractSendMessageAssessments = (entries: DriverMessage[], toggles: HumanLikenessToggles = ALL_ENABLED): SendMessageHumanLikenessAssessment[] => {
   const successfulCallIds = new Set(
     entries
-      .filter((e): e is Extract<ConversationEntry, { kind: 'toolResult' }> => e.kind === 'toolResult')
-      .filter(e => typeof e.payload === 'string' && isSuccessfulSendMessageResult(e.payload))
-      .map(e => e.callId),
+      .filter(isToolMessage)
+      .filter(entry => typeof entry.content === 'string' && isSuccessfulSendMessageResult(entry.content))
+      .map(entry => entry.tool_call_id),
   );
 
   const assessments: SendMessageHumanLikenessAssessment[] = [];
   for (const entry of entries) {
-    if (entry.kind !== 'message' || entry.role !== 'assistant') continue;
-    for (const part of entry.parts) {
-      if (part.kind !== 'toolCall') continue;
-      if (part.name !== 'send_message') continue;
-      if (!successfulCallIds.has(part.callId)) continue;
-      const text = extractSendMessageText(part.args);
+    if (!isAIMessage(entry)) continue;
+    for (const call of entry.tool_calls ?? []) {
+      if (call.name !== 'send_message' || !call.id || !successfulCallIds.has(call.id)) continue;
+      const text = extractSendMessageText(call.args);
       if (text == null) continue;
       assessments.push({ text, features: assessSendMessageHumanLikeness(text, toggles) });
     }

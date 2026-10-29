@@ -1,44 +1,46 @@
 import type { Logger } from '@guiiai/logg';
+import type { ToolMessage } from '@langchain/core/messages';
+import { isAIMessage, isToolMessage } from '@langchain/core/messages';
 
 import type { CahciuaTool } from './types';
 import { isToolResult } from './types';
-import type { ConversationEntry, InputPart, ToolCallPart, ToolResult as IRToolResult } from '../../unified-api/types';
+import type { ConversationEntry as LegacyConversationEntry } from '../../unified-api/types';
+import {
+  legacyEntriesToMessages,
+  toolCalls,
+  toolMessage,
+  type DriverMessage,
+  type DriverToolCall,
+  type DriverToolMessage,
+} from '../messages';
 
-/** Extract ToolCallParts from assistant OutputMessage entries. */
-export const extractToolCalls = (entries: ConversationEntry[]): ToolCallPart[] => {
-  const calls: ToolCallPart[] = [];
-  for (const e of entries) {
-    if (e.kind === 'message' && e.role === 'assistant') {
-      for (const p of e.parts) if (p.kind === 'toolCall') calls.push(p);
-    }
-  }
-  return calls;
-};
+export const extractToolCalls = (entries: DriverMessage[]): DriverToolCall[] => toolCalls(entries);
 
-export const extractLoadedSkillNames = (entries: ConversationEntry[]): Set<string> => {
+export const extractLoadedSkillNames = (
+  sourceEntries: DriverMessage[] | LegacyConversationEntry[],
+): Set<string> => {
+  const entries = sourceEntries.length > 0 && 'kind' in sourceEntries[0]!
+    ? legacyEntriesToMessages(sourceEntries as LegacyConversationEntry[])
+    : sourceEntries as DriverMessage[];
   const result = new Set<string>();
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    if (entry?.kind !== 'message' || entry.role !== 'assistant') continue;
+    if (!entry || !isAIMessage(entry)) continue;
 
-    for (const part of entry.parts) {
-      if (part.kind !== 'toolCall' || part.name !== 'load_skill') continue;
+    for (const call of entry.tool_calls ?? []) {
+      if (call.name !== 'load_skill') continue;
 
       let skillId: string | undefined;
-      try {
-        const args = JSON.parse(part.args) as { skill_id?: unknown };
-        if (typeof args.skill_id === 'string') skillId = args.skill_id;
-      } catch {
-        continue;
-      }
+      const args = call.args as { skill_id?: unknown };
+      if (typeof args.skill_id === 'string') skillId = args.skill_id;
       if (!skillId) continue;
 
-      const isMatchingToolResult = (e: ConversationEntry): e is IRToolResult =>
-        e.kind === 'toolResult' && e.callId === part.callId;
+      const isMatchingToolResult = (e: DriverMessage): e is ToolMessage =>
+        isToolMessage(e) && e.tool_call_id === call.id;
       const toolResult = entries.slice(i + 1).find(isMatchingToolResult);
-      if (!toolResult || Array.isArray(toolResult.payload)) continue;
-      if (toolResult.payload.startsWith('{')) continue;
+      if (!toolResult || typeof toolResult.content !== 'string') continue;
+      if (toolResult.content.startsWith('{')) continue;
       result.add(skillId);
     }
   }
@@ -46,12 +48,8 @@ export const extractLoadedSkillNames = (entries: ConversationEntry[]): Set<strin
   return result;
 };
 
-const toolError = (id: string, message: string): IRToolResult => ({
-  kind: 'toolResult',
-  callId: id,
-  payload: JSON.stringify({ error: message }),
-  requiresFollowUp: true,
-});
+const toolError = (id: string, message: string): DriverToolMessage =>
+  toolMessage(id, JSON.stringify({ error: message }), true);
 
 export interface PreparedToolCall {
   id: string;
@@ -62,7 +60,7 @@ export interface PreparedToolCall {
 
 export type PrepareToolCallResult =
   | { ok: true; call: PreparedToolCall }
-  | { ok: false; result: IRToolResult };
+  | { ok: false; result: DriverToolMessage };
 
 /** Resolve, parse, and validate a tool call before scheduling it. */
 export const prepareToolCall = (
@@ -98,18 +96,13 @@ export const prepareToolCall = (
 export const executePreparedToolCall = async (
   call: PreparedToolCall,
   log: Logger,
-): Promise<IRToolResult> => {
+): Promise<DriverToolMessage> => {
   try {
     const rawResult = await call.tool.execute(call.input, { toolCallId: call.id });
     const { content, requiresFollowUp } = isToolResult(rawResult)
       ? rawResult
       : { content: JSON.stringify(rawResult), requiresFollowUp: true };
-    return {
-      kind: 'toolResult',
-      callId: call.id,
-      payload: content as string | InputPart[],
-      requiresFollowUp,
-    };
+    return toolMessage(call.id, content, requiresFollowUp);
   } catch (err) {
     log.withError(err).error(`Tool ${call.name} failed`);
     return toolError(call.id, String(err));
@@ -120,7 +113,7 @@ export const executePreparedToolCall = async (
 export const executeToolCall = async (
   id: string, name: string, args: string,
   tools: CahciuaTool[], log: Logger,
-): Promise<IRToolResult> => {
+): Promise<DriverToolMessage> => {
   const prepared = prepareToolCall(id, name, args, tools, log);
   return prepared.ok ? await executePreparedToolCall(prepared.call, log) : prepared.result;
 };

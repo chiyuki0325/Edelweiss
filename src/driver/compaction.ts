@@ -2,14 +2,10 @@ import type { Logger } from '@guiiai/logg';
 
 import { callLlm, type LlmCallConfig, type ToolSchema } from './call-llm';
 import { composeContext } from './context';
+import { humanMessage, messageText, type DriverMessage } from './messages';
 import { renderCompactionUserInstruction } from './prompt';
 import type { CompactionSessionMeta, TurnResponseV2 } from './types';
 import type { RenderedContext } from '../rendering/types';
-import type {
-  ConversationEntry,
-  InputMessage,
-  OutputMessage,
-} from '../unified-api/types';
 
 export interface CompactionParams extends LlmCallConfig {
   chatId: string;
@@ -29,17 +25,8 @@ export interface CompactionParams extends LlmCallConfig {
 const COMPACT_MAX_TOKENS = 200000;
 const MAX_RETRIES = 3;
 
-const extractAssistantText = (entries: ConversationEntry[]): string => {
-  const parts: string[] = [];
-  for (const e of entries) {
-    if (e.kind !== 'message' || e.role !== 'assistant') continue;
-    for (const p of (e as OutputMessage).parts) {
-      if (p.kind === 'text') parts.push(p.text);
-      else if (p.kind === 'textGroup') for (const t of p.content) parts.push(t.text);
-    }
-  }
-  return parts.join('');
-};
+const extractAssistantText = (entries: DriverMessage[]): string =>
+  entries.map(messageText).join('');
 
 export const runCompaction = async (params: CompactionParams): Promise<CompactionSessionMeta> => {
   const compactUserInstruction = await renderCompactionUserInstruction();
@@ -49,9 +36,9 @@ export const runCompaction = async (params: CompactionParams): Promise<Compactio
     params.model, params.existingSummary,
   );
 
-  const entries: ConversationEntry[] = [
+  const entries: DriverMessage[] = [
     ...(ctx?.entries ?? []),
-    { kind: 'message', role: 'user', parts: [{ kind: 'text', text: compactUserInstruction }] } satisfies InputMessage,
+    humanMessage(compactUserInstruction),
   ];
 
   let summary = '';

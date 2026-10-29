@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { createAgentMailbox } from './mailbox';
+import { messageText } from '../messages';
 
-const textOf = (entry: ReturnType<ReturnType<typeof createAgentMailbox>['flush']>[number]) => {
-  if (entry.kind !== 'message' || entry.role !== 'user') return '';
-  return entry.parts.map(p => p.kind === 'text' ? p.text : '').join('\n');
-};
+const textOf = (entry: ReturnType<ReturnType<typeof createAgentMailbox>['flush']>[number]) =>
+  messageText(entry);
 
 describe('createAgentMailbox', () => {
   it('flushes queued messages for one agent in FIFO order', () => {

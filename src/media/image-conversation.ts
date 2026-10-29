@@ -4,8 +4,8 @@ import type { Logger } from '@guiiai/logg';
 import sharp from 'sharp';
 
 import { callLlm } from '../driver/call-llm';
+import { aiMessage, humanMessage, imageBlock, messageText, textBlock, type DriverMessage } from '../driver/messages';
 import type { LlmEndpoint } from '../llm/types';
-import type { ConversationEntry, InputMessage, OutputMessage } from '../unified-api/types';
 
 const INITIAL_IMAGE_TOKENS = 100;
 const CHARS_PER_TOKEN = 2;
@@ -82,22 +82,13 @@ export const createImageConversationId = (params: {
 export const createImageSourceFingerprint = (sourceKey: string): string =>
   hash(sourceKey);
 
-const extractAssistantText = (entries: ConversationEntry[]): string => {
-  const parts: string[] = [];
-  for (const entry of entries) {
-    if (entry.kind !== 'message' || entry.role !== 'assistant') continue;
-    for (const part of (entry as OutputMessage).parts) {
-      if (part.kind === 'text') parts.push(part.text);
-      else if (part.kind === 'textGroup') parts.push(...part.content.map(text => text.text));
-    }
-  }
-  return parts.join('').trim();
-};
+const extractAssistantText = (entries: DriverMessage[]): string =>
+  entries.map(messageText).join('').trim();
 
 export interface ImageConversationModelCallParams {
   model: LlmEndpoint;
   systemPrompt: string;
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   log: Logger;
   label: string;
 }
@@ -127,30 +118,16 @@ const callModel = async (params: ImageConversationModelCallParams): Promise<Imag
   return { text, usage: result.usage };
 };
 
-const baseEntries = (conversation: ImageConversationRecord): ConversationEntry[] => [{
-  kind: 'message',
-  role: 'user',
-  parts: [
-    { kind: 'text', text: conversation.initialUserText },
-    { kind: 'image', image: sharp(Buffer.from(conversation.preparedImageBase64, 'base64')), detail: undefined },
-  ],
-} satisfies InputMessage, {
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'text', text: conversation.initialResponse }],
-  reasoning: undefined,
-} satisfies OutputMessage];
+const baseEntries = (conversation: ImageConversationRecord): DriverMessage[] => [
+  humanMessage([
+    textBlock(conversation.initialUserText),
+    imageBlock(sharp(Buffer.from(conversation.preparedImageBase64, 'base64')), undefined),
+  ]),
+  aiMessage(conversation.initialResponse),
+];
 
-const turnEntries = (turns: ImageConversationTurn[]): ConversationEntry[] => turns.flatMap(turn => [{
-  kind: 'message' as const,
-  role: 'user' as const,
-  parts: [{ kind: 'text' as const, text: turn.question }],
-}, {
-  kind: 'message' as const,
-  role: 'assistant' as const,
-  parts: [{ kind: 'text' as const, text: turn.answer }],
-  reasoning: undefined,
-}]);
+const turnEntries = (turns: ImageConversationTurn[]): DriverMessage[] =>
+  turns.flatMap(turn => [humanMessage(turn.question), aiMessage(turn.answer)]);
 
 const estimateContextTokens = (
   conversation: ImageConversationRecord,
@@ -212,14 +189,10 @@ export const createImageConversationManager = (deps: {
         : await invokeModel({
           model: params.model,
           systemPrompt: params.systemPrompt,
-          entries: [{
-            kind: 'message',
-            role: 'user',
-            parts: [
-              { kind: 'text', text: params.initialUserText },
-              { kind: 'image', image: sharp(params.preparedImage), detail: undefined },
-            ],
-          } satisfies InputMessage],
+          entries: [humanMessage([
+            textBlock(params.initialUserText),
+            imageBlock(sharp(params.preparedImage), undefined),
+          ])],
           log,
           label: params.label,
         }).then(result => ({ text: result.text, outputTokens: result.usage.outputTokens }));
@@ -257,10 +230,10 @@ export const createImageConversationManager = (deps: {
     const turns = deps.store.loadTurns(conversation.id, conversation.currentGeneration);
     let reset = estimateContextTokens(conversation, turns, params.question) > params.maxContextEstTokens;
 
-    const makeEntries = (includeTurns: boolean): ConversationEntry[] => [
+    const makeEntries = (includeTurns: boolean): DriverMessage[] => [
       ...baseEntries(conversation),
       ...(includeTurns ? turnEntries(turns) : []),
-      { kind: 'message', role: 'user', parts: [{ kind: 'text', text: params.question }] } satisfies InputMessage,
+      humanMessage(params.question),
     ];
 
     let result;

@@ -1,6 +1,6 @@
+import type { DriverMessage } from './messages';
 import type { ModelStepOutput } from './runner';
 import type { CompletedStep, TurnState } from './turn-state';
-import type { ConversationEntry } from '../unified-api/types';
 
 export type Awaitable<T> = T | Promise<T>;
 
@@ -27,7 +27,7 @@ export const createTurnContext = (turn: TurnState): TurnContext => ({
 });
 
 export interface StepOutput {
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
 }
 
 export interface DriverFeature {
@@ -45,8 +45,8 @@ export interface DriverFeature {
   afterToolResults?(ctx: TurnContext, output: StepOutput): Awaitable<void>;
   transformStepEntries?(
     ctx: TurnContext,
-    entries: ConversationEntry[],
-  ): Awaitable<ConversationEntry[]>;
+    entries: DriverMessage[],
+  ): Awaitable<DriverMessage[]>;
   persistStep?(ctx: TurnContext, step: CompletedStep): Awaitable<void>;
   shouldContinue?(ctx: TurnContext, step: CompletedStep): Awaitable<boolean | undefined>;
 
@@ -92,8 +92,8 @@ export const runFeatureTransform = async (
   ctx: TurnContext,
   features: DriverFeature[],
   hook: 'transformStepEntries',
-  value: ConversationEntry[],
-): Promise<ConversationEntry[]> => {
+  value: DriverMessage[],
+): Promise<DriverMessage[]> => {
   let next = value;
   for (const feature of features)
     next = await feature[hook]?.(ctx, next) ?? next;

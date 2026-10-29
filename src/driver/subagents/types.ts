@@ -1,4 +1,4 @@
-import type { ConversationEntry } from '../../unified-api/types';
+import type { DriverMessage } from '../messages';
 
 export type AgentId = 'main' | `sa-${number}`;
 export type SubagentStatus = 'running' | 'idle' | 'finalized' | 'failed';
@@ -24,7 +24,7 @@ export interface SubagentState {
   createdAtMs: number;
   updatedAtMs: number;
   finalMessage?: string;
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   running: boolean;
   wakeRequested: boolean;
 }

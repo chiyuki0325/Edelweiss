@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { aiMessage, toolMessage, type DriverMessage } from './messages';
 import {
   appendRecentSendMessageAssessments,
   assessSendMessageHumanLikeness,
@@ -7,9 +8,8 @@ import {
   renderRecentSendMessageHumanLikenessXml,
 } from './send-message-human-likeness';
 import type { TurnResponseV2 } from './types';
-import type { ConversationEntry } from '../unified-api/types';
 
-const tr = (requestedAtMs: number, entries: ConversationEntry[]): TurnResponseV2 => ({
+const tr = (requestedAtMs: number, entries: DriverMessage[]): TurnResponseV2 => ({
   requestedAtMs,
   entries,
   inputTokens: 0,
@@ -17,33 +17,20 @@ const tr = (requestedAtMs: number, entries: ConversationEntry[]): TurnResponseV2
   modelName: 'test-model',
 });
 
-const sendCall = (callId: string, text: string): ConversationEntry => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'toolCall', callId, name: 'send_message', args: JSON.stringify({ text }) }],
-  reasoning: undefined,
-});
+const sendCall = (callId: string, text: string): DriverMessage =>
+  aiMessage({ content: '', tool_calls: [{ id: callId, name: 'send_message', args: { text } }] });
 
-const sendCalls = (calls: Array<{ callId: string; text: string }>): ConversationEntry => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: calls.map(c => ({ kind: 'toolCall', callId: c.callId, name: 'send_message', args: JSON.stringify({ text: c.text }) })),
-  reasoning: undefined,
-});
+const sendCalls = (calls: Array<{ callId: string; text: string }>): DriverMessage =>
+  aiMessage({
+    content: '',
+    tool_calls: calls.map(call => ({ id: call.callId, name: 'send_message', args: { text: call.text } })),
+  });
 
-const okResult = (callId: string, messageId: string): ConversationEntry => ({
-  kind: 'toolResult',
-  callId,
-  payload: JSON.stringify({ ok: true, message_id: messageId }),
-  requiresFollowUp: false,
-});
+const okResult = (callId: string, messageId: string): DriverMessage =>
+  toolMessage(callId, JSON.stringify({ ok: true, message_id: messageId }), false);
 
-const errResult = (callId: string): ConversationEntry => ({
-  kind: 'toolResult',
-  callId,
-  payload: JSON.stringify({ error: 'boom' }),
-  requiresFollowUp: true,
-});
+const errResult = (callId: string): DriverMessage =>
+  toolMessage(callId, JSON.stringify({ error: 'boom' }), true);
 
 describe('send-message-human-likeness', () => {
 

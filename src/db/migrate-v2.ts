@@ -1,9 +1,11 @@
 import type { Logger } from '@guiiai/logg';
+import { mapChatMessagesToStoredMessages } from '@langchain/core/messages';
 import { sql } from 'drizzle-orm';
 
 import type { DB } from './client';
 import { codec } from './codec';
 import { turnResponses, turnResponsesV2 } from './schema';
+import { legacyEntriesToMessages } from '../driver/messages';
 import type { ChatCompletionsEntry } from '../unified-api/chat-types';
 import {
   migrateChatEntries,
@@ -49,7 +51,9 @@ export const migrateV1ToV2 = async (db: DB, logger: Logger): Promise<void> => {
   const turnInserts = await Promise.all(v1Turns.map(async row => ({
     chatId: row.chatId,
     requestedAt: row.requestedAt,
-    entries: await codec.stringify(migrateRowEntries(row.provider, row.data)),
+    entries: await codec.stringify(mapChatMessagesToStoredMessages(
+      legacyEntriesToMessages(migrateRowEntries(row.provider, row.data)),
+    )),
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
     modelName: '',

@@ -1,10 +1,10 @@
 import type { Logger } from '@guiiai/logg';
 
+import { toolResultRequiresFollowUp, type DriverMessage } from './messages';
 import type { createRunner } from './runner';
 import type { DriverFeature, TurnContext } from './turn-features';
 import { runFeatureDecision, runFeatureEffects, runFeatureTransform } from './turn-features';
 import type { CompletedStep } from './turn-state';
-import type { ConversationEntry } from '../unified-api/types';
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -14,12 +14,12 @@ export interface TurnStepLoopParams {
   log: Logger;
   maxImagesAllowed?: number;
   features?: DriverFeature[];
-  pullExternalEntries?: (ctx: TurnContext) => Awaitable<ConversationEntry[]>;
+  pullExternalEntries?: (ctx: TurnContext) => Awaitable<DriverMessage[]>;
   shouldStop?: (ctx: TurnContext) => boolean;
   transformStepEntries?: (
     ctx: TurnContext,
-    entries: ConversationEntry[],
-  ) => Awaitable<ConversationEntry[]>;
+    entries: DriverMessage[],
+  ) => Awaitable<DriverMessage[]>;
   persistStep?: (ctx: TurnContext, step: CompletedStep) => Awaitable<void>;
   shouldContinue?: (ctx: TurnContext, step: CompletedStep) => Awaitable<boolean | undefined>;
 }
@@ -99,7 +99,7 @@ export const runTurnStepLoop = async (
       break;
     }
 
-    const anyRequiresFollowUp = toolResults.some(tr => tr.requiresFollowUp);
+    const anyRequiresFollowUp = toolResults.some(toolResultRequiresFollowUp);
     for (const feature of features)
       await feature.afterToolResults?.(ctx, { entries: stepEntries });
 

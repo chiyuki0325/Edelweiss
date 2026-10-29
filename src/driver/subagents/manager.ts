@@ -1,7 +1,7 @@
 import type { Logger } from '@guiiai/logg';
 
 import type { LlmEndpoint, Usage } from '../../llm/types';
-import type { ConversationEntry } from '../../unified-api/types';
+import type { DriverMessage } from '../messages';
 import type { RunnerConfig } from '../runner';
 import { createRunner } from '../runner';
 import type { CahciuaTool } from '../tools';
@@ -22,7 +22,7 @@ export interface SubagentManagerDeps {
   getScope: () => ChatScope;
   renderSystemPrompt: (state: SubagentState) => Promise<string>;
   createTools: (subagentId: AgentId) => CahciuaTool[];
-  persistStep?: (agentId: AgentId, stepEntries: ConversationEntry[], usage: Usage, requestedAtMs: number) => Promise<void>;
+  persistStep?: (agentId: AgentId, stepEntries: DriverMessage[], usage: Usage, requestedAtMs: number) => Promise<void>;
   wakeMain: () => void;
   log: Logger;
 }

@@ -2,8 +2,15 @@ import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 
 import { mergeContext } from './merge';
+import {
+  aiMessage,
+  humanMessage,
+  imageBlock,
+  textBlock,
+  toolMessage,
+  type DriverMessage,
+} from './messages';
 import type { RenderedContext } from '../rendering/types';
-import type { ConversationEntry, InputMessage, OutputMessage, ToolResult } from '../unified-api/types';
 
 const textSeg = (ts: number, text: string): RenderedContext[number] => ({
   receivedAtMs: ts,
@@ -12,36 +19,20 @@ const textSeg = (ts: number, text: string): RenderedContext[number] => ({
 
 interface MiniTR {
   requestedAtMs: number;
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
 }
-const tr = (ts: number, entries: ConversationEntry[]): MiniTR => ({ requestedAtMs: ts, entries });
+const tr = (ts: number, entries: DriverMessage[]): MiniTR => ({ requestedAtMs: ts, entries });
 
-const assistantText = (text: string): OutputMessage => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'text', text }],
-  reasoning: undefined,
-});
+const assistantText = (text: string): DriverMessage => aiMessage(text);
 
-const assistantToolCall = (callId: string, name: string, args: string): OutputMessage => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'toolCall', callId, name, args }],
-  reasoning: undefined,
-});
+const assistantToolCall = (callId: string, name: string, args: string): DriverMessage =>
+  aiMessage({ content: '', tool_calls: [{ id: callId, name, args: JSON.parse(args) as Record<string, unknown> }] });
 
-const toolResult = (callId: string, payload: string): ToolResult => ({
-  kind: 'toolResult',
-  callId,
-  payload,
-  requiresFollowUp: false,
-});
+const toolResult = (callId: string, payload: string): DriverMessage =>
+  toolMessage(callId, payload, false);
 
-const userText = (...texts: string[]): InputMessage => ({
-  kind: 'message',
-  role: 'user',
-  parts: texts.map(t => ({ kind: 'text', text: t })),
-});
+const userText = (...texts: string[]): DriverMessage =>
+  humanMessage(texts.map(textBlock));
 
 describe('mergeContext', () => {
   it('returns empty array for empty inputs', () => {
@@ -107,10 +98,9 @@ describe('mergeContext', () => {
     }];
     const result = mergeContext(rc, []);
     expect(result).toHaveLength(1);
-    const msg = result[0] as InputMessage;
-    expect(msg.parts).toHaveLength(2);
-    expect(msg.parts[0]).toEqual({ kind: 'text', text: 'photo:' });
-    expect(msg.parts[1]).toEqual({ kind: 'image', image: img, detail: 'low' });
+    const msg = result[0]!;
+    expect(msg.content).toHaveLength(2);
+    expect(msg.content).toEqual([textBlock('photo:'), imageBlock(img, 'low')]);
   });
 
   it('handles TR-only input (no RC)', () => {

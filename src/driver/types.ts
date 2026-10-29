@@ -1,10 +1,10 @@
+import type { DriverMessage } from './messages';
 import type { ResolvedChatConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
-import type { ConversationEntry } from '../unified-api/types';
 
 export interface TurnResponseV2 {
   requestedAtMs: number;
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   inputTokens: number;
   outputTokens: number;
   modelName: string;

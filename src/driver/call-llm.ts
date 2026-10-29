@@ -1,27 +1,21 @@
 import { writeFileSync } from 'node:fs';
 
 import type { Logger } from '@guiiai/logg';
+import { ChatAnthropic } from '@langchain/anthropic';
+import type { AIMessageChunk, BaseMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { tool, type StructuredToolInterface } from '@langchain/core/tools';
+import { ChatOpenAI } from '@langchain/openai';
 
 import { DUMP_DIR } from './constants';
 import { trimImages } from './context';
-import { extractToolCalls } from './tools';
-import { streamingChat, type StreamingChatResult } from '../llm/streaming';
-import { streamingMessages } from '../llm/streaming-messages';
-import { streamingResponses } from '../llm/streaming-responses';
+import {
+  prepareMessagesForModel,
+  toolCalls,
+  type DriverMessage,
+} from './messages';
 import { DEFAULT_LOCAL_FORCE_MAX_RETRIES, type ToolChoice } from '../llm/tool-choice';
 import type { ProviderFormat, Usage } from '../llm/types';
-import {
-  fromChatCompletionsOutput,
-  fromMessagesOutput,
-  fromResponsesOutput,
-  toChatCompletionsInput,
-  toMessagesInput,
-  toResponsesInput,
-} from '../unified-api';
-import type { MessagesSystemBlock } from '../unified-api/anthropic-types';
-import type { ChatCompletionsAssistantMessage } from '../unified-api/chat-types';
-import type { ResponsesAssistantItem } from '../unified-api/responses-types';
-import type { ConversationEntry } from '../unified-api/types';
 
 export interface LlmCallConfig {
   apiBaseUrl: string;
@@ -43,7 +37,7 @@ export interface ToolSchema {
 }
 
 export interface LlmCallResult {
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   usage: Usage;
 }
 
@@ -51,168 +45,161 @@ const dump = (dumpId: string | undefined, suffix: string, body: unknown) => {
   if (dumpId) writeFileSync(`${DUMP_DIR}/${dumpId}.${suffix}.json`, JSON.stringify(body, null, 2));
 };
 
-const toResponsesToolSchema = (t: ToolSchema) => ({
-  type: 'function' as const,
-  name: t.name,
-  parameters: t.parameters,
-  strict: false,
-  ...(t.description ? { description: t.description } : {}),
-});
+const toLangChainTools = (schemas: ToolSchema[] | undefined): StructuredToolInterface[] | undefined => {
+  if (!schemas?.length) return undefined;
+  return schemas.map(schema => tool(
+    async () => '',
+    {
+      name: schema.name,
+      description: schema.description ?? `${schema.name} tool`,
+      schema: schema.parameters as {
+        type: 'object';
+        properties?: Record<string, unknown>;
+        required?: string[];
+        [key: string]: unknown;
+      },
+    },
+  ));
+};
 
-const toAnthropicToolSchema = (t: ToolSchema) => ({
-  name: t.name,
-  ...(t.description ? { description: t.description } : {}),
-  input_schema: t.parameters,
-});
+const usageFromMessage = (message: AIMessage): Usage => {
+  const usage = message.usage_metadata;
+  const raw = message.response_metadata.usage as Record<string, unknown> | undefined;
+  const rawNumber = (key: string): number | undefined =>
+    typeof raw?.[key] === 'number' ? raw[key] as number : undefined;
+  return {
+    inputTokens: usage?.input_tokens ?? rawNumber('prompt_tokens') ?? rawNumber('input_tokens') ?? 0,
+    outputTokens: usage?.output_tokens ?? rawNumber('completion_tokens') ?? rawNumber('output_tokens') ?? 0,
+    cacheCreationTokens: usage?.input_token_details?.cache_creation
+      ?? rawNumber('prompt_cache_miss_tokens')
+      ?? rawNumber('cache_creation_input_tokens')
+      ?? -1,
+    cacheReadTokens: usage?.input_token_details?.cache_read
+      ?? rawNumber('prompt_cache_hit_tokens')
+      ?? rawNumber('cache_read_input_tokens')
+      ?? -1,
+  };
+};
 
-const toChatToolSchema = (t: ToolSchema) => ({
-  type: 'function' as const,
-  function: {
-    name: t.name,
-    ...(t.description ? { description: t.description } : {}),
-    parameters: t.parameters,
-  },
-});
+const toolChoiceFor = (
+  format: ProviderFormat,
+  policy: ToolChoice | undefined,
+): 'required' | 'none' | 'any' | undefined => {
+  if (policy === 'force') return format === 'anthropic-messages' ? 'any' : 'required';
+  if (policy === 'none') return 'none';
+  return undefined;
+};
 
-const optionalTools = <T>(mapped: T[] | undefined): T[] | undefined =>
-  mapped && mapped.length > 0 ? mapped : undefined;
+const createModel = (config: LlmCallConfig, policy: ToolChoice | undefined) => {
+  const timeout = config.timeoutSec == null ? undefined : config.timeoutSec * 1000;
+  if (config.apiFormat === 'anthropic-messages') {
+    return new ChatAnthropic({
+      model: config.model,
+      apiKey: config.apiKey,
+      anthropicApiUrl: config.apiBaseUrl,
+      maxRetries: 0,
+      streamUsage: true,
+      clientOptions: { timeout },
+      invocationKwargs: {
+        ...config.extraBody,
+        cache_control: { type: 'ephemeral' },
+      },
+    });
+  }
+  return new ChatOpenAI({
+    model: config.model,
+    apiKey: config.apiKey,
+    timeout,
+    maxRetries: 0,
+    streamUsage: true,
+    useResponsesApi: config.apiFormat === 'responses',
+    configuration: { baseURL: config.apiBaseUrl },
+    modelKwargs: {
+      ...config.extraBody,
+      ...(config.apiFormat === 'responses'
+        ? { tool_choice: toolChoiceFor('responses', policy) }
+        : {}),
+    },
+  });
+};
 
-const chatUsageToUsage = (usage: StreamingChatResult['usage']): Usage => ({
-  inputTokens: usage.prompt_tokens ?? 0,
-  outputTokens: usage.completion_tokens ?? 0,
-  cacheCreationTokens: usage.prompt_cache_miss_tokens ?? -1,
-  cacheReadTokens: usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? -1,
-});
+const streamModel = async (
+  config: LlmCallConfig,
+  messages: BaseMessage[],
+  tools: StructuredToolInterface[] | undefined,
+  policy: ToolChoice | undefined,
+): Promise<AIMessage> => {
+  const format = config.apiFormat ?? 'openai-chat';
+  const model = createModel(config, policy);
+  const wireToolChoice = toolChoiceFor(format, policy);
+  const runnable = tools?.length
+    ? model.bindTools(tools, { tool_choice: wireToolChoice })
+    : model.withConfig({ tool_choice: wireToolChoice });
+  const stream = await runnable.stream(messages, {
+    signal: config.signal,
+  });
+
+  let aggregate: AIMessageChunk | undefined;
+  let toolCallStarted = false;
+  for await (const chunk of stream) {
+    const started = Boolean(chunk.tool_call_chunks?.length)
+      || Boolean(chunk.tool_calls?.length)
+      || (Array.isArray(chunk.content) && chunk.content.some((block: { type: string }) =>
+        block.type === 'tool_use' || block.type === 'function_call'));
+    if (started && !toolCallStarted) {
+      toolCallStarted = true;
+      config.onToolCallStart?.();
+    }
+    aggregate = aggregate ? aggregate.concat(chunk) : chunk;
+  }
+  if (!aggregate) return new AIMessage('');
+  return new AIMessage({
+    ...aggregate,
+    content: aggregate.content,
+    tool_calls: aggregate.tool_calls,
+    invalid_tool_calls: aggregate.invalid_tool_calls,
+    usage_metadata: aggregate.usage_metadata,
+  });
+};
 
 const callLlmAttempt = async (
   config: LlmCallConfig,
-  entries: ConversationEntry[],
+  entries: DriverMessage[],
   system: string,
   tools?: ToolSchema[],
   options?: { log: Logger; label: string; dumpId?: string; maxImagesAllowed?: number; toolChoice?: ToolChoice },
 ): Promise<LlmCallResult> => {
-  const apiFormat: ProviderFormat = config.apiFormat ?? 'openai-chat';
-  const log = options?.log;
-  const label = options?.label ?? '';
-
   let prepared = entries;
   if (options?.maxImagesAllowed != null)
     prepared = trimImages(prepared, options.maxImagesAllowed);
+  prepared = await prepareMessagesForModel(prepared);
 
-  if (apiFormat === 'responses') {
-    const input = await toResponsesInput(prepared);
-    const wireTools = optionalTools(tools?.map(toResponsesToolSchema));
-    dump(options?.dumpId, 'request', { model: config.model, instructions: system, input, tools: wireTools });
+  const systemEntry = config.apiFormat === 'anthropic-messages'
+    ? new SystemMessage({
+      content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+    })
+    : new SystemMessage(system);
+  const messages = [systemEntry, ...prepared];
+  const langChainTools = toLangChainTools(tools);
+  const policy = options?.toolChoice ?? config.toolChoice;
 
-    const response = await streamingResponses({
-      baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
-      toolChoice: options?.toolChoice ?? config.toolChoice,
-      onToolCallStart: config.onToolCallStart,
-      input, instructions: system, ...(wireTools ? { tools: wireTools } : {}),
-      extraBody: config.extraBody,
-      log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
-    });
-    dump(options?.dumpId, 'response', response);
-
-    const assistantItems = (response.output as unknown as ResponsesAssistantItem[]).filter(item =>
-      item.type === 'message' || item.type === 'function_call' || item.type === 'reasoning');
-    return {
-      entries: fromResponsesOutput(assistantItems),
-      usage: {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        // not supported for openai format
-        cacheCreationTokens: -1,
-        cacheReadTokens: -1,
-      },
-    };
-  }
-
-  if (apiFormat === 'anthropic-messages') {
-    const { system: sysFromEntries, messages } = await toMessagesInput(prepared);
-    const effectiveSystem = sysFromEntries ?? system;
-    const wireTools = optionalTools(tools?.map(toAnthropicToolSchema));
-
-    // Prompt cache breakpoints: system, last tool, messages[-2]
-    const cachedSystem: MessagesSystemBlock[] | undefined = effectiveSystem
-      ? [{ type: 'text', text: effectiveSystem, cache_control: { type: 'ephemeral' } }]
-      : undefined;
-
-    if (wireTools && wireTools.length > 0)
-      (wireTools[wireTools.length - 1]! as Record<string, unknown>).cache_control = { type: 'ephemeral' };
-
-    // Walk backward from messages[-2] to find the last block that accepts cache_control.
-    // thinking/redacted_thinking blocks do not support it and will cause a 400 error.
-    const startIdx = messages.length >= 2 ? messages.length - 2 : messages.length - 1;
-    outer: for (let mi = startIdx; mi >= 0; mi--) {
-      const msg = messages[mi]!;
-      if (typeof msg.content === 'string') {
-        (msg as unknown as Record<string, unknown>).content = [
-          { type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } },
-        ];
-        break;
-      }
-      for (let bi = msg.content.length - 1; bi >= 0; bi--) {
-        const block = msg.content[bi]!;
-        if (block.type === 'thinking' || block.type === 'redacted_thinking') continue;
-        (block as Record<string, unknown>).cache_control = { type: 'ephemeral' };
-        break outer;
-      }
-    }
-
-    dump(options?.dumpId, 'request', { model: config.model, system: cachedSystem, messages, tools: wireTools });
-
-    const response = await streamingMessages({
-      baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
-      toolChoice: options?.toolChoice ?? config.toolChoice,
-      onToolCallStart: config.onToolCallStart,
-      system: cachedSystem, messages, ...(wireTools ? { tools: wireTools } : {}),
-      extraBody: config.extraBody,
-      log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
-    });
-    dump(options?.dumpId, 'response', response);
-
-    return {
-      entries: fromMessagesOutput(response.content),
-      usage: {
-        inputTokens: response.usage.input_tokens ?? 0,
-        outputTokens: response.usage.output_tokens ?? 0,
-        cacheCreationTokens: response.usage.cache_creation_input_tokens ?? -1,
-        cacheReadTokens: response.usage.cache_read_input_tokens ?? -1,
-      },
-    };
-  }
-
-  // openai-chat (default)
-  const chatMessages = await toChatCompletionsInput(prepared);
-  const wireTools = optionalTools(tools?.map(toChatToolSchema));
-  dump(options?.dumpId, 'request', { model: config.model, system, messages: chatMessages, tools: wireTools });
-
-  const response = await streamingChat({
-    baseURL: config.apiBaseUrl, apiKey: config.apiKey, model: config.model,
-    toolChoice: options?.toolChoice ?? config.toolChoice,
-    onToolCallStart: config.onToolCallStart,
-    messages: chatMessages, system, ...(wireTools ? { tools: wireTools } : {}),
-    extraBody: config.extraBody,
-    log: log!, label, timeoutSec: config.timeoutSec, signal: config.signal,
+  dump(options?.dumpId, 'request', {
+    model: config.model,
+    apiFormat: config.apiFormat ?? 'openai-chat',
+    messages: messages.map(message => message.toDict()),
+    tools,
+    toolChoice: toolChoiceFor(config.apiFormat ?? 'openai-chat', policy),
   });
-  dump(options?.dumpId, 'response', response);
 
-  const choice = response.choices[0];
-  if (!choice) return {
-    entries: [], usage: chatUsageToUsage(response.usage),
-  };
-
-  return {
-    entries: fromChatCompletionsOutput([choice.message as ChatCompletionsAssistantMessage]),
-    usage: chatUsageToUsage(response.usage),
-  };
+  const response = await streamModel({ ...config, toolChoice: policy }, messages, langChainTools, policy);
+  dump(options?.dumpId, 'response', response.toDict());
+  return { entries: [response], usage: usageFromMessage(response) };
 };
 
-/** Retry only policy rejections; each attempt owns its cancellation scope. */
+/** Retry only local tool policies; every attempt owns its cancellation scope. */
 export const callLlm = async (
   config: LlmCallConfig,
-  entries: ConversationEntry[],
+  entries: DriverMessage[],
   system: string,
   tools?: ToolSchema[],
   options?: Parameters<typeof callLlmAttempt>[4],
@@ -245,23 +232,19 @@ export const callLlm = async (
         cacheCreationTokens: add(usage.cacheCreationTokens, result.usage.cacheCreationTokens),
         cacheReadTokens: add(usage.cacheReadTokens, result.usage.cacheReadTokens),
       } : result.usage;
-      if (policy !== 'local-force' || extractToolCalls(result.entries).length > 0 || attempt >= maxRetries)
+      if (policy !== 'local-force' || toolCalls(result.entries).length > 0 || attempt >= maxRetries)
         return { ...result, usage };
       options?.log.withFields({ label: options.label, attempt: attempt + 1, maxRetries })
         .log('local-force: model returned no tool calls, retrying');
     } catch (error) {
       config.signal?.throwIfAborted();
-      if (error !== rejection) throw error;
-      // Deliberately cumulative, but private to this call; never mutate persisted entries.
-      retryEntries = [...retryEntries, {
-        kind: 'message', role: 'user', parts: [{ kind: 'text', text: 'DO NOT CALL ANY TOOLS.' }],
-      }];
+      if (error !== rejection && !(error instanceof Error && error.cause === rejection)) throw error;
+      retryEntries = [...retryEntries, new HumanMessage('DO NOT CALL ANY TOOLS.')];
       options?.log.withFields({ label: options.label, attempt: attempt + 1 })
         .log('local-none: tool call rejected, retrying; usage incomplete (aborted attempt usage unavailable)');
     } finally {
       config.signal?.removeEventListener('abort', onAbort);
     }
-    // Yield between unbounded retries so timers/external messages can abort even a fast stream.
     await new Promise<void>(resolve => setImmediate(resolve));
     config.signal?.throwIfAborted();
   }

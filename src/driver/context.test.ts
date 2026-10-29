@@ -1,9 +1,19 @@
+import type { ToolMessage } from '@langchain/core/messages';
+import { isAIMessage, isToolMessage } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 
 import { composeContext, latestExternalEventMs, latestInterruptingExternalEventMs } from './context';
+import {
+  aiMessage,
+  humanMessage,
+  messageBlocks,
+  messageText,
+  toolMessage,
+  type DriverInputBlock,
+  type DriverMessage,
+} from './messages';
 import type { TurnResponseV2 } from './types';
 import type { RenderedContext } from '../rendering/types';
-import type { ConversationEntry, InputPart, ToolResult } from '../unified-api/types';
 
 const CURRENT_MODEL = 'test-model';
 
@@ -12,7 +22,7 @@ const textSeg = (ts: number, text: string): RenderedContext[number] => ({
   content: [{ type: 'text', text }],
 });
 
-const tr = (ts: number, entries: ConversationEntry[], modelName = CURRENT_MODEL): TurnResponseV2 => ({
+const tr = (ts: number, entries: DriverMessage[], modelName = CURRENT_MODEL): TurnResponseV2 => ({
   requestedAtMs: ts,
   entries,
   inputTokens: 0,
@@ -20,31 +30,18 @@ const tr = (ts: number, entries: ConversationEntry[], modelName = CURRENT_MODEL)
   modelName,
 });
 
-const assistantText = (text: string): ConversationEntry => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'text', text }],
-  reasoning: undefined,
-});
+const assistantText = (text: string): DriverMessage => aiMessage(text);
 
-const assistantToolCall = (callId: string, name = 'read'): ConversationEntry => ({
-  kind: 'message',
-  role: 'assistant',
-  parts: [{ kind: 'toolCall', callId, name, args: '{}' }],
-  reasoning: undefined,
-});
+const assistantToolCall = (callId: string, name = 'read'): DriverMessage =>
+  aiMessage({ content: '', tool_calls: [{ id: callId, name, args: {} }] });
 
-const toolResult = (callId: string, payload: string | InputPart[]): ToolResult => ({
-  kind: 'toolResult',
-  callId,
-  payload,
-  requiresFollowUp: true,
-});
+const toolResult = (callId: string, payload: string | DriverInputBlock[]): ToolMessage =>
+  toolMessage(callId, payload, true);
 
 const longText = (label: string): string => `${label}:${'x'.repeat(1000)}`;
 
-const getToolResults = (entries: ConversationEntry[]): ToolResult[] =>
-  entries.filter((e): e is ToolResult => e.kind === 'toolResult');
+const getToolResults = (entries: DriverMessage[]): ToolMessage[] =>
+  entries.filter(isToolMessage);
 
 describe('composeContext — trimToolResults', () => {
   it('keeps only the last 5 oversized tool results untrimmed', () => {
@@ -56,9 +53,9 @@ describe('composeContext — trimToolResults', () => {
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
     const tres = getToolResults(result!.entries);
     expect(tres).toHaveLength(7);
-    expect(tres[0]!.payload).toMatch(/\[trimmed/);
-    expect(tres[1]!.payload).toMatch(/\[trimmed/);
-    for (let i = 2; i < 7; i++) expect(tres[i]!.payload).toBe(contents[i]);
+    expect(tres[0]!.content).toMatch(/\[trimmed/);
+    expect(tres[1]!.content).toMatch(/\[trimmed/);
+    for (let i = 2; i < 7; i++) expect(tres[i]!.content).toBe(contents[i]);
   });
 
   it('does nothing when there are exactly 5 oversized tool results', () => {
@@ -69,7 +66,7 @@ describe('composeContext — trimToolResults', () => {
 
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
     const tres = getToolResults(result!.entries);
-    for (let i = 0; i < 5; i++) expect(tres[i]!.payload).toBe(contents[i]);
+    for (let i = 0; i < 5; i++) expect(tres[i]!.content).toBe(contents[i]);
   });
 
   it('trimmed content preserves head and tail', () => {
@@ -82,7 +79,7 @@ describe('composeContext — trimToolResults', () => {
     ];
 
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
-    const trimmed = getToolResults(result!.entries)[0]!.payload as string;
+    const trimmed = getToolResults(result!.entries)[0]!.content as string;
     expect(trimmed).toContain('HEAD');
     expect(trimmed).toContain('TAIL');
     expect(trimmed).toContain('[trimmed');
@@ -103,34 +100,29 @@ describe('composeContext — trimToolResults', () => {
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
     const entries = result!.entries;
     const tres = getToolResults(entries);
-    expect(tres[0]!.payload).toMatch(/\[trimmed/);
-    const hasAssistantText = entries.some(e =>
-      e.kind === 'message' && e.role === 'assistant'
-      && e.parts.some(p => p.kind === 'text' && p.text === 'I read the file'));
+    expect(tres[0]!.content).toMatch(/\[trimmed/);
+    const hasAssistantText = entries.some(entry =>
+      isAIMessage(entry) && messageText(entry) === 'I read the file');
     expect(hasAssistantText).toBe(true);
   });
 });
 
 describe('composeContext — reasoning strip on model mismatch', () => {
-  const reasoningEntry: ConversationEntry = {
-    kind: 'message',
-    role: 'assistant',
-    parts: [
-      { kind: 'reasoning', data: { source: 'anthropicMessages', data: { type: 'thinking', thinking: 'hmm', signature: 'sig' } } },
-      { kind: 'text', text: 'answer' },
+  const reasoningEntry: DriverMessage = aiMessage({
+    content: [
+      { type: 'thinking', thinking: 'hmm', signature: 'sig' },
+      { type: 'text', text: 'answer' },
     ],
-    reasoning: undefined,
-  };
+  });
 
   it('preserves reasoning when modelName matches current model', () => {
     const rc: RenderedContext = [textSeg(100, 'hi')];
     const trs = [tr(200, [reasoningEntry], CURRENT_MODEL)];
 
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
-    const assistant = result!.entries.find(e => e.kind === 'message' && e.role === 'assistant');
+    const assistant = result!.entries.find(isAIMessage);
     expect(assistant).toBeDefined();
-    const hasReasoning = (assistant as { parts: { kind: string }[] }).parts
-      .some(p => p.kind === 'reasoning');
+    const hasReasoning = messageBlocks(assistant!).some(block => block.type === 'thinking');
     expect(hasReasoning).toBe(true);
   });
 
@@ -139,10 +131,9 @@ describe('composeContext — reasoning strip on model mismatch', () => {
     const trs = [tr(200, [reasoningEntry], 'other-model')];
 
     const result = composeContext(rc, trs, 100_000, CURRENT_MODEL);
-    const assistant = result!.entries.find(e => e.kind === 'message' && e.role === 'assistant');
+    const assistant = result!.entries.find(isAIMessage);
     expect(assistant).toBeDefined();
-    const hasReasoning = (assistant as { parts: { kind: string }[] }).parts
-      .some(p => p.kind === 'reasoning');
+    const hasReasoning = messageBlocks(assistant!).some(block => block.type === 'thinking');
     expect(hasReasoning).toBe(false);
   });
 });
@@ -156,10 +147,8 @@ describe('composeContext — misc', () => {
     const result = composeContext([textSeg(100, 'hi')], [], 100_000, CURRENT_MODEL, 'earlier stuff');
     expect(result).not.toBeNull();
     const first = result!.entries[0]!;
-    expect(first.kind).toBe('message');
-    expect(first.kind === 'message' && first.role === 'user').toBe(true);
-    const firstText = first.kind === 'message' && first.role === 'user'
-      && first.parts[0]!.kind === 'text' ? first.parts[0]!.text : '';
+    expect(first).toEqual(humanMessage(messageText(first)));
+    const firstText = messageText(first);
     expect(firstText).toContain('Conversation summary');
     expect(firstText).toContain('earlier stuff');
   });

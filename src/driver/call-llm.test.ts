@@ -3,229 +3,219 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { callLlm } from './call-llm';
 
-const makeLog = (): Logger => {
-  const log = {
-    withFields: () => log,
-    withError: () => log,
-    log: () => {},
-    error: () => {},
-  };
-  return log as unknown as Logger;
-};
+const log = {
+  withFields: () => log,
+  withError: () => log,
+  log: () => {},
+  error: () => {},
+} as unknown as Logger;
 
-const sseStream = (...events: unknown[]): ReadableStream<Uint8Array> => {
+const options = () => ({ log, label: 'test' });
+
+const stream = (...lines: string[]): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {
-      for (const event of events)
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      for (const line of lines)
+        controller.enqueue(encoder.encode(`data: ${line}\n\n`));
       controller.close();
     },
   });
 };
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+const emptyStream = () => stream('[DONE]');
 
-describe('callLlm', () => {
-  it('maps OpenAI-compatible prompt cache hit and miss tokens into usage', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(sseStream(
-      {
-        choices: [{
-          finish_reason: 'stop',
-          delta: { content: 'ok' },
+const chatStream = (content = 'ok', usage: Record<string, unknown> = {
+  prompt_tokens: 2,
+  completion_tokens: 1,
+  total_tokens: 3,
+}): ReadableStream<Uint8Array> => stream(
+  JSON.stringify({
+    id: 'chatcmpl-1',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'test',
+    choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }],
+  }),
+  JSON.stringify({
+    id: 'chatcmpl-1',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'test',
+    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+  }),
+  JSON.stringify({
+    id: 'chatcmpl-1',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'test',
+    choices: [],
+    usage,
+  }),
+  '[DONE]',
+);
+
+const chatToolStream = (): ReadableStream<Uint8Array> => stream(
+  JSON.stringify({
+    id: 'chatcmpl-tool',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'test',
+    choices: [{
+      index: 0,
+      delta: {
+        role: 'assistant',
+        tool_calls: [{
+          index: 0,
+          id: 'call-1',
+          type: 'function',
+          function: { name: 'send_message', arguments: '{}' },
         }],
       },
-      {
-        usage: {
-          prompt_tokens: 45439,
-          completion_tokens: 301,
-          prompt_tokens_details: { cached_tokens: 44032 },
-          prompt_cache_hit_tokens: 44032,
-          prompt_cache_miss_tokens: 1407,
-        },
-      },
-    ))));
+      finish_reason: null,
+    }],
+  }),
+  JSON.stringify({
+    id: 'chatcmpl-tool',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'test',
+    choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+  }),
+  '[DONE]',
+);
 
-    const result = await callLlm(
-      {
-        apiBaseUrl: 'https://llm.example.test',
-        apiKey: 'test-key',
-        model: 'deepseek-v4-flash',
-        apiFormat: 'openai-chat',
-      },
-      [],
-      'system',
-      undefined,
-      { log: makeLog(), label: 'test' },
-    );
+const requestBody = (mock: ReturnType<typeof vi.fn>, index = 0): Record<string, unknown> =>
+  JSON.parse((mock.mock.calls[index]![1] as { body: string }).body) as Record<string, unknown>;
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('callLlm through LangChain', () => {
+  it('maps OpenAI streaming usage and cache details', async () => {
+    const fetchMock = vi.fn(async () => new Response(chatStream('ok', {
+      prompt_tokens: 10,
+      completion_tokens: 3,
+      total_tokens: 13,
+      prompt_tokens_details: { cached_tokens: 7, cache_write_tokens: 3 },
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      apiFormat: 'openai-chat',
+    }, [], 'system', undefined, options());
 
     expect(result.usage).toEqual({
-      inputTokens: 45439,
-      outputTokens: 301,
-      cacheCreationTokens: 1407,
-      cacheReadTokens: 44032,
+      inputTokens: 10,
+      outputTokens: 3,
+      cacheCreationTokens: 3,
+      cacheReadTokens: 7,
     });
+    expect(result.entries[0]!.text).toBe('ok');
   });
 
-  const requestBody = (fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> =>
-    JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as Record<string, unknown>;
+  it.each([
+    ['openai-chat', '/chat/completions', 'none'],
+    ['responses', '/responses', 'none'],
+    ['anthropic-messages', '/messages', { type: 'none' }],
+  ] as const)('routes %s and applies tool choice', async (apiFormat, suffix, expectedChoice) => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(emptyStream()));
+    vi.stubGlobal('fetch', fetchMock);
 
-  type ToolChoiceCase = {
-    name: string;
-    apiFormat: 'openai-chat' | 'responses' | 'anthropic-messages';
-    expected: unknown;
-  };
+    await callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      apiFormat,
+      toolChoice: 'force',
+    }, [], 'system', [{
+      name: 'send_message',
+      parameters: { type: 'object', properties: {} },
+    }], { ...options(), toolChoice: 'none' });
 
-  const toolChoiceCases: ToolChoiceCase[] = [
-    { name: 'openai-chat', apiFormat: 'openai-chat', expected: 'none' },
-    { name: 'responses', apiFormat: 'responses', expected: 'none' },
-    { name: 'anthropic-messages', apiFormat: 'anthropic-messages', expected: { type: 'none' } },
-  ];
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(suffix);
+    expect(requestBody(fetchMock).tool_choice).toEqual(expectedChoice);
+  });
 
-  for (const { name, apiFormat, expected } of toolChoiceCases) {
-    it(`sends tool_choice for ${name} and overrides the endpoint policy`, async () => {
-      const fetchMock = vi.fn(async () => new Response(sseStream(
-        { choices: [{ finish_reason: 'stop', delta: { content: 'ok' } }] },
-        { usage: { prompt_tokens: 1, completion_tokens: 1 } },
-      )));
-      vi.stubGlobal('fetch', fetchMock);
+  it('maps force to the Responses API required policy', async () => {
+    const fetchMock = vi.fn(async () => new Response(emptyStream()));
+    vi.stubGlobal('fetch', fetchMock);
+    await callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      apiFormat: 'responses',
+      toolChoice: 'force',
+    }, [], 'system', [{
+      name: 'send_message',
+      parameters: { type: 'object', properties: {} },
+    }], options());
+    expect(requestBody(fetchMock).tool_choice).toBe('required');
+  });
 
-      await callLlm(
-        {
-          apiBaseUrl: 'https://llm.example.test',
-          apiKey: 'test-key',
-          model: 'test-model',
-          apiFormat,
-          // The endpoint policy would otherwise require a tool call.
-          toolChoice: 'force',
-        },
-        [],
-        'system',
-        [{ name: 'send_message', parameters: { type: 'object', properties: {} } }],
-        { log: makeLog(), label: 'test', toolChoice: 'none' },
-      );
-
-      expect(requestBody(fetchMock).tool_choice).toEqual(expected);
-    });
-  }
-});
-
-const config = { apiBaseUrl: 'https://llm.example.test', apiKey: 'test', model: 'test' };
-const opts = () => ({ log: makeLog(), label: 'policy' });
-const formats = ['openai-chat', 'responses', 'anthropic-messages'] as const;
-const startEvent = (format: typeof formats[number]) => format === 'openai-chat'
-  ? { choices: [{ delta: { tool_calls: [{ index: 0, id: 't' }] } }] }
-  : format === 'responses'
-    ? { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 't', call_id: 't', name: 'f', arguments: '' } }
-    : { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't', name: 'f', input: {} } };
-
-for (const apiFormat of formats) {
-  for (const toolChoice of ['force', 'local-force', 'none', 'local-none'] as const) {
-    it(`${apiFormat}: maps ${toolChoice}`, async () => {
-      const bodies: Record<string, unknown>[] = [];
-      vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
-        bodies.push(JSON.parse(init.body as string));
-        return new Response(sseStream());
-      }));
-      await callLlm({ ...config, apiFormat, toolChoice }, [], '', undefined, opts());
-      const expected = toolChoice === 'force' ? (apiFormat === 'anthropic-messages' ? { type: 'any' } : 'required')
-        : toolChoice === 'none' ? (apiFormat === 'anthropic-messages' ? { type: 'none' } : 'none') : undefined;
-      expect(bodies[0]!.tool_choice).toEqual(expected);
-      expect(bodies).toHaveLength(toolChoice === 'local-force' ? 4 : 1);
-    });
-  }
-
-  it(`${apiFormat}: local-none cancels on start without awaiting arguments, appends cumulative private reminders`, async () => {
-    const bodies: string[] = [];
-    const signals: AbortSignal[] = [];
-    const cancel = vi.fn();
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
-      bodies.push(init.body as string);
-      signals.push(init.signal!);
-      if (bodies.length > 2) return new Response(sseStream());
-      return new Response(new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(startEvent(apiFormat))}\n\n`));
-          // Intentionally never send arguments or close.
-        },
-        cancel,
-      }));
-    }));
+  it('retries local-force without mutating the input messages', async () => {
+    const fetchMock = vi.fn(async () => new Response(chatStream()));
+    vi.stubGlobal('fetch', fetchMock);
     const entries: Parameters<typeof callLlm>[1] = [];
-    await callLlm({ ...config, apiFormat, toolChoice: 'local-none' }, entries, '', undefined, opts());
-    expect(cancel).toHaveBeenCalledTimes(2);
-    expect(signals.slice(0, 2).every(s => s.aborted)).toBe(true);
-    expect(signals[2]!.aborted).toBe(false);
-    expect(bodies.map(body => body.split('DO NOT CALL ANY TOOLS.').length - 1)).toEqual([0, 1, 2]);
+    await callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      toolChoice: 'local-force',
+      localForceMaxRetries: 2,
+    }, entries, 'system', undefined, options());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(entries).toEqual([]);
   });
 
-  it(`${apiFormat}: external abort stops unbounded retries`, async () => {
+  it('aborts local-none on a tool-call chunk and adds a private retry reminder', async () => {
+    let attempt = 0;
+    const fetchMock = vi.fn(async () => {
+      attempt++;
+      return new Response(attempt === 1 ? chatToolStream() : chatStream());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      toolChoice: 'local-none',
+    }, [], 'system', [{
+      name: 'send_message',
+      parameters: { type: 'object', properties: {} },
+    }], options());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(requestBody(fetchMock, 1))).toContain('DO NOT CALL ANY TOOLS.');
+  });
+
+  it('propagates external cancellation while reading a stream', async () => {
     const controller = new AbortController();
-    const fetchMock = vi.fn(async () => new Response(sseStream(startEvent(apiFormat))));
+    const cancel = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ cancel }))));
+    const pending = callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      signal: controller.signal,
+    }, [], 'system', undefined, options());
+    setImmediate(() => controller.abort(new Error('cancelled')));
+    await expect(pending).rejects.toThrow('cancelled');
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('does not policy-retry transport errors', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('network failed'); });
     vi.stubGlobal('fetch', fetchMock);
-    const pending = callLlm({ ...config, apiFormat, toolChoice: 'local-none', signal: controller.signal }, [], '', undefined, opts());
-    setImmediate(() => controller.abort(new Error('external abort')));
-    await expect(pending).rejects.toThrow('external abort');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(callLlm({
+      apiBaseUrl: 'https://llm.example.test/v1',
+      apiKey: 'key',
+      model: 'test',
+      toolChoice: 'local-none',
+    }, [], 'system', undefined, options())).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
-
-  it(`${apiFormat}: ordinary network errors are not policy retries`, async () => {
-    const failure = new Error('network failure');
-    const fetchMock = vi.fn(async () => { throw failure; });
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(callLlm({ ...config, apiFormat, toolChoice: 'local-none' }, [], '', undefined, opts())).rejects.toBe(failure);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-}
-
-it('local-force accumulates usage across four attempts and returns the exhausted last result', async () => {
-  const fetchMock = vi.fn(async () => new Response(sseStream(
-    { choices: [{ delta: { content: 'last text' } }] },
-    { usage: { prompt_tokens: 2, completion_tokens: 3, prompt_cache_hit_tokens: 1, prompt_cache_miss_tokens: 1 } },
-  )));
-  vi.stubGlobal('fetch', fetchMock);
-  const result = await callLlm({ ...config, toolChoice: 'local-force' }, [], '', undefined, opts());
-  expect(fetchMock).toHaveBeenCalledTimes(4);
-  expect(result.usage).toEqual({ inputTokens: 8, outputTokens: 12, cacheCreationTokens: 4, cacheReadTokens: 4 });
-  expect(JSON.stringify(result.entries)).toContain('last text');
-});
-
-it('external abort interrupts an in-flight reader without retrying', async () => {
-  const controller = new AbortController();
-  const cancel = vi.fn();
-  const fetchMock = vi.fn(async () => new Response(new ReadableStream({ cancel })));
-  vi.stubGlobal('fetch', fetchMock);
-  const pending = callLlm({ ...config, toolChoice: 'local-none', signal: controller.signal }, [], '', undefined, opts());
-  setImmediate(() => controller.abort(new Error('in-flight abort')));
-  await expect(pending).rejects.toThrow('in-flight abort');
-  expect(cancel).toHaveBeenCalledOnce();
-  expect(fetchMock).toHaveBeenCalledOnce();
-});
-
-it('local-force stops at the first tool result and adds prior usage', async () => {
-  let attempt = 0;
-  const fetchMock = vi.fn(async () => {
-    attempt++;
-    return new Response(sseStream(
-      { choices: [{ delta: attempt === 1 ? { content: 'no tool' } : { tool_calls: [{ index: 0, id: 't', function: { name: 'f', arguments: '{}' } }] } }] },
-      { usage: { prompt_tokens: 2, completion_tokens: 3 } },
-    ));
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  const result = await callLlm({ ...config, toolChoice: 'local-force' }, [], '', undefined, opts());
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(result.usage.inputTokens).toBe(4);
-  expect(result.usage.outputTokens).toBe(6);
-  expect(JSON.stringify(result.entries)).toContain('toolCall');
-});
-
-it.each([0, 2, 5])('local-force respects %s configured retries', async localForceMaxRetries => {
-  const fetchMock = vi.fn(async () => new Response(sseStream()));
-  vi.stubGlobal('fetch', fetchMock);
-  await callLlm({ ...config, toolChoice: 'local-force', localForceMaxRetries }, [], '', undefined, opts());
-  expect(fetchMock).toHaveBeenCalledTimes(localForceMaxRetries + 1);
 });

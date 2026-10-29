@@ -1,7 +1,9 @@
+import { isAIMessage, isHumanMessage } from '@langchain/core/messages';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createImageConversationManager } from './image-conversation';
 import type { ImageConversationModelCallParams, ImageConversationRecord, ImageConversationStore, ImageConversationTurn } from './image-conversation';
+import { messageText } from '../driver/messages';
 import type { LlmEndpoint } from '../llm/types';
 
 const model: LlmEndpoint = { apiBaseUrl: 'https://example.test', apiKey: 'key', model: 'vision' };
@@ -92,9 +94,10 @@ describe('ImageConversationManager', () => {
 
     expect(calls).toHaveLength(2);
     expect(calls[1].systemPrompt).toBe('THE EXACT HIGH DETAIL PROMPT');
-    expect(calls[1].entries.map((entry: any) => entry.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
-    expect(calls[1].entries[2].parts[0].text).toBe('first?');
-    expect(calls[1].entries[3].parts[0].text).toBe('answer-1');
+    expect(calls[1].entries.map((entry: any) =>
+      isHumanMessage(entry) ? 'user' : isAIMessage(entry) ? 'assistant' : entry.type)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+    expect(messageText(calls[1].entries[2])).toBe('first?');
+    expect(messageText(calls[1].entries[3])).toBe('answer-1');
   });
 
   it('switches generation only after an over-limit reset call succeeds', async () => {

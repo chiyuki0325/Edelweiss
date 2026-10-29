@@ -1,21 +1,26 @@
 import type { Logger } from '@guiiai/logg';
+import type { ToolMessage } from '@langchain/core/messages';
+import { AIMessage, isAIMessage, isToolMessage } from '@langchain/core/messages';
 
 import { callLlm, type LlmCallConfig, type ToolSchema } from './call-llm';
 import { ensureDumpDir } from './constants';
-import { executePreparedToolCall, extractToolCalls, prepareToolCall, type CahciuaTool, type PreparedToolCall } from './tools';
+import {
+  cloneMessage,
+  messageText,
+  toolCalls,
+  type DriverMessage,
+  type DriverToolCall,
+  type DriverToolMessage,
+} from './messages';
+import { executePreparedToolCall, prepareToolCall, type CahciuaTool, type PreparedToolCall } from './tools';
 import type { Usage } from '../llm/types';
-import type {
-  ConversationEntry,
-  ToolCallPart,
-  ToolResult,
-} from '../unified-api/types';
 
 ensureDumpDir();
 
-const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
-  if (typeof tr.payload !== 'string') return false;
+const isRecoverableSendMessageFailure = (tr: ToolMessage): boolean => {
+  if (typeof tr.content !== 'string') return false;
   try {
-    const parsed = JSON.parse(tr.payload);
+    const parsed = JSON.parse(tr.content);
     return parsed.ok === false
       && (parsed.code === 'agreement_review_required'
         || parsed.code === 'contrast_review_required'
@@ -34,21 +39,10 @@ const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
  * current turn is NOT pruned — the model needs to see its error to correct.
  */
 export const pruneLengthLimitFailures = (
-  entries: ConversationEntry[],
+  entries: DriverMessage[],
   pendingPrune: boolean,
-): { pruned: ConversationEntry[]; pendingPrune: boolean } => {
-  // Shallow-clone entries so we can mutate parts arrays safely.
-  // ToolResults with string payloads and OutputMessages with OutputPart[] are safe
-  // to shallow-clone — no Sharp objects in send_message results.
-  const result = entries.map(e => {
-    if (e.kind === 'message') {
-      if (e.role === 'assistant') {
-        return { ...e, parts: [...e.parts], reasoning: e.reasoning };
-      }
-      return { ...e, parts: [...e.parts] };
-    }
-    return { ...e };
-  });
+): { pruned: DriverMessage[]; pendingPrune: boolean } => {
+  const result = entries.map(entry => cloneMessage(entry));
 
   let nextPendingPrune = pendingPrune;
 
@@ -56,17 +50,15 @@ export const pruneLengthLimitFailures = (
   // (TextPart / ReasoningPart) before the first visible resolution in this step.
   if (nextPendingPrune) {
     for (const entry of result) {
-      if (entry.kind !== 'message' || entry.role !== 'assistant') continue;
-      const parts = entry.parts;
-      const firstResolutionIdx = parts.findIndex(
-        p => p.kind === 'toolCall'
-          && (p.name === 'send_message' || p.name === 'react_message' || p.name === 'stay_silent'),
-      );
-      if (firstResolutionIdx !== -1) {
-        entry.parts = parts.filter((p, i) => {
-          if (i < firstResolutionIdx && (p.kind === 'text' || p.kind === 'reasoning'))
-            return false;
-          return true;
+      if (!isAIMessage(entry)) continue;
+      const firstResolutionIdx = (entry.tool_calls ?? []).findIndex(call =>
+        call.name === 'send_message' || call.name === 'react_message' || call.name === 'stay_silent');
+      if (firstResolutionIdx >= 0) {
+        const index = result.indexOf(entry);
+        result[index] = new AIMessage({
+          ...entry,
+          content: [],
+          tool_calls: entry.tool_calls,
         });
         nextPendingPrune = false;
         break;
@@ -78,28 +70,22 @@ export const pruneLengthLimitFailures = (
   // Iterate in reverse so splice indices stay valid during removal.
   for (let i = result.length - 1; i >= 0; i--) {
     const entry = result[i]!;
-    if (entry.kind !== 'toolResult') continue;
+    if (!isToolMessage(entry)) continue;
     if (!isRecoverableSendMessageFailure(entry)) continue;
 
     // Find the matching ToolCallPart in a preceding OutputMessage
     let found = false;
     for (let j = i - 1; j >= 0; j--) {
       const e = result[j]!;
-      if (e.kind !== 'message' || e.role !== 'assistant') continue;
-      const parts = e.parts;
-      const tcIdx = parts.findIndex(
-        p => p.kind === 'toolCall' && p.callId === entry.callId && p.name === 'send_message',
+      if (!isAIMessage(e)) continue;
+      const tcIdx = (e.tool_calls ?? []).findIndex(
+        call => call.id === entry.tool_call_id && call.name === 'send_message',
       );
       if (tcIdx === -1) continue;
 
-      // Remove the failed ToolCallPart
-      parts.splice(tcIdx, 1);
-      // Remove all thinking content from this OutputMessage
-      e.parts = parts.filter(
-        p => p.kind !== 'text' && p.kind !== 'reasoning',
-      );
-      // Clear message-level reasoning too
-      e.reasoning = undefined;
+      const calls = [...(e.tool_calls ?? [])];
+      calls.splice(tcIdx, 1);
+      result[j] = new AIMessage({ ...e, content: [], tool_calls: calls });
       // Remove the ToolResult
       result.splice(i, 1);
       nextPendingPrune = true;
@@ -117,17 +103,15 @@ export const pruneLengthLimitFailures = (
   // Step 3: Clean up entries that became empty or orphaned after pruning
   const remainingCallIds = new Set<string>();
   for (const entry of result) {
-    if (entry.kind === 'message' && entry.role === 'assistant') {
-      for (const p of entry.parts) {
-        if (p.kind === 'toolCall') remainingCallIds.add(p.callId);
-      }
-    }
+    if (isAIMessage(entry))
+      for (const call of entry.tool_calls ?? [])
+        if (call.id) remainingCallIds.add(call.id);
   }
 
   const cleaned = result.filter(entry => {
-    if (entry.kind === 'message' && entry.role === 'assistant' && entry.parts.length === 0 && !entry.reasoning)
+    if (isAIMessage(entry) && !messageText(entry) && !(entry.tool_calls?.length))
       return false;
-    if (entry.kind === 'toolResult' && !remainingCallIds.has(entry.callId))
+    if (isToolMessage(entry) && !remainingCallIds.has(entry.tool_call_id))
       return false;
     return true;
   });
@@ -147,15 +131,15 @@ export interface StepExecutorParams {
 }
 
 export interface ExecutedStep {
-  stepEntries: ConversationEntry[];
+  stepEntries: DriverMessage[];
   usage: Usage;
   requestedAtMs: number;
   hasToolCalls: boolean;
 }
 
 export interface ModelStepOutput {
-  entries: ConversationEntry[];
-  toolCalls: ToolCallPart[];
+  entries: DriverMessage[];
+  toolCalls: DriverToolCall[];
   usage: Usage;
   requestedAtMs: number;
 }
@@ -168,7 +152,7 @@ export const toToolSchema = (t: CahciuaTool): ToolSchema => ({
 
 export const createRunner = (config: RunnerConfig) => {
   const callModelStep = async (
-    workingEntries: ConversationEntry[],
+    workingEntries: DriverMessage[],
     params: StepExecutorParams,
     step: number,
   ): Promise<ModelStepOutput> => {
@@ -184,17 +168,17 @@ export const createRunner = (config: RunnerConfig) => {
 
     return {
       entries: result!.entries,
-      toolCalls: extractToolCalls(result!.entries),
+      toolCalls: toolCalls(result!.entries),
       usage: result.usage,
       requestedAtMs: stepRequestedAt,
     };
   };
 
   const executeToolStep = async (
-    toolCalls: ToolCallPart[],
+    toolCalls: DriverToolCall[],
     params: StepExecutorParams,
-  ): Promise<ToolResult[]> => {
-    const toolResults = new Array<ToolResult>(toolCalls.length);
+  ): Promise<DriverToolMessage[]> => {
+    const toolResults = new Array<DriverToolMessage>(toolCalls.length);
     const lanes: Record<'prelude' | 'readonly' | 'writer' | 'message' | 'serial', Array<{ index: number; call: PreparedToolCall }>> = {
       prelude: [],
       readonly: [],
@@ -204,7 +188,7 @@ export const createRunner = (config: RunnerConfig) => {
     };
 
     for (const [index, tc] of toolCalls.entries()) {
-      const prepared = prepareToolCall(tc.callId, tc.name, tc.args, params.tools, params.log);
+      const prepared = prepareToolCall(tc.id, tc.name, JSON.stringify(tc.args), params.tools, params.log);
       if (!prepared.ok) {
         toolResults[index] = prepared.result;
         continue;
@@ -240,7 +224,7 @@ export const createRunner = (config: RunnerConfig) => {
   };
 
   const runOneStep = async (
-    workingEntries: ConversationEntry[],
+    workingEntries: DriverMessage[],
     params: StepExecutorParams,
     step: number,
   ): Promise<ExecutedStep> => {

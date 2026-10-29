@@ -1,3 +1,4 @@
+import type { DriverMessage } from './messages';
 import type { SkillInfo } from './skills';
 import type { AgentMailbox } from './subagents/mailbox';
 import type { SubagentManager } from './subagents/manager';
@@ -7,7 +8,6 @@ import type { CompactionSessionMeta, TurnResponseV2 } from './types';
 import type { ResolvedChatConfig } from '../config/config';
 import type { LlmEndpoint, Usage } from '../llm/types';
 import type { RenderedContext } from '../rendering/types';
-import type { ConversationEntry } from '../unified-api/types';
 
 export type DriverSignal<T> = {
   (): T;
@@ -111,7 +111,7 @@ export interface TurnState {
   model: LlmEndpoint;
   rcAtStart: RenderedContext;
   trs: TurnResponseV2[];
-  entries: ConversationEntry[];
+  entries: DriverMessage[];
   system: string;
   tools: CahciuaTool[];
   step: number;
@@ -131,8 +131,8 @@ export interface TurnState {
 }
 
 export interface CompletedStep {
-  rawEntries: ConversationEntry[];
-  persistedEntries: ConversationEntry[];
+  rawEntries: DriverMessage[];
+  persistedEntries: DriverMessage[];
   usage: Usage;
   requestedAtMs: number;
   hasToolCalls: boolean;

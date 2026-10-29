@@ -1,5 +1,5 @@
 import type { AgentId, AgentMessage, AgentMessageType } from './types';
-import type { ConversationEntry } from '../../unified-api/types';
+import { humanMessage, type DriverMessage } from '../messages';
 
 const escapeXml = (s: string): string =>
   s.replace(/&/g, '&amp;')
@@ -7,14 +7,8 @@ const escapeXml = (s: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const messageToEntry = (msg: AgentMessage): ConversationEntry => ({
-  kind: 'message',
-  role: 'user',
-  parts: [{
-    kind: 'text',
-    text: `<agent-message from="${escapeXml(msg.fromAgentId)}" type="${escapeXml(msg.type)}" final="${msg.final ? 'true' : 'false'}">${escapeXml(msg.content)}</agent-message>`,
-  }],
-});
+const messageToEntry = (msg: AgentMessage): DriverMessage =>
+  humanMessage(`<agent-message from="${escapeXml(msg.fromAgentId)}" type="${escapeXml(msg.type)}" final="${msg.final ? 'true' : 'false'}">${escapeXml(msg.content)}</agent-message>`);
 
 export const createAgentMailbox = () => {
   let nextId = 1;
@@ -40,7 +34,7 @@ export const createAgentMailbox = () => {
     return msg;
   };
 
-  const flush = (agentId: AgentId): ConversationEntry[] => {
+  const flush = (agentId: AgentId): DriverMessage[] => {
     const messages = pending.get(agentId) ?? [];
     pending.delete(agentId);
     return messages.map(messageToEntry);
