@@ -13,6 +13,8 @@ export interface AgentMessage {
   content: string;
   createdAtMs: number;
   final: boolean;
+  /** Row id assigned by `subagent_messages`; absent when persistence is disabled. */
+  persistedId?: number;
 }
 
 export interface SubagentState {

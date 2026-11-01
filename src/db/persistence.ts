@@ -471,8 +471,8 @@ export const persistSubagent = (db: DB, record: {
     .run();
 };
 
-export const persistSubagentMessage = (db: DB, chatId: string, msg: AgentMessage): void => {
-  db.insert(subagentMessages)
+export const persistSubagentMessage = (db: DB, chatId: string, msg: AgentMessage): number | undefined => {
+  const row = db.insert(subagentMessages)
     .values({
       chatId,
       fromAgentId: msg.fromAgentId,
@@ -483,7 +483,33 @@ export const persistSubagentMessage = (db: DB, chatId: string, msg: AgentMessage
       createdAtMs: msg.createdAtMs,
       deliveredAtMs: null,
     })
+    .returning({ id: subagentMessages.id })
+    .get();
+  return row?.id;
+};
+
+export const markSubagentMessagesDelivered = (db: DB, chatId: string, messageIds: number[], deliveredAtMs = Date.now()): void => {
+  if (messageIds.length === 0) return;
+  db.update(subagentMessages)
+    .set({ deliveredAtMs })
+    .where(and(eq(subagentMessages.chatId, chatId), inArray(subagentMessages.id, messageIds)))
     .run();
+};
+
+// Agent ids are per chat and reset with the process, so seed the next id from
+// persisted rows (including pre-persistence turn responses) to avoid reusing a
+// previous run's `sa-N`.
+export const loadNextSubagentId = (db: DB, chatId: string): number => {
+  const rows = [
+    ...db.selectDistinct({ agentId: subagents.agentId }).from(subagents).where(eq(subagents.chatId, chatId)).all(),
+    ...db.selectDistinct({ agentId: turnResponsesV2.agentId }).from(turnResponsesV2).where(eq(turnResponsesV2.chatId, chatId)).all(),
+  ];
+  let max = 0;
+  for (const row of rows) {
+    const match = /^sa-(\d+)$/.exec(row.agentId);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max + 1;
 };
 
 export const loadSubagentMessages = (db: DB, chatId: string, toAgentId: string): AgentMessage[] => {
@@ -493,6 +519,7 @@ export const loadSubagentMessages = (db: DB, chatId: string, toAgentId: string):
     .all();
   return rows.map(row => ({
     id: row.id,
+    persistedId: row.id,
     fromAgentId: row.fromAgentId as AgentMessage['fromAgentId'],
     toAgentId: row.toAgentId as AgentMessage['toAgentId'],
     type: row.type as AgentMessageType,

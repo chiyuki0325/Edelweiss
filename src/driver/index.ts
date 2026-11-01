@@ -12,6 +12,7 @@ import type { StartedTurnInfo } from './scheduler';
 import { loadSkillsFromFolder } from './skills';
 import { createAgentMailbox } from './subagents/mailbox';
 import { createSubagentManager } from './subagents/manager';
+import type { AgentId, AgentMessage, SubagentState } from './subagents/types';
 import { createToolsForCapabilities } from './tool-providers';
 import type { CapabilityToolProviderDeps } from './tool-providers';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
@@ -51,6 +52,18 @@ const MAX_STEPS = Infinity;
 export const createDriver = (config: DriverConfig, deps: {
   loadTurnResponses: (chatId: string, afterMs?: number, agentId?: string) => Promise<TurnResponseV2[]>;
   persistTurnResponse: (chatId: string, tr: TurnResponseV2) => Promise<void>;
+  persistSubagent?: (chatId: string, record: {
+    agentId: AgentId;
+    task: string;
+    status: SubagentState['status'];
+    modelName: string;
+    createdAtMs: number;
+    updatedAtMs: number;
+    finalMessage?: string;
+  }) => void;
+  persistSubagentMessage?: (chatId: string, message: AgentMessage) => number | undefined;
+  markSubagentMessagesDelivered?: (chatId: string, messageIds: number[]) => void;
+  loadNextSubagentId?: (chatId: string) => number;
   sendMessage: (chatId: string, text: string, replyToMessageId?: number, attachments?: SendMessageAttachment[]) => Promise<{ messageId: number; date: number }>;
   loadCompaction: (chatId: string) => CompactionSessionMeta | null;
   persistCompaction: (chatId: string, meta: CompactionSessionMeta) => void;
@@ -132,7 +145,18 @@ export const createDriver = (config: DriverConfig, deps: {
     };
 
     const rc = signal<RenderedContext>([]);
-    const mailbox = createAgentMailbox();
+    const mailbox = createAgentMailbox({
+      onEnqueue: message => {
+        const persistedId = deps.persistSubagentMessage?.(chatId, message);
+        if (persistedId != null) message.persistedId = persistedId;
+      },
+      onFlush: messages => {
+        const messageIds = messages
+          .map(message => message.persistedId)
+          .filter((id): id is number => id != null);
+        if (messageIds.length > 0) deps.markSubagentMessagesDelivered?.(chatId, messageIds);
+      },
+    });
     const offline = signal(false);
     const lastProcessedMs = signal(0);
     const lastTRInterrupted = signal(false);
@@ -247,6 +271,7 @@ export const createDriver = (config: DriverConfig, deps: {
       model: chatConfig.subagents.model,
       maxConcurrent: chatConfig.subagents.maxConcurrent,
       maxSteps: chatConfig.subagents.maxSteps,
+      initialNextId: deps.loadNextSubagentId?.(chatId),
       getScope,
       renderSystemPrompt: state => renderSubagentSystemPrompt({
         modelName: chatConfig.subagents.model.model,
@@ -265,6 +290,15 @@ export const createDriver = (config: DriverConfig, deps: {
           agentId,
         });
       },
+      persistLifecycle: state => deps.persistSubagent?.(chatId, {
+        agentId: state.id,
+        task: state.task,
+        status: state.status,
+        modelName: chatConfig.subagents.model.model,
+        createdAtMs: state.createdAtMs,
+        updatedAtMs: state.updatedAtMs,
+        finalMessage: state.finalMessage,
+      }),
       wakeMain,
       log,
     });

@@ -96,11 +96,13 @@ subagents:
 
 Schema additions:
 
-- `subagents` records lifecycle state, task, model name, timestamps, and final message.
-- `subagent_messages` records mailbox messages for audit/debugging.
+- `subagents` records lifecycle state, task, model name, timestamps, and final message. The manager writes it on start, every status transition (`running` / `idle` / `finalized` / `failed`), and finalization.
+- `subagent_messages` records every mailbox message at enqueue time and stamps `delivered_at_ms` when the recipient flushes it. Main-directed messages are stored too, since the mailbox is shared.
 - `turn_responses_v2.agent_id` scopes Driver turn entries to `main` or a subagent ID.
 
-On startup, unfinished persisted subagents should be marked failed/stale rather than resumed.
+On startup, unfinished persisted subagents are marked failed/stale rather than resumed. Agent IDs are seeded from the maximum persisted `sa-N` in both `subagents` and `turn_responses_v2`, so a restart does not reuse an ID that previous rows still reference.
+
+Mailbox entries are appended to the subagent's in-memory `state.entries` when flushed, so a subagent woken by a later message still sees the original task and prior incoming messages.
 
 ## Prompting
 

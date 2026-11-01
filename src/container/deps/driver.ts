@@ -1,5 +1,5 @@
 import { getChatIds, resolveChatConfig, resolveModel } from '../../config/config';
-import { loadCompaction, loadTurnResponses, persistCompaction, persistTurnResponse } from '../../db';
+import { loadCompaction, loadNextSubagentId, loadTurnResponses, markSubagentMessagesDelivered, persistCompaction, persistSubagent, persistSubagentMessage, persistTurnResponse } from '../../db';
 import { createDriver } from '../../driver';
 import { createOneBotImApiInvoker } from '../../driver/im-api/onebot';
 import { createTelegramImApiInvoker } from '../../driver/im-api/telegram';
@@ -24,6 +24,10 @@ export default function registerDriver({ get, register }: Registrar): void {
     }, {
       loadTurnResponses: (chatId, afterMs, agentId) => loadTurnResponses(db, chatId, afterMs, agentId),
       persistTurnResponse: (chatId, tr) => persistTurnResponse(db, chatId, tr),
+      persistSubagent: (chatId, record) => persistSubagent(db, { ...record, chatId }),
+      persistSubagentMessage: (chatId, message) => persistSubagentMessage(db, chatId, message),
+      markSubagentMessagesDelivered: (chatId, messageIds) => markSubagentMessagesDelivered(db, chatId, messageIds),
+      loadNextSubagentId: chatId => loadNextSubagentId(db, chatId),
       sendMessage: telegram
         ? (chatId, text, replyToMessageId, attachments) => telegram.driverHooks.sendMessage(chatId, text, replyToMessageId, attachments)
         : async () => { throw new Error('send_message not available: no Telegram configured'); },

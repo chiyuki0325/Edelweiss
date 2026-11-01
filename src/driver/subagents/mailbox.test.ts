@@ -33,4 +33,23 @@ describe('createAgentMailbox', () => {
       '<agent-message from="sa-1" type="result" final="true">&lt;ok&gt;&amp;&quot;</agent-message>',
     );
   });
+
+  it('reports enqueued and flushed messages to persistence hooks', () => {
+    const enqueued: number[] = [];
+    const flushed: number[] = [];
+    const mailbox = createAgentMailbox({
+      onEnqueue: msg => enqueued.push(msg.id),
+      onFlush: msgs => flushed.push(...msgs.map(msg => msg.id)),
+    });
+
+    mailbox.enqueue({ fromAgentId: 'main', toAgentId: 'sa-1', type: 'task', content: 'first' });
+    mailbox.enqueue({ fromAgentId: 'main', toAgentId: 'sa-2', type: 'task', content: 'other' });
+    expect(enqueued).toEqual([1, 2]);
+    expect(flushed).toEqual([]);
+
+    mailbox.flush('sa-1');
+    expect(flushed).toEqual([1]);
+    mailbox.flush('sa-1');
+    expect(flushed).toEqual([1]);
+  });
 });

@@ -19,10 +19,13 @@ export interface SubagentManagerDeps {
   model: LlmEndpoint;
   maxConcurrent: number;
   maxSteps: number;
+  /** First agent id to allocate; seeded from persisted rows so ids never repeat. */
+  initialNextId?: number;
   getScope: () => ChatScope;
   renderSystemPrompt: (state: SubagentState) => Promise<string>;
   createTools: (subagentId: AgentId) => CahciuaTool[];
   persistStep?: (agentId: AgentId, stepEntries: ConversationEntry[], usage: Usage, requestedAtMs: number) => Promise<void>;
+  persistLifecycle?: (state: SubagentState) => void;
   wakeMain: () => void;
   log: Logger;
 }
@@ -39,9 +42,13 @@ const toRunnerConfig = (endpoint: LlmEndpoint): RunnerConfig => ({
 });
 
 export const createSubagentManager = (deps: SubagentManagerDeps) => {
-  let nextId = 1;
+  let nextId = deps.initialNextId ?? 1;
   const states = new Map<AgentId, SubagentState>();
   const runner = createRunner(toRunnerConfig(deps.model));
+
+  const persistLifecycle = (state: SubagentState) => {
+    deps.persistLifecycle?.(state);
+  };
 
   const activeCount = () => [...states.values()].filter(s => s.status === 'running' || s.status === 'idle').length;
 
@@ -68,6 +75,7 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
     state.finalMessage = message;
     state.updatedAtMs = Date.now();
     state.wakeRequested = false;
+    persistLifecycle(state);
   };
 
   const toolDeps = {
@@ -127,6 +135,7 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
     state.wakeRequested = false;
     state.status = 'running';
     state.updatedAtMs = Date.now();
+    persistLifecycle(state);
 
     try {
       const turn = await createSubagentTurn(state);
@@ -134,7 +143,13 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
         runner,
         executorChatId: `${deps.chatId}:${state.id}`,
         maxImagesAllowed: turn.model.maxImagesAllowed,
-        pullExternalEntries: () => deps.mailbox.flush(state.id),
+        pullExternalEntries: () => {
+          const entries = deps.mailbox.flush(state.id);
+          // Mailbox entries are the subagent's user-side transcript, so keep
+          // them in the state that seeds the next wake-up as well.
+          if (entries.length > 0) state.entries = [...state.entries, ...entries];
+          return entries;
+        },
         shouldStop: () => state.status === 'finalized' || state.status === 'failed',
         persistStep: async (_, step) => {
           state.entries = [...state.entries, ...step.persistedEntries];
@@ -144,9 +159,11 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
         log: deps.log,
       });
       if (state.status === 'running') state.status = 'idle';
+      persistLifecycle(state);
     } catch (err) {
       state.status = 'failed';
       state.updatedAtMs = Date.now();
+      persistLifecycle(state);
       const message = String(err instanceof Error ? err.message : err);
       deps.mailbox.enqueue({ fromAgentId: state.id, toAgentId: 'main', type: 'error', content: message, final: true });
       deps.wakeMain();
@@ -178,6 +195,7 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
       wakeRequested: false,
     };
     states.set(id, state);
+    persistLifecycle(state);
     deps.mailbox.enqueue({
       fromAgentId: 'main',
       toAgentId: id,

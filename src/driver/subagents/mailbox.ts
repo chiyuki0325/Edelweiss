@@ -16,7 +16,14 @@ const messageToEntry = (msg: AgentMessage): ConversationEntry => ({
   }],
 });
 
-export const createAgentMailbox = () => {
+export interface AgentMailboxHooks {
+  /** Called once per enqueued message; the same object is later delivered. */
+  onEnqueue?: (message: AgentMessage) => void;
+  /** Called with the messages removed from the queue by `flush`. */
+  onFlush?: (messages: AgentMessage[]) => void;
+}
+
+export const createAgentMailbox = (hooks: AgentMailboxHooks = {}) => {
   let nextId = 1;
   const pending = new Map<AgentId, AgentMessage[]>();
 
@@ -37,12 +44,14 @@ export const createAgentMailbox = () => {
       createdAtMs: Date.now(),
     };
     pending.set(msg.toAgentId, [...(pending.get(msg.toAgentId) ?? []), msg]);
+    hooks.onEnqueue?.(msg);
     return msg;
   };
 
   const flush = (agentId: AgentId): ConversationEntry[] => {
     const messages = pending.get(agentId) ?? [];
     pending.delete(agentId);
+    if (messages.length > 0) hooks.onFlush?.(messages);
     return messages.map(messageToEntry);
   };
 
