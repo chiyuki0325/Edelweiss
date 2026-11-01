@@ -2,8 +2,6 @@ import { getImApiPlatformInfo } from './descriptions';
 import type { ImApiPlatform } from './types';
 import { redactSecrets } from '../../http';
 
-export const DEFAULT_MAX_RESULT_CHARS = 20_000;
-
 const FORBIDDEN_PARAM_KEY = /^(?:token|api_?key|access_?token|secret|password|authorization|auth|cookie|cookies|session|api_?hash|bot_?token|credentials?)$/i;
 
 // Actions that return credentials rather than chat data. This is a denylist
@@ -94,21 +92,7 @@ export const withDefaultTarget = (
 
 export const formatImApiResult = (
   result: { ok: true; platform: ImApiPlatform; method: string; data: unknown },
-  maxChars: number,
-): string => {
-  const serialized = redactSecrets(JSON.stringify(result) ?? '{}');
-  if (serialized.length <= maxChars) return serialized;
-
-  const dataText = redactSecrets(JSON.stringify(result.data) ?? String(result.data));
-  return redactSecrets(JSON.stringify({
-    ok: result.ok,
-    platform: result.platform,
-    method: result.method,
-    truncated: true,
-    original_chars: serialized.length,
-    data_preview: dataText.slice(0, maxChars),
-  }));
-};
+): string => redactSecrets(JSON.stringify(result) ?? '{}');
 
 export const formatImApiError = (platform: ImApiPlatform, method: string, error: unknown): string =>
   redactSecrets(JSON.stringify({

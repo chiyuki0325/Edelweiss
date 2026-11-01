@@ -5,7 +5,7 @@ import type { Logger } from '@guiiai/logg';
 
 import type { ImApiInvoker } from './im-api/types';
 import type { SkillInfo } from './skills';
-import { createAdvancedImApiTool, createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
+import { createAdvancedImApiTool, createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool, withToolResultLimit } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { DriverSignal, TurnCapabilities, TurnState } from './turn-state';
 import type { PlatformAdapter } from './types';
@@ -128,12 +128,12 @@ export const createToolsForCapabilities = (
   const createWebTools = (): CahciuaTool[] => [
     ...(capabilities.canUseWebSearch ? [createWebSearchTool(chatConfig.tools.webSearch.tavilyKey)] : []),
     ...(capabilities.canUseWebFetch && chatConfig.tools.webFetch
-      ? [createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch, {
+      ? [withToolResultLimit(createWebFetchTool(createWebFetcher(chatConfig.tools.webFetch, {
           ...(deps.fetchInstantView ? { instantView: { fetch: deps.fetchInstantView } } : {}),
           onInstantViewError: (error, url) => {
             log.withError(error).withFields({ url }).warn('Instant View fetch failed; falling back to Jina');
           },
-        }))]
+        })))]
       : []),
   ];
 
@@ -209,12 +209,12 @@ export const createToolsForCapabilities = (
 
   const createAdvancedImApiTools = (): CahciuaTool[] =>
     capabilities.canUseAdvancedImApi && deps.imApi
-      ? [createAdvancedImApiTool({
+      ? [withToolResultLimit(createAdvancedImApiTool({
           platform: chatConfig.platform,
           chatId,
           invoker: deps.imApi,
           log,
-        })]
+        }))]
       : [];
 
   return [

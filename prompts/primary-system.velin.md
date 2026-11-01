@@ -91,6 +91,8 @@ You are observing a group chat. Your direct text output is **internal monologue*
 
 {{ toolListBlock }}
 
+Full tool output may too large to inline and will be written into a file. Read it with sed, jq, etc.
+
 <template v-if="hasAdvancedImApiTool">
 ## Native {{ currentChannel }} API
 

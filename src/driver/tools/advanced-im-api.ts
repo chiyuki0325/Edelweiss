@@ -6,7 +6,6 @@ import { getImApiPlatformInfo } from '../im-api/descriptions';
 import {
   assertImApiMethod,
   assertSafeImApiParams,
-  DEFAULT_MAX_RESULT_CHARS,
   formatImApiError,
   formatImApiResult,
   withDefaultTarget,
@@ -18,13 +17,11 @@ export interface AdvancedImApiToolDeps {
   chatId: string;
   invoker: ImApiInvoker;
   log: Logger;
-  maxResultChars?: number;
 }
 
 export const createAdvancedImApiTool = (deps: AdvancedImApiToolDeps): CahciuaTool => {
   const { platform, chatId, invoker, log } = deps;
   const info = getImApiPlatformInfo(platform);
-  const maxResultChars = deps.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
 
   return createTool({
     name: 'advanced_im_api',
@@ -53,7 +50,7 @@ export const createAdvancedImApiTool = (deps: AdvancedImApiToolDeps): CahciuaToo
         const safeParams = assertSafeImApiParams(params ?? {});
         const targetedParams = withDefaultTarget(platform, chatId, method, safeParams);
         const data = await invoker.invoke(method, targetedParams);
-        const content = formatImApiResult({ ok: true, platform, method, data }, maxResultChars);
+        const content = formatImApiResult({ ok: true, platform, method, data });
         log.withFields({
           platform,
           method,

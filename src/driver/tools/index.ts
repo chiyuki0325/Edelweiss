@@ -18,6 +18,8 @@ export { createReadImageTool } from './read-image';
 export { createAskForImageTool } from './ask-for-image';
 export { createSleepTool } from './sleep';
 export { createEnterFocusTool } from './focus-mode';
+export { limitToolOutput, TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_LINES, withToolResultLimit } from './result-limit';
+export type { ToolResultLimitOptions } from './result-limit';
 
 export { executePreparedToolCall, executeToolCall, extractLoadedSkillNames, extractToolCalls, prepareToolCall } from './execution';
 export type { PreparedToolCall, PrepareToolCallResult } from './execution';
