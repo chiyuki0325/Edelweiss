@@ -76,6 +76,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
     },
     tools: {
       enableAdvancedApi: false,
+      recordStaySilentReason: true,
       bash: {
         backgroundThresholdSec: 30,
         compactOutput: false,

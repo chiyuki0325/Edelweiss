@@ -591,6 +591,8 @@ The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be
 
 Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles are passed to `collectRecentSendMessageAssessments()`, while `notErshi` is passed to `createSendMessageTool()`.
 
+`tools.recordStaySilentReason` is a separate per-chat switch (default `true`) that includes the `reason` parameter in the `stay_silent` tool schema. It is useful for models whose chain-of-thought is encrypted, since the recorded reason restores some observability; leave it off for models with an open chain-of-thought.
+
 ### Unified API Layer
 
 `src/unified-api/` provides a provider-agnostic intermediate representation (IR) for all LLM interactions. This decouples TR storage from provider wire formats.

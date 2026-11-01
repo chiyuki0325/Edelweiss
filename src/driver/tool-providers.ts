@@ -94,7 +94,7 @@ export const createToolsForCapabilities = (
     }
     tools.push(createEnterFocusTool({ focusMode: deps.focusMode, getActiveTurn: deps.getActiveTurn }));
     if (capabilities.canDismissMessage)
-      tools.push(createStaySilentTool());
+      tools.push(createStaySilentTool(chatConfig.tools.recordStaySilentReason));
     return tools;
   };
 

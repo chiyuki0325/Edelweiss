@@ -107,6 +107,7 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
   },
   tools: {
     enableAdvancedApi: false,
+    recordStaySilentReason: true,
     bash: {
       backgroundThresholdSec: 30,
       compactOutput: false,

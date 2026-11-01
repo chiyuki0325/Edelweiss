@@ -94,6 +94,10 @@ chats:
       #     tools:
       #       enableAdvancedApi: true
       enableAdvancedApi: false
+      # include the reason parameter in the stay_silent tool schema (default true).
+      # Some models use encrypted chain-of-thought; enabling this improves observability.
+      # Not recommended for models with an open chain-of-thought.
+      # recordStaySilentReason: true
       # bash:
       #   backgroundThresholdSec: 10               # timeout threshold above which bash runs as background task
       #   compactOutput: false                     # pipe output through rtk for token savings (requires rtk in PATH)
