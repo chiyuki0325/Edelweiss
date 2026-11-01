@@ -110,6 +110,55 @@ describe('fromGramjsMessage', () => {
       isAutomaticForward: true,
     });
   });
+
+  it('adapts MessageMediaWebPage into link preview metadata', () => {
+    const message = new Api.Message({
+      id: 1,
+      peerId: new Api.PeerChannel({ channelId: bigInt(123) }),
+      date: 1_700_000_000,
+      message: 'https://example.com/article',
+      media: new Api.MessageMediaWebPage({
+        webpage: new Api.WebPage({
+          id: bigInt(1),
+          url: 'https://example.com/article',
+          displayUrl: 'example.com/article',
+          hash: 0,
+          type: 'article',
+          siteName: 'Example',
+          title: 'Example Article',
+          description: 'A short description.',
+        }),
+      }),
+    });
+
+    expect(fromGramjsMessage(message).linkPreview).toEqual({
+      url: 'https://example.com/article',
+      displayUrl: 'example.com/article',
+      siteName: 'Example',
+      title: 'Example Article',
+      description: 'A short description.',
+      kind: 'article',
+    });
+  });
+
+  it('skips a web page preview with no metadata', () => {
+    const message = new Api.Message({
+      id: 1,
+      peerId: new Api.PeerChannel({ channelId: bigInt(123) }),
+      date: 1_700_000_000,
+      message: 'https://example.com/article',
+      media: new Api.MessageMediaWebPage({
+        webpage: new Api.WebPage({
+          id: bigInt(1),
+          url: 'https://example.com/article',
+          displayUrl: 'example.com/article',
+          hash: 0,
+        }),
+      }),
+    });
+
+    expect(fromGramjsMessage(message).linkPreview).toBeUndefined();
+  });
 });
 
 describe('mergeTelegramMessageData', () => {

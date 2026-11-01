@@ -213,6 +213,68 @@ describe('render', () => {
     });
   });
 
+  describe('link previews', () => {
+    const preview = (overrides?: Partial<Extract<ContentNode, { type: 'link_preview' }>>): ContentNode => ({
+      type: 'link_preview',
+      url: 'https://example.com/article',
+      displayUrl: 'example.com/article',
+      siteName: 'Example',
+      title: 'Example Article',
+      description: 'A short description.',
+      kind: 'article',
+      ...overrides,
+    });
+
+    it('renders preview metadata as a separate XML element without the URL', () => {
+      const result = xml(render(ic([message({
+        content: [{ type: 'text', text: 'read this' }, preview()],
+      })])));
+
+      expect(result).toContain('read this\n<link-preview site="Example" title="Example Article">A short description.</link-preview>');
+      expect(result).not.toContain('https://example.com/article');
+      expect(result).not.toContain('display_url');
+      expect(result).not.toContain('type="article"');
+    });
+
+    it('renders a preview without a description as self-closing', () => {
+      const result = xml(render(ic([message({
+        content: [preview({ description: undefined, title: undefined })],
+      })])));
+
+      expect(result).toContain('<link-preview site="Example"/>');
+    });
+
+    it('omits a preview with no renderable metadata instead of emitting an empty tag', () => {
+      const result = xml(render(ic([message({
+        content: [preview({ siteName: undefined, title: undefined, description: undefined })],
+      })])));
+
+      expect(result).not.toContain('<link-preview');
+      expect(result).not.toContain('/>');
+    });
+
+    it('escapes preview metadata', () => {
+      const result = xml(render(ic([message({
+        content: [preview({ title: 'A "B" <C>', description: '<script>' })],
+      })])));
+
+      expect(result).toContain('title="A &quot;B&quot; &lt;C&gt;"');
+      expect(result).toContain('&lt;script&gt;');
+    });
+
+    it('omits preview metadata from reply excerpts', () => {
+      const result = xml(render(ic([message({
+        content: [{ type: 'text', text: 'reply' }],
+        replyToMessageId: '41',
+        replyToContent: [{ type: 'text', text: 'original' }, preview()],
+        replyToPreview: 'original',
+      })])));
+
+      expect(result).toContain('<in-reply-to id="41">original</in-reply-to>');
+      expect(result).not.toContain('Example Article');
+    });
+  });
+
   describe('XML escaping', () => {
     it('escapes text content', () => {
       const content: ContentNode[] = [{ type: 'text', text: '<script>alert("xss")</script>' }];

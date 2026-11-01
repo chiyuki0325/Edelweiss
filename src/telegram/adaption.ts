@@ -10,7 +10,7 @@ import type {
   ContentNode,
   ServiceAction,
 } from '../adaption-types';
-import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from './message';
+import type { Attachment, ForwardInfo, LinkPreview, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramReactionUpdate, TelegramUser } from './message';
 
 export const SPOILER_IMAGE_ALT_TEXT = 'Spoiler image hidden. Use read_image with this attachment file-id to view it when needed.';
 
@@ -189,8 +189,23 @@ export const contentToPlainText = (nodes: ContentNode[]): string =>
   nodes.map(node => {
     if (node.type === 'forward')
       return node.messages.map(message => contentToPlainText(message.content)).join('\n');
+    if (node.type === 'link_preview')
+      return [node.title, node.description].filter(Boolean).join('\n') || node.url;
     return 'children' in node ? contentToPlainText(node.children) : node.text;
   }).join('');
+
+const appendLinkPreview = (content: ContentNode[], preview?: LinkPreview): ContentNode[] => {
+  if (!preview) return content;
+  return [...content, {
+    type: 'link_preview',
+    url: preview.url,
+    ...preview.displayUrl && { displayUrl: preview.displayUrl },
+    ...preview.siteName && { siteName: preview.siteName },
+    ...preview.title && { title: preview.title },
+    ...preview.description && { description: preview.description },
+    ...preview.kind && { kind: preview.kind },
+  }];
+};
 
 // --- Adapt functions ---
 
@@ -206,7 +221,7 @@ export const adaptMessage = (msg: TelegramMessage, botUserId?: string): Canonica
     receivedAtMs,
     timestampSec: msg.date,
     utcOffsetMin,
-    content: parseContent(msg.text, msg.entities),
+    content: appendLinkPreview(parseContent(msg.text, msg.entities), msg.linkPreview),
     attachments: adaptAttachments(msg.attachments),
   };
   if (msg.sender) event.sender = adaptUser(msg.sender);
@@ -229,7 +244,7 @@ export const adaptEdit = (edit: TelegramMessageEdit): CanonicalEditEvent => {
     receivedAtMs,
     timestampSec: edit.editDate,
     utcOffsetMin,
-    content: parseContent(edit.text, edit.entities),
+    content: appendLinkPreview(parseContent(edit.text, edit.entities), edit.linkPreview),
     attachments: adaptAttachments(edit.attachments),
   };
   if (edit.sender) event.sender = adaptUser(edit.sender);

@@ -62,6 +62,17 @@ const fencedCode = (text: string, language?: string): string => {
   return `${fence}${safeLanguage}\n${escapeXml(text)}\n${fence}`;
 };
 
+const renderLinkPreview = (node: Extract<ContentNode, { type: 'link_preview' }>): string => {
+  // The message body already carries the link itself as Markdown, so the
+  // preview only contributes the metadata the model cannot see there.
+  const attrs: string[] = [];
+  if (node.siteName) attrs.push(`site="${escapeXml(node.siteName)}"`);
+  if (node.title) attrs.push(`title="${escapeXml(node.title)}"`);
+  if (attrs.length === 0 && !node.description) return '';
+  const open = attrs.length > 0 ? `<link-preview ${attrs.join(' ')}` : '<link-preview';
+  return node.description ? `${open}>${escapeXml(node.description)}</link-preview>` : `${open}/>`;
+};
+
 const renderContentNode = (node: ContentNode): string => {
   switch (node.type) {
   case 'text': return escapeMarkdownText(node.text);
@@ -77,6 +88,7 @@ const renderContentNode = (node: ContentNode): string => {
     .map(line => `> ${line}`)
     .join('\n');
   case 'link': return `[${renderContent(node.children)}](${escapeXml(node.url.replace(/([\\()])/g, '\\$1'))})`;
+  case 'link_preview': return renderLinkPreview(node);
   case 'mention': return renderContent(node.children);
   case 'face': return escapeMarkdownText(node.text);
   case 'custom_emoji':
@@ -171,14 +183,23 @@ const renderMessage = (msg: ICMessage, params: RenderParams): { content: Rendere
     const replyAttrs = [`id="${escapeXml(msg.replyToMessageId)}"`];
     if (msg.replyToSender) replyAttrs.push(`sender="${escapeXml(formatSender(msg.replyToSender, params.contactNames))}"`);
     if (msg.replyQuoteText != null) replyAttrs.push(`quote="${escapeXml(msg.replyQuoteText)}"`);
-    const preview = msg.replyToContent
-      ? truncateRenderedContent(renderContent(msg.replyToContent), REPLY_PREVIEW_MAX_CHARS)
-      : (msg.replyToPreview ? escapeXml(msg.replyToPreview) : '');
+    const replyContent = msg.replyToContent?.filter(node => node.type !== 'link_preview');
+    let preview = '';
+    if (replyContent && replyContent.length > 0)
+      preview = truncateRenderedContent(renderContent(replyContent), REPLY_PREVIEW_MAX_CHARS);
+    else if (msg.replyToPreview)
+      preview = escapeXml(msg.replyToPreview);
     parts.push(`<in-reply-to ${replyAttrs.join(' ')}>${preview}</in-reply-to>`);
   }
 
-  const body = renderContent(msg.content);
+  const body = renderContent(msg.content.filter(node => node.type !== 'link_preview'));
   if (body) parts.push(body);
+
+  for (const node of msg.content) {
+    if (node.type !== 'link_preview') continue;
+    const rendered = renderLinkPreview(node);
+    if (rendered) parts.push(rendered);
+  }
 
   for (let i = 0; i < msg.attachments.length; i++)
     parts.push(renderAttachment(msg.attachments[i]!, msg.messageId, i));

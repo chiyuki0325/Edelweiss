@@ -248,6 +248,20 @@ describe('contentToPlainText', () => {
     ];
     expect(contentToPlainText(nodes)).toBe('foo() and bar()');
   });
+
+  it('uses link preview title and description as plain text', () => {
+    const nodes: ContentNode[] = [
+      { type: 'link_preview', url: 'https://example.com', title: 'Example', description: 'Summary' },
+    ];
+    expect(contentToPlainText(nodes)).toBe('Example\nSummary');
+  });
+
+  it('falls back to the link preview URL when no title or description exists', () => {
+    const nodes: ContentNode[] = [
+      { type: 'link_preview', url: 'https://example.com' },
+    ];
+    expect(contentToPlainText(nodes)).toBe('https://example.com');
+  });
 });
 
 // --- adaptMessage ---
@@ -283,6 +297,30 @@ describe('adaptMessage', () => {
   it('preserves the associated-channel marker for the prompt pipeline', () => {
     const event = adaptMessage(baseTelegramMessage({ isAssociatedChannelPost: true }));
     expect(event.isAssociatedChannelPost).toBe(true);
+  });
+
+  it('appends link preview metadata as a content node', () => {
+    const event = adaptMessage(baseTelegramMessage({
+      text: 'look at this https://example.com/article',
+      linkPreview: {
+        url: 'https://example.com/article',
+        displayUrl: 'example.com/article',
+        siteName: 'Example',
+        title: 'Example Article',
+        description: 'A short description.',
+        kind: 'article',
+      },
+    }));
+
+    expect(event.content.at(-1)).toEqual({
+      type: 'link_preview',
+      url: 'https://example.com/article',
+      displayUrl: 'example.com/article',
+      siteName: 'Example',
+      title: 'Example Article',
+      description: 'A short description.',
+      kind: 'article',
+    });
   });
 
   it('adapts sender with firstName + lastName → displayName', () => {
@@ -435,6 +473,18 @@ describe('adaptEdit', () => {
       sender: { id: '1', firstName: 'Bob', isBot: false, isPremium: false },
     });
     expect(event.sender?.displayName).toBe('Bob');
+  });
+
+  it('appends link preview metadata as a content node', () => {
+    const event = adaptEdit({
+      ...baseEdit,
+      linkPreview: { url: 'https://example.com', title: 'Example' },
+    });
+    expect(event.content.at(-1)).toEqual({
+      type: 'link_preview',
+      url: 'https://example.com',
+      title: 'Example',
+    });
   });
 });
 

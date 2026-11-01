@@ -19,6 +19,17 @@ export interface ForwardInfo {
   date?: number;
 }
 
+// Link preview metadata resolved by Telegram's server-side crawler. Only the
+// userbot (MTProto) path receives this; the Bot API exposes just preview options.
+export interface LinkPreview {
+  url: string;
+  displayUrl?: string;
+  siteName?: string;
+  title?: string;
+  description?: string;
+  kind?: string; // Telegram webpage type: article, video, photo, etc.
+}
+
 export interface Attachment {
   type: 'photo' | 'sticker' | 'document' | 'video' | 'audio' | 'voice' | 'video_note' | 'animation';
 
@@ -90,6 +101,7 @@ export interface TelegramMessage {
   mediaGroupId?: string;
   viaBotId?: string;
   reactions?: Record<string, number>;
+  linkPreview?: LinkPreview;
   attachments?: Attachment[];
   source: 'bot' | 'userbot';
 
@@ -117,6 +129,7 @@ export interface TelegramMessageEdit {
   text: string;
   entities?: MessageEntity[];
   replyToMessageId?: number;
+  linkPreview?: LinkPreview;
   attachments?: Attachment[];
   receivedAtMs?: number;
   utcOffsetMin?: number;

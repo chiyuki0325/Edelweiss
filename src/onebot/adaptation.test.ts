@@ -161,6 +161,75 @@ describe('adaptOneBotMessage', () => {
     expect(adapted.sender?.displayName).toBe('好友列表备注');
   });
 
+  it('adapts a shared-link news card into a link plus link preview', async () => {
+    const api = { getFriendRemark: vi.fn(async () => undefined) } as unknown as OneBotApiClient;
+    const card = {
+      app: 'com.tencent.structmsg',
+      view: 'news',
+      prompt: '[分享]示例文章',
+      meta: {
+        news: {
+          jumpUrl: 'https://b23.tv/stTsJEU',
+          title: '示例文章',
+          desc: '来自哔哩哔哩',
+          tag: '哔哩哔哩',
+          preview: 'https://example.com/preview.jpg',
+        },
+      },
+    };
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 999,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'json', data: { data: JSON.stringify(card) } }],
+      raw_message: '[分享]示例文章',
+      sender: { user_id: 42, nickname: 'sender' },
+    };
+
+    const adapted = await adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 });
+
+    expect(adapted.content).toEqual([
+      { type: 'link', url: 'https://b23.tv/stTsJEU', children: [{ type: 'text', text: '示例文章' }] },
+      {
+        type: 'link_preview',
+        url: 'https://b23.tv/stTsJEU',
+        siteName: '哔哩哔哩',
+        title: '示例文章',
+        description: '来自哔哩哔哩',
+      },
+    ]);
+  });
+
+  it('keeps non-news JSON cards on the rich path', async () => {
+    const api = { getFriendRemark: vi.fn(async () => undefined) } as unknown as OneBotApiClient;
+    const card = {
+      app: 'com.tencent.structmsg',
+      prompt: '[QQ小程序]示例',
+      meta: { detail_1: { title: '哔哩哔哩', desc: '示例', url: 'm.q.qq.com/a/s/example' } },
+    };
+    const event: OneBotMessageEvent = {
+      post_type: 'message',
+      message_type: 'group',
+      time: 1,
+      self_id: 999,
+      user_id: 42,
+      group_id: 100,
+      message_id: 7,
+      message: [{ type: 'json', data: { data: JSON.stringify(card) } }],
+      raw_message: '[QQ小程序]示例',
+      sender: { user_id: 42, nickname: 'sender' },
+    };
+
+    const adapted = await adaptOneBotMessage(api, event, { receivedAtMs: 1000, utcOffsetMin: 480 });
+
+    expect(adapted.content).toHaveLength(1);
+    expect(adapted.content[0]?.type).toBe('rich');
+  });
+
   it('does not fetch the temporary URL for ordinary images', async () => {
     const fetchMock = vi.fn(async () => {
       throw Object.assign(new TypeError('fetch failed'), {

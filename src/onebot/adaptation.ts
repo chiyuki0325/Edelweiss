@@ -108,7 +108,7 @@ const adaptSegment = async (
   seg: OneBotMessageSegment,
   attachments: CanonicalAttachment[],
   options: OneBotAdaptationOptions,
-): Promise<ContentNode | null> => {
+): Promise<ContentNode | ContentNode[] | null> => {
   switch (seg.type) {
   case 'text':
     return { type: 'text', text: seg.data.text };
@@ -191,6 +191,28 @@ const adaptSegment = async (
 
   case 'json': {
     const card = JSON.parse(seg.data.data);
+
+    // NTQQ turns shared links into a "com.tencent.structmsg" news card. The
+    // card carries the crawl result directly, so no separate fetch is needed.
+    const news = card?.app === 'com.tencent.structmsg' ? card?.meta?.news : undefined;
+    if (news && typeof news === 'object' && typeof news.jumpUrl === 'string' && news.jumpUrl) {
+      const title = nonBlank(news.title);
+      const description = nonBlank(news.desc);
+      const siteName = nonBlank(news.tag);
+      return [
+        // The card message has no body text of its own, so surface the target
+        // as a Markdown link; the preview node only adds the remaining metadata.
+        { type: 'link', url: news.jumpUrl, children: [{ type: 'text', text: title ?? news.jumpUrl }] },
+        {
+          type: 'link_preview',
+          url: news.jumpUrl,
+          ...siteName && { siteName },
+          ...title && { title },
+          ...description && { description },
+        },
+      ];
+    }
+
     const strip = (obj: any): any => {
       if (obj === null || typeof obj !== 'object') return;
 
@@ -263,7 +285,10 @@ const adaptForward = async (
       if (seg.type === 'reply') continue;
       const before = attachments.length;
       const node = await adaptSegment(api, chatId, seg, attachments, options);
-      if (node) content.push(node.type === 'rich' ? { type: 'text', text: node.text } : node);
+      if (node) {
+        for (const child of Array.isArray(node) ? node : [node])
+          content.push(child.type === 'rich' ? { type: 'text', text: child.text } : child);
+      }
       if (attachments.length > before) content.push({ type: 'text', text: '[附件见本消息末尾]' });
     }
     entries.push({ ...(senderId != null && { senderId: String(senderId) }), senderName, content });
@@ -295,7 +320,7 @@ export const adaptOneBotMessage = async (
       continue;
     }
     const node = await adaptSegment(api, chatId, seg, attachments, options);
-    if (node) content.push(node);
+    if (node) content.push(...Array.isArray(node) ? node : [node]);
   }
 
   const result: CanonicalMessageEvent = {

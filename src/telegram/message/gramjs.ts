@@ -1,6 +1,6 @@
 import { Api } from 'telegram';
 
-import type { Attachment, ForwardInfo, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from './types';
+import type { Attachment, ForwardInfo, LinkPreview, MessageEntity, TelegramMessage, TelegramMessageDelete, TelegramMessageEdit, TelegramUser } from './types';
 
 // --- peer → chatId ---
 
@@ -114,6 +114,25 @@ const convertGramjsMedia = (media?: Api.TypeMessageMedia): Attachment[] | undefi
 
 const reactionToEmoji = (reaction: Api.TypeReaction): string | undefined =>
   reaction instanceof Api.ReactionEmoji ? reaction.emoticon : undefined;
+
+// Telegram resolves the preview server-side and attaches it as MessageMediaWebPage.
+// Messages whose preview is still pending, disabled, or blank carry no useful
+// metadata; skip them instead of emitting a bare URL that duplicates the text.
+const convertGramjsLinkPreview = (media?: Api.TypeMessageMedia): LinkPreview | undefined => {
+  if (!(media instanceof Api.MessageMediaWebPage) || !(media.webpage instanceof Api.WebPage)) return undefined;
+
+  const { url, displayUrl, siteName, title, description, type } = media.webpage;
+  if (!title && !description && !siteName) return undefined;
+
+  return {
+    url,
+    ...displayUrl && displayUrl !== url && { displayUrl },
+    ...siteName && { siteName },
+    ...title && { title },
+    ...description && { description },
+    ...type && { kind: type },
+  };
+};
 
 const convertGramjsReactions = (reactions?: Api.TypeMessageReactions): Record<string, number> | undefined => {
   if (!reactions || !(reactions instanceof Api.MessageReactions)) return undefined;
@@ -292,6 +311,7 @@ const convertGramjsMessageBase = (message: Api.Message, senderInfo?: TelegramUse
     replyToMessageId: replyTo?.replyToMsgId,
     replyToTopId: replyTo?.replyToTopId,
     replyQuoteText: (replyTo?.quote === true) ? replyTo.quoteText : undefined,
+    linkPreview: convertGramjsLinkPreview(message.media),
     attachments: convertGramjsMedia(message.media),
   };
 };

@@ -37,6 +37,7 @@ export type ContentNode =
   | { type: 'spoiler'; children: ContentNode[] }
   | { type: 'blockquote'; children: ContentNode[] }
   | { type: 'link'; url: string; children: ContentNode[] }
+  | { type: 'link_preview'; url: string; displayUrl?: string; siteName?: string; title?: string; description?: string; kind?: string }
   | { type: 'mention'; userId?: string; children: ContentNode[] }
   | { type: 'custom_emoji'; customEmojiId: string; children: ContentNode[]; altText?: string; altTextError?: string; stickerSetName?: string }
   | { type: 'face'; faceId: string; text: string }  // OneBot face

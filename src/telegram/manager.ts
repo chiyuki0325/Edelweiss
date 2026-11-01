@@ -352,12 +352,13 @@ export const createTelegramManager = (
     const key = `${msg.chatId}:${msg.messageId}`;
 
     if (!dedup.tryAdd(msg.chatId, msg.messageId)) {
-      // Second arrival — if bot version, merge richer Bot API metadata into
-      // the in-flight userbot message while preserving any userbot-only fields.
-      if (msg.source === 'bot') {
-        const existing = inflight.get(key);
-        if (existing) mergeTelegramMessageData(existing, msg);
-      }
+      // Second arrival — merge whichever side has richer data into the in-flight
+      // message. The Bot API carries richer sender/attachment metadata, while
+      // MTProto is the only source that resolves link previews.
+      const existing = inflight.get(key);
+      if (!existing) return;
+      if (msg.source === 'bot') mergeTelegramMessageData(existing, msg);
+      else existing.linkPreview ??= msg.linkPreview;
       return;
     }
 
