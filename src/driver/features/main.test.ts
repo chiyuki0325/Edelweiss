@@ -73,6 +73,8 @@ const createDeps = (): MainTurnFeatureDeps => ({
       markdownHeader: false,
       newline: false,
       notErshi: false,
+      notQueshi: false,
+      reducePersonaWords: {},
     },
     tools: {
       enableAdvancedApi: false,

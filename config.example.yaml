@@ -86,6 +86,10 @@ chats:
     #   markdownHeader: true          # flag Markdown headers
     #   newline: true                 # flag any newline in a send_message
     #   notErshi: true                # reject rigid 不是…而是… / 是…不是… / 不是…是… drafts for regeneration
+    #   notQueshi: true               # reject drafts containing 确实 for semantic review
+    #   reducePersonaWords:           # remind when a word appears this many times across the recent 5 send_message messages
+    #     棉花: 2
+    #     爪子: 2
     # Tools: configuration for enabled tools.
     tools:
       # enable advanced_im_api = raw Telegram Bot API / OneBot 11 access for this chat.

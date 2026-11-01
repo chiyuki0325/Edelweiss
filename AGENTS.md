@@ -165,6 +165,7 @@ src/
 │   │   ├── types.ts          # CahciuaTool, ToolResult, createTool, SendMessageAttachment, SendMessageTurnFlags
 │   │   ├── bash.ts           # createBashTool + built-in pseudo commands (chat_info, skill_info)
 │   │   ├── send-message.ts   # createSendMessageTool
+│   │   ├── send-message-speech-tics.ts # Per-turn send-boundary speech-tic reviews (“确实” agreement review, rigid contrast regeneration)
 │   │   ├── advanced-im-api.ts # createAdvancedImApiTool (per-platform raw Bot API / OneBot 11 access)
 │   │   ├── web-search.ts     # createWebSearchTool (Tavily)
 │   │   ├── web-fetch.ts      # createWebFetchTool
@@ -182,7 +183,7 @@ src/
 │   │   ├── execution.ts      # extractToolCalls, extractLoadedSkillNames, executeToolCall
 │   │   ├── index.ts          # Barrel re-exports
 │   │   └── index.test.ts     # Tool unit tests
-│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (6 configurable checks)
+│   ├── send-message-human-likeness.ts # Heuristics for recent send_message human-likeness feedback (6 configurable checks + persona-word thresholds)
 │   ├── send-message-human-likeness.test.ts # Human-likeness heuristic tests
 │   ├── turn-state.ts      # Explicit ChatScope / SchedulerState / TurnState / capability types for driver turn-loop refactors
 │   ├── turn-state.test.ts # Driver turn/scheduler default-state tests
@@ -571,13 +572,15 @@ The following optimizations are always active in `composeContext()` (operates on
 - **trimToolResults**: Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with non-low detail. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded.
 - **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for the 256-byte limit, `agreement_review_required`, and `contrast_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
 
-`send_message` intercepts the first draft per turn containing “确实” and returns `agreement_review_required`. This is a request for semantic review, not a declaration that the whole draft is meaningless: the model must remove only acknowledgement wording and preserve substantive content, or use `react_message` when the draft only agrees. The factory receives the already-resolved reaction capability as a boolean; no TurnState, RC, or persistence schema fields are added. If the rejected call supplied `reply_to`, that id is returned as the suggested reaction target; otherwise the model chooses from message ids already present in rendered chat context. OneBot receives the silent fallback and never sees Telegram reaction instructions.
+The send-boundary speech-tic guard in `send-message-speech-tics.ts` intercepts the first draft per turn containing “确实” and returns `agreement_review_required` when `humanLikeness.notQueshi` is enabled (the default). This is a request for semantic review, not a declaration that the whole draft is meaningless: the model must remove only acknowledgement wording and preserve substantive content, or use `react_message` when the draft only agrees. The factory receives the already-resolved reaction capability as a boolean; no TurnState, RC, or persistence schema fields are added. If the rejected call supplied `reply_to`, that id is returned as the suggested reaction target; otherwise the model chooses from message ids already present in rendered chat context. OneBot receives the silent fallback and never sees Telegram reaction instructions.
 
-When `humanLikeness.notErshi` is enabled (the default), the same send boundary intercepts the first draft per turn matching a short “不是…而是…”, “是…不是…”, or “不是…是…” contrast template and returns `contrast_review_required`. The response says the transition may be meaningless rather than assuming all contrasts are invalid: the model must decide whether to preserve the contrast in a more natural form or remove it while regenerating the draft. This toggle controls the send-boundary rejection only; the contrast pattern is not part of recent-message feedback.
+When `humanLikeness.notErshi` is enabled (the default), the same guard intercepts the first draft per turn matching a short “不是…而是…”, “是…不是…”, or “不是…是…” contrast template and returns `contrast_review_required`. The response says the transition may be meaningless rather than assuming all contrasts are invalid: the model must decide whether to preserve the contrast in a more natural form or remove it while regenerating the draft. This toggle controls the send-boundary rejection only; the contrast pattern is not part of recent-message feedback. When the turn is in focus mode (`turnFlags.inFocusMode`), the speech-tic guard is skipped entirely, matching the 256-byte limit bypass.
 
 ### Human-Likeness Heuristic Toggles
 
-The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling one of those checks removes it from both detection and the late-binding XML feedback. `humanLikeness.notErshi` is a seventh key that controls the separate send-boundary contrast filter.
+The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling one of those checks removes it from both detection and the late-binding XML feedback. `humanLikeness.notErshi` and `humanLikeness.notQueshi` are separate keys that control the two send-boundary filters.
+
+`humanLikeness.reducePersonaWords` is a word → threshold map. The window aggregates total occurrences of each configured word across the recent 5 successful `send_message` drafts; when the total reaches the configured threshold, the XML feedback emits a `persona-word:<word>` feature. Unlike the six message-level checks, this count is not limited to one hit per message.
 
 | Config key | Check | Default |
 |------------|-------|---------|
@@ -588,8 +591,10 @@ The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be
 | `humanLikeness.markdownHeader` | Markdown header | `true` |
 | `humanLikeness.newline` | Any newline in a send_message | `true` |
 | `humanLikeness.notErshi` | Send-boundary regeneration for rigid “不是…而是…”, “是…不是…”, and “不是…是…” templates | `true` |
+| `humanLikeness.notQueshi` | Send-boundary semantic review for drafts containing “确实” | `true` |
+| `humanLikeness.reducePersonaWords` | Word → occurrence threshold map; report persona words once the window total is reached | `{}` |
 
-Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles are passed to `collectRecentSendMessageAssessments()`, while `notErshi` is passed to `createSendMessageTool()`.
+Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles and `reducePersonaWords` are passed to `collectRecentSendMessageAssessments()`, while `notErshi` and `notQueshi` are passed to `createSendMessageTool()`.
 
 `tools.recordStaySilentReason` is a separate per-chat switch (default `true`) that includes the `reason` parameter in the `stay_silent` tool schema. It is useful for models whose chain-of-thought is encrypted, since the recorded reason restores some observability; leave it off for models with an open chain-of-thought.
 
@@ -866,6 +871,6 @@ Co-Authored-By: Model Name <coding agent email>
 
 For Claude Code, each commit message must end with a `Co-Authored-By` trailer. The model name should refer to the runtime environment prompts `You are powered by the model <actual model name>`, and should not be assumed to be `Claude Opus 4.8`.
 
-For Codex, each commit message must also end with a `Co-Authored-By` trailer, using the current Codex model identity. For example: `Co-Authored-By: GPT-5.5 <codex@openai.com>`
+For Codex, each commit message must also end with a `Co-Authored-By` trailer, using the current  end with a `Co-Authored-By` trailer, using the current Codex model identity. For example: `Co-Authored-By: GPT-5.5 <codex@openai.com>`
 
 If this is a port commit, add `Ported from (original repo name) (short commit hash).` after body. For example: `Ported from Cahciua 246d069.` Also. use `--author` to keep original author.

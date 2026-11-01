@@ -15,6 +15,7 @@ export const createHumanLikenessFeature = (deps: MainTurnFeatureDeps): DriverFea
         RECENT_SEND_MESSAGE_WINDOW,
         deps.chatConfig.humanLikeness,
       ),
+      deps.chatConfig.humanLikeness.reducePersonaWords,
     );
   },
 });

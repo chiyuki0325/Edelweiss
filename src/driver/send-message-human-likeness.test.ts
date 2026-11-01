@@ -124,4 +124,35 @@ describe('send-message-human-likeness', () => {
     expect(rendered).toContain('dense-clause-punctuation');
     expect(rendered).toContain('<guidance>If those patterns were intentional');
   });
+
+  it('counts configured persona words across the recent window', () => {
+    const collected = collectRecentSendMessageAssessments([
+      tr(1000, [sendCall('tc1', '棉花真好'), okResult('tc1', '1')]),
+      tr(2000, [sendCall('tc2', '收起爪子，棉花棉花'), okResult('tc2', '2')]),
+    ], 5, {
+      trailingPeriod: false,
+      denseClausePunctuation: false,
+      multipleMarkdownBold: false,
+      markdownList: false,
+      markdownHeader: false,
+      newline: false,
+      reducePersonaWords: { '棉花': 2, '爪子': 2 },
+    });
+
+    expect(collected.map(message => message.personaWordCounts)).toEqual([
+      { '棉花': 1 },
+      { '棉花': 2, '爪子': 1 },
+    ]);
+  });
+
+  it('reports persona words only after their occurrence threshold is reached', () => {
+    const rendered = renderRecentSendMessageHumanLikenessXml([
+      { text: '棉花', features: [], personaWordCounts: { '棉花': 1 } },
+      { text: '棉花，爪子', features: [], personaWordCounts: { '棉花': 1, '爪子': 1 } },
+      { text: '爪子', features: [], personaWordCounts: { '爪子': 1 } },
+    ], { '棉花': 2, '爪子': 3 });
+
+    expect(rendered).toContain('persona-word:棉花');
+    expect(rendered).not.toContain('persona-word:爪子');
+  });
 });

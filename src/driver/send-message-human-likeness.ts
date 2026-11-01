@@ -12,6 +12,8 @@ export interface HumanLikenessToggles {
   markdownList: boolean;
   markdownHeader: boolean;
   newline: boolean;
+  /** Word → minimum total occurrences across the recent window before it is reported. */
+  reducePersonaWords: Record<string, number>;
 }
 
 const ALL_ENABLED: HumanLikenessToggles = {
@@ -21,6 +23,7 @@ const ALL_ENABLED: HumanLikenessToggles = {
   markdownList: true,
   markdownHeader: true,
   newline: true,
+  reducePersonaWords: {},
 };
 
 export const potentiallyNotHumanFeatureDefinitions = [
@@ -55,6 +58,7 @@ export type PotentiallyNotHumanFeature = typeof potentiallyNotHumanFeatureDefini
 export interface SendMessageHumanLikenessAssessment {
   text: string;
   features: PotentiallyNotHumanFeature[];
+  personaWordCounts?: Record<string, number>;
 }
 
 const MARKDOWN_BOLD_RE = /(?<!\\)(\*\*|__)(?=\S)([\s\S]*?\S)\1/g;
@@ -81,6 +85,18 @@ const isSuccessfulSendMessageResult = (output: string): boolean =>
   parseJsonRecord(output)?.ok === true;
 
 const countMatches = (text: string, re: RegExp): number => [...text.matchAll(re)].length;
+
+const countPersonaWords = (text: string, words: Record<string, number>): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const word of Object.keys(words)) {
+    if (!word)
+      continue;
+    const count = text.split(word).length - 1;
+    if (count > 0)
+      counts[word] = count;
+  }
+  return counts;
+};
 
 const hasTrailingPeriod = (text: string): boolean => {
   const trimmed = text.trim();
@@ -132,7 +148,12 @@ const extractSendMessageAssessments = (entries: ConversationEntry[], toggles: Hu
       if (!successfulCallIds.has(part.callId)) continue;
       const text = extractSendMessageText(part.args);
       if (text == null) continue;
-      assessments.push({ text, features: assessSendMessageHumanLikeness(text, toggles) });
+      const personaWordCounts = countPersonaWords(text, toggles.reducePersonaWords);
+      assessments.push({
+        text,
+        features: assessSendMessageHumanLikeness(text, toggles),
+        ...(Object.keys(personaWordCounts).length > 0 ? { personaWordCounts } : {}),
+      });
     }
   }
   return assessments;
@@ -155,6 +176,7 @@ export const appendRecentSendMessageAssessments = (
 
 export const renderRecentSendMessageHumanLikenessXml = (
   recentMessages: SendMessageHumanLikenessAssessment[],
+  reducePersonaWords: Record<string, number> = {},
 ): string => {
   if (recentMessages.length === 0)
     return '';
@@ -166,7 +188,15 @@ export const renderRecentSendMessageHumanLikenessXml = (
     }))
     .filter(feature => feature.count > 0);
 
-  if (featureCounts.length === 0)
+  const personaWordCounts = Object.entries(reducePersonaWords)
+    .map(([word, threshold]) => ({
+      word,
+      threshold,
+      count: recentMessages.reduce((sum, message) => sum + (message.personaWordCounts?.[word] ?? 0), 0),
+    }))
+    .filter(entry => entry.threshold > 0 && entry.count >= entry.threshold);
+
+  if (featureCounts.length === 0 && personaWordCounts.length === 0)
     return '';
 
   const lines = [
@@ -176,7 +206,10 @@ export const renderRecentSendMessageHumanLikenessXml = (
   for (const feature of featureCounts)
     lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
 
-  lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more human in your next messages.</guidance>');
+  for (const entry of personaWordCounts)
+    lines.push(`<feature>Used “${entry.word}” ${entry.count} times across your recent ${recentMessages.length} messages. This persona word may make you sound like you are performing rigidly ("卖人设") instead of participating in the chat. Reduce usage.</feature>`);
+
+  lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more natural in your next messages.</guidance>');
 
   lines.push('</human-likeness>');
   return lines.join('\n');
