@@ -207,7 +207,7 @@ export const renderRecentSendMessageHumanLikenessXml = (
     lines.push(`<feature name="${feature.name}" count="${feature.count}">${feature.description} Appeared in ${feature.count} of your recent ${recentMessages.length} send_message messages.</feature>`);
 
   for (const entry of personaWordCounts)
-    lines.push(`<feature>Used “${entry.word}” ${entry.count} times across your recent ${recentMessages.length} messages. This persona word may make you sound like you are performing rigidly ("卖人设") instead of participating in the chat. Reduce usage.</feature>`);
+    lines.push(`<feature>Used “${entry.word}” ${entry.count} times across your recent ${recentMessages.length} messages. This persona word may make you sound like you are performing rigidly ("卖人设") instead of participating in the chat. Keep the character tone but reduce usage.</feature>`);
 
   lines.push('<guidance>If those patterns were intentional, do not follow this rigidly. If you agree with the critique, try to sound a bit more natural in your next messages.</guidance>');
 
