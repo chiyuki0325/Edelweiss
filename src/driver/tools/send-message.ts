@@ -17,9 +17,10 @@ export const createSendMessageTool = (
   canReact = false,
   rejectRigidContrast = true,
   rejectQueshi = true,
+  rejectConcession = true,
   options?: SendMessageToolOptions,
 ): CahciuaTool => {
-  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi);
+  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi, rejectConcession);
 
   const properties: Record<string, unknown> = {
     text: { type: 'string', description: 'The message to send. When sending attachments, this becomes the caption.' },

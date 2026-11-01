@@ -87,6 +87,7 @@ chats:
     #   newline: true                 # flag any newline in a send_message
     #   notErshi: true                # reject rigid 不是…而是… / 是…不是… / 不是…是… drafts for regeneration
     #   notQueshi: true               # reject drafts containing 确实 for semantic review
+    #   notRen: true                  # reject bare 我认 / 认栽 concessions for semantic review (认为/认识/认同 stay allowed)
     #   reducePersonaWords:           # remind when a word appears this many times across the recent 5 send_message messages
     #     棉花: 2
     #     爪子: 2

@@ -105,6 +105,7 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     newline: false,
     notErshi: false,
     notQueshi: false,
+    notRen: false,
     reducePersonaWords: {},
   },
   tools: {

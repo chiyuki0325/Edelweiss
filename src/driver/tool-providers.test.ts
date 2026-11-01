@@ -28,6 +28,7 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
       newline: true,
       notErshi: true,
       notQueshi: true,
+      notRen: true,
       reducePersonaWords: {},
     },
     imageToText: { enabled: false, compress: false, pixelBudget: 0, maxContextEstTokens: 200_000 },
@@ -143,6 +144,22 @@ describe('createToolsForCapabilities send routing', () => {
     const result = await tool.execute(
       { text: '确实，这里少传了 abort signal' },
       { toolCallId: 'tc-queshi-disabled' },
+    );
+
+    expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '1' });
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('passes the notRen toggle to the send boundary filter', async () => {
+    const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
+    const toolDeps = deps('telegram', sendMessage);
+    toolDeps.chatConfig.humanLikeness.notRen = false;
+    const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
+      .find(candidate => candidate.function.name === 'send_message')!;
+
+    const result = await tool.execute(
+      { text: '行吧，我认' },
+      { toolCallId: 'tc-ren-disabled' },
     );
 
     expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '1' });

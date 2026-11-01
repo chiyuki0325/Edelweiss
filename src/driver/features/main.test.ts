@@ -74,6 +74,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
       newline: false,
       notErshi: false,
       notQueshi: false,
+      notRen: false,
       reducePersonaWords: {},
     },
     tools: {

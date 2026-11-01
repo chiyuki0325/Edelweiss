@@ -19,6 +19,7 @@ const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
     return parsed.ok === false
       && (parsed.code === 'agreement_review_required'
         || parsed.code === 'contrast_review_required'
+        || parsed.code === 'concession_review_required'
         || (typeof parsed.error === 'string' && parsed.error.includes('too long')));
   } catch {
     return false;
