@@ -2,6 +2,7 @@ export { createTool, isToolResult } from './types';
 export type { CahciuaTool, CahciuaToolExecuteOptions, SendMessageAttachment, SendMessageTurnFlags, ToolExecutionLane, ToolExecutionPolicy, ToolResult } from './types';
 
 export { createAttachmentDownloader } from './attachment-downloader';
+export { createAdvancedImApiTool } from './advanced-im-api';
 export { createSendMessageTool } from './send-message';
 export { createBashTool, executePseudoCommand } from './bash';
 export type { PseudoCommandContext, PseudoCommandResult } from './bash';

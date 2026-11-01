@@ -75,6 +75,7 @@ const createDeps = (): MainTurnFeatureDeps => ({
       notErshi: false,
     },
     tools: {
+      enableAdvancedApi: false,
       bash: {
         backgroundThresholdSec: 30,
         compactOutput: false,

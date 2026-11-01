@@ -88,6 +88,12 @@ chats:
     #   notErshi: true                # reject rigid 不是…而是… / 是…不是… / 不是…是… drafts for regeneration
     # Tools: configuration for enabled tools.
     tools:
+      # enable advanced_im_api = raw Telegram Bot API / OneBot 11 access for this chat.
+      # Default is false; enable per chat with a deep-merged override, e.g.
+      #   "123456789":
+      #     tools:
+      #       enableAdvancedApi: true
+      enableAdvancedApi: false
       # bash:
       #   backgroundThresholdSec: 10               # timeout threshold above which bash runs as background task
       #   compactOutput: false                     # pipe output through rtk for token savings (requires rtk in PATH)

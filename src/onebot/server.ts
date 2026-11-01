@@ -52,6 +52,8 @@ export interface OneBotApiClient {
   getForwardMessages(messageId: string): Promise<OneBotMessageEvent[]>;
   /** Get 20 messages from the specified chat */
   fetchMessages(chatId: string, fromMessageId?: string): Promise<OneBotMessageEvent[]>;
+  /** Call an arbitrary OneBot action over the existing WebSocket connection. */
+  callAction(action: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
 interface GroupMemberCacheEntry {
@@ -221,6 +223,8 @@ const createApiClient = (
     call<Array<{ user_id: number; remark?: string }>>('get_friend_list', {}));
 
   return {
+    callAction: (action, params) => call(action, params),
+
     sendMessage: async (chatId, segments, replyTo) => {
       const isGroup = !chatId.startsWith('private:');
       const msg: OneBotMessageSegment[] = [];

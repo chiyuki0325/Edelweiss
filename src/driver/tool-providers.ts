@@ -3,8 +3,9 @@ import { resolve } from 'node:path';
 
 import type { Logger } from '@guiiai/logg';
 
+import type { ImApiInvoker } from './im-api/types';
 import type { SkillInfo } from './skills';
-import { createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
+import { createAdvancedImApiTool, createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { DriverSignal, TurnCapabilities, TurnState } from './turn-state';
 import type { PlatformAdapter } from './types';
@@ -36,6 +37,7 @@ export interface CapabilityToolProviderDeps {
     killTask: (taskId: number) => { ok: boolean; error?: string };
     readTaskOutput: (taskId: number, offset?: number, limit?: number) => Promise<{ content: string; totalLines: number; truncated: boolean } | { error: string }>;
   };
+  imApi?: ImApiInvoker;
   focusMode: DriverSignal<boolean>;
   getActiveTurn: () => TurnState | null;
   log: Logger;
@@ -205,6 +207,16 @@ export const createToolsForCapabilities = (
         ]
       : [];
 
+  const createAdvancedImApiTools = (): CahciuaTool[] =>
+    capabilities.canUseAdvancedImApi && deps.imApi
+      ? [createAdvancedImApiTool({
+          platform: chatConfig.platform,
+          chatId,
+          invoker: deps.imApi,
+          log,
+        })]
+      : [];
+
   return [
     ...createChatTools(),
     ...createReactionTools(),
@@ -214,5 +226,6 @@ export const createToolsForCapabilities = (
     ...createReadImageTools(),
     ...createAskForImageTools(),
     ...createBackgroundTaskTools(),
+    ...createAdvancedImApiTools(),
   ];
 };

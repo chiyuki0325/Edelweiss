@@ -91,6 +91,8 @@ const ChatConfigSchema = v.object({
     folder: v.pipe(v.string(), v.nonEmpty()),
   })),
   tools: v.object({
+    /** Expose the raw Telegram Bot API / OneBot 11 API as the `advanced_im_api` tool. */
+    enableAdvancedApi: v.optional(v.boolean(), false),
     bash: v.optional(v.object({
       backgroundThresholdSec: v.optional(v.number(), 10),
       compactOutput: v.optional(v.boolean(), false),
@@ -162,6 +164,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     folder: v.string(),
   }),
   tools: v.partial(v.object({
+    enableAdvancedApi: v.boolean(),
     bash: v.partial(v.object({
       backgroundThresholdSec: v.number(),
       compactOutput: v.boolean(),
@@ -260,6 +263,7 @@ export interface ResolvedChatConfig {
   };
   skills?: { folder: string };
   tools: {
+    enableAdvancedApi: boolean;
     bash: { backgroundThresholdSec: number; compactOutput: boolean };
     webSearch: { tavilyKey: string };
     webFetch?: WebFetchConfig;
@@ -352,6 +356,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     disabledReactions: [...(override.disabledReactions ?? config.chats.default.disabledReactions)],
     humanLikeness: merged.humanLikeness,
     tools: {
+      enableAdvancedApi: merged.tools.enableAdvancedApi,
       bash: { backgroundThresholdSec: merged.tools.bash.backgroundThresholdSec, compactOutput: merged.tools.bash.compactOutput },
       webSearch: { tavilyKey: merged.tools.webSearch.tavilyKey },
       webFetch: merged.tools.webFetch

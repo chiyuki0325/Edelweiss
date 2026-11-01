@@ -106,6 +106,7 @@ const chatConfig = (debounce: ResolvedChatConfig['debounce']): ResolvedChatConfi
     notErshi: false,
   },
   tools: {
+    enableAdvancedApi: false,
     bash: {
       backgroundThresholdSec: 30,
       compactOutput: false,

@@ -1,6 +1,8 @@
 import { getChatIds, resolveChatConfig, resolveModel } from '../../config/config';
 import { loadCompaction, loadTurnResponses, persistCompaction, persistTurnResponse } from '../../db';
 import { createDriver } from '../../driver';
+import { createOneBotImApiInvoker } from '../../driver/im-api/onebot';
+import { createTelegramImApiInvoker } from '../../driver/im-api/telegram';
 import type { Registrar } from '../registrar';
 import { TOKENS } from '../tokens';
 
@@ -57,6 +59,11 @@ export default function registerDriver({ get, register }: Registrar): void {
       getChatName: chatId => resolveChatConfig(config, chatId).platform === 'onebot'
         ? onebot.handle?.getChatName(chatId) ?? Promise.resolve(chatId)
         : telegram?.manager.getChatName(chatId) ?? Promise.resolve(chatId),
+      getImApiInvoker: chatId => resolveChatConfig(config, chatId).platform === 'onebot'
+        ? createOneBotImApiInvoker(() => onebot.handle?.getApi() ?? null)
+        : telegram
+          ? createTelegramImApiInvoker(() => telegram.manager.bot.raw())
+          : undefined,
       onDebounceStateChange: telegram
         ? (chatId, isDebouncing) => telegram.driverHooks.onDebounceStateChange(chatId, isDebouncing)
         : undefined,

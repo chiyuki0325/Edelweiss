@@ -4,6 +4,7 @@ import { computed, effect, signal } from 'alien-signals';
 import { runCompaction } from './compaction';
 import { composeContext, findWorkingWindowCursor, wasToolLoopInterrupted } from './context';
 import { createMainTurnFeatures } from './features/main';
+import type { ImApiInvoker } from './im-api/types';
 import { renderSubagentSystemPrompt, renderSystemPrompt } from './prompt';
 import { createRunner, toToolSchema } from './runner';
 import { createDriverScheduler } from './scheduler';
@@ -73,6 +74,7 @@ export const createDriver = (config: DriverConfig, deps: {
   };
   getPlatformAdapter?: (chatId: string) => PlatformAdapter | undefined;
   getChatName?: (chatId: string) => Promise<string>;
+  getImApiInvoker?: (chatId: string) => ImApiInvoker | undefined;
   onDebounceStateChange?: (chatId: string, isDebouncing: boolean) => void;
   logger: Logger;
 }) => {

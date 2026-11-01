@@ -5,6 +5,7 @@ import { resolveOneBotImageAltText } from './image-to-text';
 import { createOneBotPlatformAdapter, createOneBotServer } from './index';
 import { createOneBotIngress } from './ingress';
 import { createOneBotPostStartupTasks } from './post-startup';
+import type { OneBotApiClient } from './server';
 import type { CanonicalBlockedMessageEvent, CanonicalMessageEvent } from '../adaption-types';
 import type { RuntimeConfig } from '../config/config';
 import type { loadCompaction, loadEvents, loadEventsWithId, persistEvent, updateEventAttachments } from '../db';
@@ -49,6 +50,7 @@ export interface OneBotStartupDeps {
 
 export interface OneBotStartupHandle {
   stop(): Promise<void>;
+  getApi(): OneBotApiClient | null;
   getAdapter(chatId: string): PlatformAdapter | undefined;
   getChatName(chatId: string): Promise<string>;
   runPostStartupTasks(): Promise<void>;
@@ -233,6 +235,7 @@ export const startOneBot = async (deps: OneBotStartupDeps): Promise<OneBotStartu
 
   return {
     stop: () => server.stop(),
+    getApi: () => server.api,
     getAdapter,
     getChatName: chatId => server.api?.getChatName(chatId) ?? Promise.resolve(chatId),
     runPostStartupTasks: () => postStartupTasks.run(),

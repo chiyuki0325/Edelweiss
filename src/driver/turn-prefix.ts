@@ -43,6 +43,7 @@ export const buildMainSystemPromptParams = (params: {
   hasSubagentTools: params.chatConfig.subagents.enabled,
   hasReactTool: params.chatConfig.platform === 'telegram' && params.reactionEmojis.length > 0,
   hasAskForImageTool: Boolean(params.chatConfig.imageToText.model && params.capabilities.canAskForImage),
+  hasAdvancedImApiTool: params.capabilities.canUseAdvancedImApi,
   availableReactionEmojis: params.reactionEmojis,
   availableSkills: [...params.allSkills.values()]
     .map(s => ({

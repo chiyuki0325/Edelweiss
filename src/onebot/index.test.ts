@@ -19,6 +19,7 @@ const stubApi = (messageId: string): OneBotApiClient => ({
   getFriendRemark: vi.fn(async () => undefined),
   getForwardMessages: vi.fn(async () => []),
   fetchMessages: vi.fn(async () => []),
+  callAction: vi.fn(async () => undefined),
 });
 
 describe('buildOneBotSelfSentEvent', () => {

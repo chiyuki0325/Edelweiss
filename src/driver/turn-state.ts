@@ -25,6 +25,7 @@ export interface TurnCapabilities {
   canReadImage: boolean;
   canAskForImage: boolean;
   canUseBackgroundTasks: boolean;
+  canUseAdvancedImApi: boolean;
   canLoadSkill: boolean;
   canStartSubagent: boolean;
   canMessageSubagent: boolean;
@@ -45,6 +46,7 @@ export const createDefaultTurnCapabilities = (kind: TurnKind): TurnCapabilities 
   canReadImage: true,
   canAskForImage: kind === 'main',
   canUseBackgroundTasks: true,
+  canUseAdvancedImApi: false,
   canLoadSkill: true,
   canStartSubagent: kind === 'main',
   canMessageSubagent: kind === 'main',
