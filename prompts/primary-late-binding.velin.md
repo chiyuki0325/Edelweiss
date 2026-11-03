@@ -57,6 +57,3 @@ When you respond, pass that post's message id to the `reply_to` argument so your
 Active background tasks:
 {{ backgroundTasksXml }}
 </template>
-
-如想发消息，首先判断你的回复是否能给聊天增添有效信息。如果试图「把原消息重新解释一遍」，选择沉默或使用反应通常是更好的选择。
-时刻记住风格，始终保持克制、冷静和温柔。
