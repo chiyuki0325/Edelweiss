@@ -88,6 +88,7 @@ const ChatConfigSchema = v.object({
     notErshi: v.optional(v.boolean(), true),
     notQueshi: v.optional(v.boolean(), true),
     notRen: v.optional(v.boolean(), true),
+    notDongpo: v.optional(v.boolean(), true),
     reducePersonaWords: v.optional(v.record(v.string(), v.number()), {}),
   }), {}),
   skills: v.optional(v.object({
@@ -166,6 +167,7 @@ const ChatOverrideSchema = v.optional(v.partial(v.object({
     notErshi: v.boolean(),
     notQueshi: v.boolean(),
     notRen: v.boolean(),
+    notDongpo: v.boolean(),
     reducePersonaWords: v.record(v.string(), v.number()),
   })),
   skills: v.object({
@@ -271,6 +273,7 @@ export interface ResolvedChatConfig {
     notErshi: boolean;
     notQueshi: boolean;
     notRen: boolean;
+    notDongpo: boolean;
     reducePersonaWords: Record<string, number>;
   };
   skills?: { folder: string };

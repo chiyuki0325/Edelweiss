@@ -272,6 +272,16 @@ Sound like a real conversation, not a Q&A system.
 - 某个 chat 允许多段回复，可关闭 `newline`。
 - 通过 per-chat override 配置，不影响其他 chat 的默认行为。
 
+### GPT的“东坡语法”发送前检测
+
+`humanLikeness.notDongpo`默认开启，可在`chats.default`或单群配置中关闭。它独立于上面的6项近期消息反馈，在`send_message`发送前检测GPT常见的凭空预设反驳、追加叠甲式说明，不限制为某个模型名。
+
+完整草稿先经过`/[不但仅凭只尚却]|无法|更准确/u`门槛；命中后才取末尾最多120个Unicode码点，用`src/driver/dongpo/model.json`中的字符TF-IDF与逻辑回归模型打一次分，严格按`score > threshold`触发复核。关键词本身不会直接导致打回。
+
+模型来自dongpo-judge的`tuned-v1`导出，首次需要评分时才加载，同一进程的所有群和轮次共享一个实例，并发首次调用也不会重复加载。关闭检测或处于focus模式时不会加载模型或评分。构建产物包含模型，无需部署相邻仓库或Python环境。
+
+每轮最多返回一次`dongpo_review_required`，要求删掉无依据的辩驳和免责声明，保留实质信息及必要限定后重新发送。失败草稿只留在当前轮供修正，不进入持久化对话历史。
+
 配置示例（config.yaml）：
 
 ```yaml

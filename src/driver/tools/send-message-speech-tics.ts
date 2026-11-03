@@ -1,3 +1,5 @@
+import { detectDongpo } from '../dongpo';
+
 const RIGID_CONTRAST_RE = /(?:不是[\s\S]{1,20}?(?:而是|(?<![不而])是)|(?<!不)是[\s\S]{1,20}?不是)/u;
 
 // 「我认」是 Opus 4.6 / DeepSeek 0731 的口癖。只匹配独立成句的让步说法：
@@ -10,7 +12,7 @@ const buildAcknowledgementOnlyAction = (
   replyTo: string | undefined,
   silentInstruction: string,
 ) => canReact
-  ? {
+    ? {
       action: 'react_message',
       ...(replyTo ? { suggested_message_id: replyTo } : {}),
       instruction: replyTo
@@ -18,7 +20,7 @@ const buildAcknowledgementOnlyAction = (
         : 'Choose the relevant message id from the chat context and an allowed emoji that matches the intended acknowledgement.',
       fallback: 'stay_silent',
     }
-  : {
+    : {
       action: 'stay_silent',
       instruction: silentInstruction,
     };
@@ -32,12 +34,14 @@ export const createSendMessageSpeechTicReview = (
   rejectRigidContrast: boolean,
   rejectQueshi: boolean,
   rejectConcession: boolean,
+  rejectDongpo: boolean,
 ) => {
   let agreementFlaggedThisTurn = false;
   let rigidContrastFlaggedThisTurn = false;
   let concessionFlaggedThisTurn = false;
+  let dongpoFlaggedThisTurn = false;
 
-  return (text: string, replyTo: string | undefined, inFocusMode: boolean): string | null => {
+  return async (text: string, replyTo: string | undefined, inFocusMode: boolean): Promise<string | null> => {
     if (inFocusMode)
       return null;
 
@@ -95,6 +99,26 @@ export const createSendMessageSpeechTicReview = (
         next_action: {
           action: 'send_message',
           instruction: 'Regenerate the draft without using “不是…而是…”, “是…不是…”, or “不是…是…” as a fixed template. Decide whether the contrast is meaningful: preserve it in a more natural form when useful, or remove the transition when it adds no meaning.',
+        },
+      });
+    }
+
+    if (rejectDongpo && !dongpoFlaggedThisTurn && await detectDongpo(text)) {
+      dongpoFlaggedThisTurn = true;
+      return JSON.stringify({
+        ok: false,
+        code: 'defensive_review_required',
+        error: 'The draft may contain GPT-style defensive ending.',
+        next_actions: {
+          has_new_information: {
+            action: 'send_message',
+            instruction: '这条草稿可能包含不好的防御性表达习惯：擅自假设对方提出了不存在的反驳，并追加“仅凭这些还不能……”“但这不代表……”一类叠甲式说明。\n\n重新检查上下文，只删除凭空预设的辩驳和不必要的免责声明，保留你认为有效的信息量，再用自然的表达重新发送。不要为了规避检测而替换关键词，也不要把有信息量的整条回复删掉。',
+          },
+          defensive_only: buildAcknowledgementOnlyAction(
+            canReact,
+            replyTo,
+            '如果本条消息整句都是给用户挑刺儿或叠甲的内容，直接不发送即可。',
+          ),
         },
       });
     }

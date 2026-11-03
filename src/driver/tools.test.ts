@@ -539,7 +539,7 @@ describe('createSendMessageTool', () => {
 
   it('can skip Markdown formatting so platform-specific plain text stays literal', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '49' });
-    const tool = createSendMessageTool(send, undefined, false, true, true, true, { formatMarkdown: false });
+    const tool = createSendMessageTool(send, undefined, false, true, true, true, true, { formatMarkdown: false });
 
     await tool.execute(
       { text: '_literal_ __also_literal__ user_name' },

@@ -17,6 +17,24 @@ const loadFixture = (chats: Record<string, unknown> = {}, endpoint: Record<strin
 
 beforeEach(() => vi.clearAllMocks());
 
+describe('dongpo review config', () => {
+  it('defaults to enabled and supports per-chat overrides', () => {
+    const config = loadFixture({ a: { humanLikeness: { notDongpo: false } } });
+    expect(resolveChatConfig(config, 'other').humanLikeness.notDongpo).toBe(true);
+    expect(resolveChatConfig(config, 'a').humanLikeness.notDongpo).toBe(false);
+  });
+
+  it('inherits a disabled default and supports explicitly enabling a chat', () => {
+    const config = loadFixture({
+      default: { humanLikeness: { notDongpo: false }, tools: { webSearch: { tavilyKey: 'test' } } },
+      a: { humanLikeness: { notDongpo: true } },
+    });
+    expect(resolveChatConfig(config, 'other').humanLikeness.notDongpo).toBe(false);
+    expect(resolveChatConfig(config, 'a').humanLikeness.notDongpo).toBe(true);
+    expect(() => loadFixture({ a: { humanLikeness: { notDongpo: 'true' } } })).toThrow();
+  });
+});
+
 describe('disabledReactions config', () => {
   it('defaults to the disabled list without a config entry', () => {
     expect(resolveChatConfig(loadFixture(), 'chat').disabledReactions).toEqual(['😁', '🖕', '😇']);

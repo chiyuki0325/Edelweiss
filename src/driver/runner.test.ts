@@ -360,10 +360,13 @@ describe('pruneLengthLimitFailures', () => {
     expect(pendingPrune).toBe(true);
   });
 
-  it('removes contrast-review failures from persisted entries', () => {
+  it.each([
+    CONTRAST_REVIEW_ERROR,
+    JSON.stringify({ ok: false, code: 'dongpo_review_required', error: 'review draft' }),
+  ])('removes style-review failures from persisted entries: %s', payload => {
     const entries: ConversationEntry[] = [
       MSG({ parts: [TEXT('I should use a contrast template'), TC('send_message', 'tc1', '{"text":"不是A而是B"}')] }),
-      TR('tc1', CONTRAST_REVIEW_ERROR, true),
+      TR('tc1', payload, true),
     ];
 
     const { pruned, pendingPrune } = pruneLengthLimitFailures(entries, false);

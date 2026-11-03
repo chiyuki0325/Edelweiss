@@ -29,6 +29,7 @@ const deps = (platform: 'telegram' | 'onebot', sendMessage: CapabilityToolProvid
       notErshi: true,
       notQueshi: true,
       notRen: true,
+      notDongpo: true,
       reducePersonaWords: {},
     },
     imageToText: { enabled: false, compress: false, pixelBudget: 0, maxContextEstTokens: 200_000 },
@@ -150,15 +151,18 @@ describe('createToolsForCapabilities send routing', () => {
     expect(sendMessage).toHaveBeenCalledOnce();
   });
 
-  it('passes the notRen toggle to the send boundary filter', async () => {
+  it.each([
+    ['notRen', '行吧，我认'],
+    ['notDongpo', '仅凭这条还不能断言服务都挂了'],
+  ] as const)('passes the %s toggle to the send boundary filter', async (toggle, text) => {
     const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
     const toolDeps = deps('telegram', sendMessage);
-    toolDeps.chatConfig.humanLikeness.notRen = false;
+    toolDeps.chatConfig.humanLikeness[toggle] = false;
     const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
       .find(candidate => candidate.function.name === 'send_message')!;
 
     const result = await tool.execute(
-      { text: '行吧，我认' },
+      { text },
       { toolCallId: 'tc-ren-disabled' },
     );
 

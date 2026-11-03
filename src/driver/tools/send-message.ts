@@ -18,9 +18,10 @@ export const createSendMessageTool = (
   rejectRigidContrast = true,
   rejectQueshi = true,
   rejectConcession = true,
+  rejectDongpo = true,
   options?: SendMessageToolOptions,
 ): CahciuaTool => {
-  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi, rejectConcession);
+  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi, rejectConcession, rejectDongpo);
 
   const properties: Record<string, unknown> = {
     text: { type: 'string', description: 'The message to send. When sending attachments, this becomes the caption.' },
@@ -83,7 +84,7 @@ export const createSendMessageTool = (
           };
         }
       }
-      const speechTicRejection = reviewSpeechTics(text, reply_to, inFocusMode);
+      const speechTicRejection = await reviewSpeechTics(text, reply_to, inFocusMode);
       if (speechTicRejection)
         return { content: speechTicRejection, requiresFollowUp: true };
       const outgoingText = options?.formatMarkdown !== false
