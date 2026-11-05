@@ -238,6 +238,12 @@ const needsReply = (snapshot: SchedulingSnapshot): boolean => {
   return latestExternalEventMs(rc, snapshot.lastProcessedMs) != null;
 };
 
+const hasPendingMention = (snapshot: SchedulingSnapshot): boolean =>
+  snapshot.rc.some(seg =>
+    !seg.isMyself
+    && !!seg.mentionsMe
+    && seg.receivedAtMs > snapshot.lastProcessedMs);
+
 /**
  * Turn 运行期间的新输入由起点 RC 和时间游标共同确认。
  * RC 引用变化说明上下文更新过，游标则划出本轮已经处理过的时间边界。
@@ -290,6 +296,9 @@ export const evaluateScheduling = (
 
   if (!needsReply(snapshot))
     return { type: 'idle', reason: 'nothing-to-process', resetBatch: true };
+
+  if (hasPendingMention(snapshot))
+    return { type: 'start', reason: 'mentioned' };
 
   if (snapshot.focusMode)
     return { type: 'start', reason: 'focus-mode' };
