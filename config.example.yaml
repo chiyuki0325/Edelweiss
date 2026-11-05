@@ -1,0 +1,39 @@
+models:
+  profiles:
+    openai:
+      apiBaseUrl: "https://api.openai.com/v1"
+      apiKey: "${OPENAI_API_KEY}"
+      apiFormat: RESPONSES  # CHAT_COMPLETIONS / ANTHROPIC_MESSAGES / RESPONSES
+      timeoutSec: 120  # 不写则永不超时
+      maxConcurrency: 3
+
+    deepseek:
+      apiBaseUrl: "https://api.deepseek.com/v1"
+      apiKey: "${DEEPSEEK_API_KEY}"
+      apiFormat: ANTHROPIC_MESSAGES
+
+    vision:
+      maxImagesAllowed: 8
+
+    local-force-tools:
+      # toolChoice: FORCE / LOCAL_FORCE / NONE / LOCAL_NONE
+      # FORCE / NONE 会被传递给 API，但对于不支持 tool_choice 的供应商（如 DeepSeek）会报错
+      # LOCAL_FORCE / LOCAL_NONE 模式用提示词限定工具，如果模型不按规则调工具，则做本地重试
+      toolChoice: LOCAL_FORCE
+      localForceMaxRetries: 3
+
+    no-tools:
+      toolChoice: NONE
+
+  entries:
+    primary:
+      use: [openai]
+      model: "gpt-6.1-terra"
+
+    vision:
+      use: [openai, vision]
+      model: "gpt-6-luna"
+      extraBody:
+        # extraBody 里的值会作为 JSON 直接传给模型 API，用于调节思考强度等（各供应商写法不同）
+        reasoning:
+          effort: medium
