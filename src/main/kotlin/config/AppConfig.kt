@@ -19,8 +19,11 @@ data class ModelConfig(
     val toolChoice: ToolChoice? = null,
 ) {
     init {
+        require(maxConcurrency == null || maxConcurrency > 0) {
+            "maxConcurrency 必须为正整数"
+        }
         require(localForceMaxRetries >= 0) {
-            "localForceMaxRetries must be non-negative"
+            "localForceMaxRetries 必须为非负整数"
         }
     }
 

@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "2.4.10"
     kotlin("plugin.serialization") version "2.4.10"
+    kotlin("plugin.spring") version "2.4.10"
     application
 }
 
@@ -20,6 +21,9 @@ application {
 }
 
 dependencies {
+    // 协程核心库
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+
     // JSON 序列化/反序列化
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
 
@@ -31,6 +35,8 @@ dependencies {
     implementation(platform("io.ktor:ktor-bom:3.6.1"))
     implementation("io.ktor:ktor-server-cio")
     implementation("io.ktor:ktor-client-java")
+    implementation("io.ktor:ktor-client-content-negotiation")
+    implementation("io.ktor:ktor-serialization-kotlinx-json")
 
     // 日志
     implementation("org.slf4j:slf4j-api:2.0.20")
@@ -39,4 +45,5 @@ dependencies {
     // YAML 配置
     implementation("com.sksamuel.hoplite:hoplite-core:3.0.5")
     implementation("com.sksamuel.hoplite:hoplite-yaml:3.0.5")
+    implementation(kotlin("stdlib"))
 }
