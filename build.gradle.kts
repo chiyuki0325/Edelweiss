@@ -21,7 +21,8 @@ application {
 }
 
 dependencies {
-    // 协程核心库
+    // 核心库
+    implementation(kotlin("stdlib"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
     // JSON 序列化/反序列化
@@ -45,5 +46,9 @@ dependencies {
     // YAML 配置
     implementation("com.sksamuel.hoplite:hoplite-core:3.0.5")
     implementation("com.sksamuel.hoplite:hoplite-yaml:3.0.5")
-    implementation(kotlin("stdlib"))
+
+    // Exposed ORM + SQLite
+    implementation("org.jetbrains.exposed:exposed-core:1.6.1")
+    implementation("org.jetbrains.exposed:exposed-jdbc:1.6.1")
+    runtimeOnly("org.xerial:sqlite-jdbc:3.54.1.0")
 }

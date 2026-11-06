@@ -2,8 +2,11 @@ package ink.chyk.edelweiss.config
 
 import kotlinx.serialization.json.JsonObject
 
+// 配置建模
+
 data class AppConfig(
     val models: Map<String, ModelConfig> = emptyMap(),
+    val database: DatabaseConfig = DatabaseConfig(),
 )
 
 data class ModelConfig(
@@ -29,17 +32,17 @@ data class ModelConfig(
 
     override fun toString(): String =
         "ModelConfig(" +
-            "apiBaseUrl=$apiBaseUrl, " +
-            "apiKey=***, " +
-            "model=$model, " +
-            "apiFormat=$apiFormat, " +
-            "maxImagesAllowed=$maxImagesAllowed, " +
-            "timeoutSec=$timeoutSec, " +
-            "maxConcurrency=$maxConcurrency, " +
-            "extraBodyKeys=${extraBody?.keys}, " +
-            "localForceMaxRetries=$localForceMaxRetries, " +
-            "toolChoice=$toolChoice" +
-            ")"
+                "apiBaseUrl=$apiBaseUrl, " +
+                "apiKey=***, " +
+                "model=$model, " +
+                "apiFormat=$apiFormat, " +
+                "maxImagesAllowed=$maxImagesAllowed, " +
+                "timeoutSec=$timeoutSec, " +
+                "maxConcurrency=$maxConcurrency, " +
+                "extraBodyKeys=${extraBody?.keys}, " +
+                "localForceMaxRetries=$localForceMaxRetries, " +
+                "toolChoice=$toolChoice" +
+                ")"
 }
 
 enum class ModelApiFormat {
@@ -54,3 +57,7 @@ enum class ToolChoice {
     NONE,
     LOCAL_NONE,
 }
+
+data class DatabaseConfig(
+    val path: String = "./data/edelweiss.db",
+)

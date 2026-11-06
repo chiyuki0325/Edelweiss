@@ -1,6 +1,7 @@
 .gradle
 build/
 /config.yaml
+/data/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/

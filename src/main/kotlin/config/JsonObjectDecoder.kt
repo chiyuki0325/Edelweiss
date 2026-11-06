@@ -7,7 +7,7 @@ import com.sksamuel.hoplite.fp.valid
 import kotlinx.serialization.json.*
 import kotlin.reflect.KType
 
-// Model.extraBody 等字段需要向上传递原始 JsonObject，而不是被 Hoplite 转换为 Map<String, Any>，因此需要自定义 Decoder
+// Model.extraBody 字段需要向上传递原始 JsonObject，而不是被 Hoplite 转换为 Map<String, Any>，因此需要自定义 Decoder
 object JsonObjectDecoder : Decoder<JsonObject> {
     override fun supports(type: KType): Boolean =
         type.classifier == JsonObject::class
