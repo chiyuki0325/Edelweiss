@@ -1,3 +1,6 @@
+database:
+  path: "./data/edelweiss.db"
+
 models:
   profiles:
     openai:
