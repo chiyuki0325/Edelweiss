@@ -566,12 +566,46 @@ describe('createSendMessageTool', () => {
     expect(JSON.parse(corrected.content as string)).toEqual({ ok: true, message_id: '48' });
   });
 
-  it('returns error and sets wasLengthLimited when message exceeds 256 bytes', async () => {
+  it.each([makeText(512), `${'中'.repeat(170)}ab`])('allows a message of exactly 512 UTF-8 bytes', async text => {
+    const send = vi.fn().mockResolvedValue({ messageId: '41' });
+    const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };
+    const tool = createSendMessageTool(send, flags);
+
+    expect(Buffer.byteLength(text, 'utf8')).toBe(512);
+    const result = await tool.execute({ text }, { toolCallId: 'tc-boundary' });
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(flags.wasLengthLimited).toBe(false);
+    expect(JSON.parse(result.content as string).ok).toBe(true);
+  });
+
+  it('rejects a multibyte message exceeding 512 UTF-8 bytes', async () => {
+    const send = vi.fn();
+    const tool = createSendMessageTool(send);
+    const text = '中'.repeat(171);
+
+    expect(Buffer.byteLength(text, 'utf8')).toBe(513);
+    const result = await tool.execute({ text }, { toolCallId: 'tc-multibyte' });
+
+    expect(JSON.parse(result.content as string).ok).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each([`> ${makeText(600)}`, `\`\`\`\n${makeText(600)}\n\`\`\``])('bypasses the limit for quoted or code block text', async text => {
+    const send = vi.fn().mockResolvedValue({ messageId: '41' });
+    const tool = createSendMessageTool(send);
+
+    await tool.execute({ text }, { toolCallId: 'tc-exempt' });
+
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('returns error and sets wasLengthLimited when message exceeds 512 bytes', async () => {
     const send = vi.fn();
     const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: false };
     const tool = createSendMessageTool(send, flags);
 
-    const longText = makeText(257);
+    const longText = makeText(513);
     const result = await tool.execute({ text: longText }, { toolCallId: 'tc1' });
 
     expect(flags.wasLengthLimited).toBe(true);
@@ -620,12 +654,12 @@ describe('createSendMessageTool', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('bypasses 256-byte limit when inFocusMode is true', async () => {
+  it('bypasses 512-byte limit when inFocusMode is true', async () => {
     const send = vi.fn().mockResolvedValue({ messageId: '45' });
     const flags: SendMessageTurnFlags = { wasLengthLimited: false, inFocusMode: true };
     const tool = createSendMessageTool(send, flags);
 
-    const longText = makeText(300);
+    const longText = makeText(600);
     const result = await tool.execute({ text: longText }, { toolCallId: 'tc5' });
 
     expect(send).toHaveBeenCalledTimes(1);

@@ -71,12 +71,12 @@ export const createSendMessageTool = (
         still_working?: boolean;
         attachments?: SendMessageAttachment[];
       };
-      // Enforce 256-byte hard limit when the message does not contain code blocks or blockquotes
+      // Enforce 512-byte hard limit when the message does not contain code blocks or blockquotes
       const inFocusMode = turnFlags?.inFocusMode ?? false;
       const hasBlockquote = /^> /m.test(text);
       if (!inFocusMode && !text.includes('```') && !hasBlockquote) {
         const byteLength = Buffer.byteLength(text, 'utf8');
-        if (byteLength > 256) {
+        if (byteLength > 512) {
           if (turnFlags) turnFlags.wasLengthLimited = true;
           return {
             content: JSON.stringify({ ok: false, error: 'Message is too long, try reduce sentence length or split into multiple messages. If you need to quote a large block of text verbatim, use a blockquote (> ) or code block (```).' }),
