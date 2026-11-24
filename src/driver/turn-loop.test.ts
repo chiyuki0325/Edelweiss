@@ -1,11 +1,15 @@
 import type { Logger } from '@guiiai/logg';
+import { signal } from 'alien-signals';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createInterruptionFeature } from './features/interruption';
 import { createTurnContext } from './turn-features';
 import { runTurnStepLoop } from './turn-loop';
+import { createTurnPhases, runTurn } from './turn-phases';
 import { createDefaultTurnCapabilities } from './turn-state';
 import type { ChatScope, TurnState } from './turn-state';
 import type { Usage } from '../llm/types';
+import type { RenderedContext } from '../rendering/types';
 import type { ConversationEntry, OutputMessage, ToolResult } from '../unified-api/types';
 
 const log = {
@@ -67,7 +71,6 @@ const createTurn = (): TurnState => ({
   loadedSkills: new Set(),
   reactionEmojis: [],
   flags: {
-    wasOfflineAtStart: false,
     interruptedByInput: false,
     sendMessageWasLengthLimited: false,
     modelStayedSilent: false,
@@ -76,6 +79,41 @@ const createTurn = (): TurnState => ({
 });
 
 describe('runTurnStepLoop', () => {
+  it('reports an interrupted turn when a runtime event stops a tool loop at the step boundary', async () => {
+    const turn = createTurn();
+    turn.rcAtStart = [{ receivedAtMs: 100, mentionsMe: true, content: [] }];
+    const rc = signal<RenderedContext>(turn.rcAtStart);
+    const message = assistantToolCall('checking');
+    const runner = {
+      callModelStep: vi.fn(async () => ({
+        entries: [message],
+        toolCalls: message.parts.filter(part => part.kind === 'toolCall'),
+        usage,
+        requestedAtMs: 200,
+      })),
+      executeToolStep: vi.fn(async () => {
+        rc([...turn.rcAtStart, { receivedAtMs: 300, isRuntimeEvent: true, content: [] }]);
+        return [toolResult('needs follow-up', true)];
+      }),
+    };
+    const cleanupTurn = vi.fn();
+    const phases = createTurnPhases({
+      runner,
+      executorChatId: turn.chatId,
+      log,
+      features: [
+        createInterruptionFeature({ chatId: turn.chatId, rc, lastProcessedMs: signal(200), log }),
+        { name: 'observer', cleanupTurn },
+      ],
+    });
+
+    await runTurn(turn, phases);
+
+    expect(runner.callModelStep).toHaveBeenCalledTimes(1);
+    expect(turn.abortController.signal.aborted).toBe(false);
+    expect(cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ completedNormally: false }));
+  });
+
   it('persists transformed entries while continuing with raw entries', async () => {
     const turn = createTurn();
     const rawMessage = assistantToolCall('raw thinking');

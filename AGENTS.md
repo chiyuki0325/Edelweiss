@@ -481,8 +481,9 @@ Projection runs immediately on every event — IC is always current. Scheduling 
 
 Scheduling lives in Driver (not a separate orchestration layer) because it coordinates Driver-owned turn state, interruption, compaction blocking, and mailbox wake-ups. Signals still hold shared per-chat values, but scheduling transitions are triggered explicitly.
 
-**Offline mode**: Each chat scope has an `offline` signal. When offline, `needsReply` only becomes true if there is an unprocessed RC segment with `mentionsMe` or `repliesToMe` — ordinary new messages are ignored. After the LLM call triggered by a mention/reply completes (success or failure), the Driver automatically resets `offline` to `false` (back to online). Sending `/offline` while an LLM call is already running leaves the call unaffected and keeps offline mode active after it finishes. Commands:
-- `/offline` — enter offline mode; bot responds only to @mentions and replies, then auto-returns online.
+**Offline mode** uses a per-chat `offline` signal. While offline, message-triggered starts require an unprocessed external mention or reply. Mailbox wake-ups and interrupted tool loops can still start turns. The Driver automatically returns online only when a turn starts offline with an unprocessed external mention or reply, starts outside an explicit wake-up, and completes without interruption. Each mode command advances the scheduler's offline version, so a command issued during a turn takes precedence over that turn's automatic transition.
+
+- `/offline` — enter offline mode.
 - `/online` — return to online mode immediately.
 - `/compact` — immediately blocks the per-chat LLM loop, announces that compaction is in progress, waits for any active turn to abort and settle, then compacts all context before the configured working window. Messages arriving while blocked are persisted/projected but are not sent to the model until compaction finishes. The command itself is intercepted and never enters the LLM pipeline; no-op compactions still unlock cleanly.
 

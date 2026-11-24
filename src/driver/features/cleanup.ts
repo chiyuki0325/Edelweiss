@@ -14,8 +14,7 @@ export const createCleanupFeature = (deps: MainTurnFeatureDeps): DriverFeature =
       deps.log.withError(err).withFields({ chatId: deps.chatId }).warn('Failed to refresh lastTRInterrupted');
     }
     turn.scope.activeTurn = null;
-    deps.schedulerController.finishTurn(turn.abortController, turn.flags.wasOfflineAtStart);
-    if (turn.flags.wasOfflineAtStart) {
+    if (deps.schedulerController.finishTurn(turn.abortController, ctx.completedNormally)) {
       deps.log.withFields({ chatId: deps.chatId }).log('Offline mode: auto-returning to online after response');
     }
   },

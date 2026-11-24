@@ -25,7 +25,6 @@ const createTurn = (): TurnState => ({
   loadedSkills: new Set(),
   reactionEmojis: [],
   flags: {
-    wasOfflineAtStart: false,
     interruptedByInput: false,
     sendMessageWasLengthLimited: false,
     modelStayedSilent: false,
@@ -43,6 +42,15 @@ const createPhases = (overrides: Partial<TurnPhases> = {}): TurnPhases => ({
 });
 
 describe('runTurn', () => {
+  it('reports normal completion to cleanup after the finish phase', async () => {
+    const turn = createTurn();
+    const phases = createPhases();
+
+    await runTurn(turn, phases);
+
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn, completedNormally: true }));
+  });
+
   it('routes real errors through failTurn and cleanupTurn', async () => {
     const turn = createTurn();
     const error = new Error('boom');
@@ -53,7 +61,7 @@ describe('runTurn', () => {
     await expect(runTurn(turn, phases)).rejects.toThrow(error);
 
     expect(phases.failTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }), error);
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn, completedNormally: false }));
     expect(phases.finishTurn).not.toHaveBeenCalled();
   });
 
@@ -70,7 +78,7 @@ describe('runTurn', () => {
     expect(turn.flags.interruptedByInput).toBe(true);
     expect(phases.runSteps).not.toHaveBeenCalled();
     expect(phases.failTurn).not.toHaveBeenCalled();
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn, completedNormally: false }));
   });
 
   it('skips empty prepared turns without marking failure', async () => {
@@ -83,6 +91,6 @@ describe('runTurn', () => {
 
     expect(phases.runSteps).not.toHaveBeenCalled();
     expect(phases.failTurn).not.toHaveBeenCalled();
-    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn }));
+    expect(phases.cleanupTurn).toHaveBeenCalledWith(expect.objectContaining({ turn, completedNormally: false }));
   });
 });

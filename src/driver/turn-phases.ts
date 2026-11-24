@@ -64,6 +64,8 @@ export const runTurn = async (
     signal.throwIfAborted();
 
     await phases.finishTurn(ctx);
+    signal.throwIfAborted();
+    ctx.completedNormally = !turn.flags.interruptedByInput;
   } catch (err) {
     if (signal.aborted) {
       turn.flags.interruptedByInput = true;

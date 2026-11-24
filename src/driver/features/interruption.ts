@@ -1,7 +1,7 @@
 import type { DriverFeature } from '../turn-features';
 import type { MainTurnFeatureDeps } from './types';
 
-export const createInterruptionFeature = (deps: MainTurnFeatureDeps): DriverFeature => ({
+export const createInterruptionFeature = (deps: Pick<MainTurnFeatureDeps, 'chatId' | 'rc' | 'lastProcessedMs' | 'log'>): DriverFeature => ({
   name: 'interruption',
   shouldContinue: (ctx, step) => {
     const { turn } = ctx;
@@ -12,6 +12,7 @@ export const createInterruptionFeature = (deps: MainTurnFeatureDeps): DriverFeat
       seg.receivedAtMs > deps.lastProcessedMs() && !seg.isMyself && !!seg.isRuntimeEvent);
     if (!hasPendingRuntimeEvent) return undefined;
 
+    turn.flags.interruptedByInput = true;
     deps.log.withFields({ chatId: deps.chatId, step: turn.step }).log('Turn stopped at step boundary for runtime event');
     return false;
   },
