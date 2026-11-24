@@ -120,7 +120,6 @@ export const createSubagentManager = (deps: SubagentManagerDeps) => {
       loadedSkills: new Set(),
       reactionEmojis: [],
       flags: {
-        wasOfflineAtStart: scope.offline(),
         interruptedByInput: false,
         sendMessageWasLengthLimited: false,
         modelStayedSilent: false,

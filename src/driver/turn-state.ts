@@ -124,7 +124,6 @@ export interface TurnState {
   loadedSkills: Set<string>;
   reactionEmojis: string[];
   flags: {
-    wasOfflineAtStart: boolean;
     interruptedByInput: boolean;
     sendMessageWasLengthLimited: boolean;
     modelStayedSilent: boolean;

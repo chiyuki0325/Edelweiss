@@ -306,7 +306,6 @@ export const createDriver = (config: DriverConfig, deps: {
     const createMainTurn = (
       rcAtStart: RenderedContext,
       abortController: AbortController,
-      wasOfflineAtStart: boolean,
     ): TurnState => ({
       id: `main-${Date.now()}-${nextTurnId++}`,
       kind: 'main',
@@ -327,7 +326,6 @@ export const createDriver = (config: DriverConfig, deps: {
       loadedSkills: new Set(),
       reactionEmojis: [],
       flags: {
-        wasOfflineAtStart,
         interruptedByInput: false,
         sendMessageWasLengthLimited: false,
         modelStayedSilent: false,
@@ -336,13 +334,13 @@ export const createDriver = (config: DriverConfig, deps: {
     });
 
     // Scheduler 已经占用 chat loop，异步 LLM Turn 的启动由此函数负责。
-    const executeLlmCall = ({ rcAtStart, wasOffline }: StartedTurnInfo) => {
+    const executeLlmCall = ({ rcAtStart }: StartedTurnInfo) => {
       void (async () => {
         const stepAbortController = new AbortController();
         let turn: TurnState | undefined;
         let lifecycleStarted = false;
         try {
-          turn = createMainTurn(rcAtStart, stepAbortController, wasOffline);
+          turn = createMainTurn(rcAtStart, stepAbortController);
           turn.scope.activeTurn = turn;
           schedulerController.attachAbortController(stepAbortController);
           const features = createMainTurnFeatures({
@@ -394,7 +392,7 @@ export const createDriver = (config: DriverConfig, deps: {
             // 生命周期尚未启动时，此分支负责直接收尾。finishTurn 会释放
             // 运行状态，并显式检查等待中的输入。
             if (turn?.scope.activeTurn === turn && turn) turn.scope.activeTurn = null;
-            schedulerController.finishTurn(stepAbortController, wasOffline);
+            schedulerController.finishTurn(stepAbortController, false);
           }
         }
       })();

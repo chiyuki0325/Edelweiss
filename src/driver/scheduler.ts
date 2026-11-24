@@ -178,7 +178,6 @@ export interface DriverSchedulerOptions {
 
 export interface StartedTurnInfo {
   rcAtStart: RenderedContext;
-  wasOffline: boolean;
 }
 
 export type SchedulingCause =
@@ -220,6 +219,12 @@ export interface SchedulingConfig {
   maxDelayMs: number;
 }
 
+const hasPendingMentionOrReply = (rc: RenderedContext, lastProcessedMs: number): boolean =>
+  rc.some(seg =>
+    !seg.isMyself
+    && (!!seg.mentionsMe || !!seg.repliesToMe)
+    && seg.receivedAtMs > lastProcessedMs);
+
 /**
  * 调度开始时先回答一个最基本的问题：当前 RC 里有没有需要处理的消息。
  * （offline 模式收窄了这个范围，只有新的 mention 或 reply 会进入下一步。
@@ -229,12 +234,8 @@ const needsReply = (snapshot: SchedulingSnapshot): boolean => {
   if (rc.length === 0) return false;
   if (rc === snapshot.failedRc) return false;
   if (snapshot.lastTRInterrupted) return true;
-  if (snapshot.offline) {
-    return rc.some(seg =>
-      !seg.isMyself
-      && (!!seg.mentionsMe || !!seg.repliesToMe)
-      && seg.receivedAtMs > snapshot.lastProcessedMs);
-  }
+  if (snapshot.offline)
+    return hasPendingMentionOrReply(rc, snapshot.lastProcessedMs);
   return latestExternalEventMs(rc, snapshot.lastProcessedMs) != null;
 };
 
@@ -338,6 +339,9 @@ export const createDriverScheduler = (
   const now = options.now ?? Date.now;
   const state = scope.scheduler;
   let stopped = false;
+  let offlineVersion = 0;
+  // null 表示本轮没有自动上线资格。
+  let offlineVersionAtStart: number | null = null;
   const stateController = createSchedulerStateController(state, {
     maxDelayMs: options.maxDelayMs,
     now,
@@ -397,7 +401,7 @@ export const createDriverScheduler = (
    * idle 结束当前等待，wait 约定下一次判断，interrupt 通知活动 Turn 收尾，
    * start 则占住 chat loop，把这一轮交给 runner。
    */
-  const applyDecision = (decision: SchedulingDecision): void => {
+  const applyDecision = (decision: SchedulingDecision, cause: SchedulingCause): void => {
     switch (decision.type) {
     case 'idle':
       notifyDebounceStopped();
@@ -445,7 +449,7 @@ export const createDriverScheduler = (
       notifyDebounceStopped();
       stateController.clearWaitingState();
       {
-        const turn = beginTurn();
+        const turn = beginTurn(cause);
         if (turn) options.startTurn(turn);
       }
       return;
@@ -463,7 +467,7 @@ export const createDriverScheduler = (
       typingExtendMs: options.typingExtendMs,
       maxDelayMs: options.maxDelayMs,
     });
-    applyDecision(decision);
+    applyDecision(decision, cause);
   };
 
   /** 新 RC 到这里时已经写入 scope，接下来会重新判断它是否值得一次回复。 */
@@ -484,6 +488,7 @@ export const createDriverScheduler = (
 
   /** offline 状态一变，mention 和 reply 的回复资格也会跟着重新计算。 */
   const setOffline = (offline: boolean): void => {
+    offlineVersion++;
     scope.offline(offline);
     evaluateAndApply('offline-changed');
   };
@@ -499,7 +504,7 @@ export const createDriverScheduler = (
     evaluateAndApply('state-updated');
   };
 
-  function beginTurn(): StartedTurnInfo | null {
+  function beginTurn(cause: SchedulingCause): StartedTurnInfo | null {
     // 所有启动来源都会经过这次检查，因此同一 chat 同时只有一个 Turn。
     if (scope.running() || scope.chatLoopBlocked()) return null;
     stateController.clearDebounceTimers();
@@ -507,23 +512,34 @@ export const createDriverScheduler = (
     state.debounceWaiting = false;
     if (scope.focusMode()) scope.focusMode(false);
 
-    const wasOffline = scope.offline();
     const rcAtStart = scope.rc();
+    const lastProcessedMs = scope.lastProcessedMs();
+    offlineVersionAtStart = scope.offline() && cause !== 'wake' && hasPendingMentionOrReply(rcAtStart, lastProcessedMs)
+      ? offlineVersion
+      : null;
     stateController.startActiveRun(
       rcAtStart,
-      latestInterruptingExternalEventMs(rcAtStart, scope.lastProcessedMs()) ?? scope.lastProcessedMs(),
+      latestInterruptingExternalEventMs(rcAtStart, lastProcessedMs) ?? lastProcessedMs,
     );
     scope.running(true);
-    return { rcAtStart, wasOffline };
+    return { rcAtStart };
   }
 
-  const finishTurn = (abortController: AbortController, wasOffline: boolean): void => {
+  const finishTurn = (abortController: AbortController, completedNormally: boolean): boolean => {
+    const interruptedByInput = state.activeRunInterruptedByInput;
     stateController.onTurnSettled();
     clearAbortController(abortController);
     if (scope.focusMode()) scope.focusMode(false);
-    if (wasOffline) scope.offline(false);
+    const returnedOnline = completedNormally
+      && !interruptedByInput
+      && !abortController.signal.aborted
+      && offlineVersionAtStart === offlineVersion
+      && scope.offline();
+    offlineVersionAtStart = null;
+    if (returnedOnline) scope.offline(false);
     scope.running(false);
     evaluateAndApply('turn-settled');
+    return returnedOnline;
   };
 
   const attachAbortController = (abortController: AbortController): void => {

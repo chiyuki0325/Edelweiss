@@ -25,7 +25,6 @@ const createTurn = (): TurnState => ({
   loadedSkills: new Set(),
   reactionEmojis: [],
   flags: {
-    wasOfflineAtStart: false,
     interruptedByInput: false,
     sendMessageWasLengthLimited: false,
     modelStayedSilent: false,
