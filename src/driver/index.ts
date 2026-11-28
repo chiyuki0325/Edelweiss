@@ -254,8 +254,9 @@ export const createDriver = (config: DriverConfig, deps: {
       capabilities: TurnState['capabilities'],
       reactionEmojis: string[] = [],
       sendMessageTurnFlags?: SendMessageTurnFlags,
+      reviewContext?: { rc: RenderedContext; afterMs: number },
     ): CahciuaTool[] => {
-      return createToolsForCapabilities(toolProviderDeps(), capabilities, reactionEmojis, sendMessageTurnFlags);
+      return createToolsForCapabilities(toolProviderDeps(), capabilities, reactionEmojis, sendMessageTurnFlags, reviewContext);
     };
 
     let nextTurnId = 1;
@@ -343,6 +344,7 @@ export const createDriver = (config: DriverConfig, deps: {
           turn = createMainTurn(rcAtStart, stepAbortController);
           turn.scope.activeTurn = turn;
           schedulerController.attachAbortController(stepAbortController);
+          const reviewContext = { rc: rcAtStart, afterMs: lastProcessedMs() };
           const features = createMainTurnFeatures({
             chatId,
             getChatName,
@@ -360,7 +362,7 @@ export const createDriver = (config: DriverConfig, deps: {
             loadTRs,
             loadTurnResponses: deps.loadTurnResponses,
             persistTurnResponse: deps.persistTurnResponse,
-            createCapabilityTools,
+            createCapabilityTools: (capabilities, emojis, flags) => createCapabilityTools(capabilities, emojis, flags, reviewContext),
             createSendMessageTurnFlags,
             lastTRInterrupted,
             schedulerController,

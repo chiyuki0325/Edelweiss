@@ -272,22 +272,22 @@ Sound like a real conversation, not a Q&A system.
 - 某个 chat 允许多段回复，可关闭 `newline`。
 - 通过 per-chat override 配置，不影响其他 chat 的默认行为。
 
-### GPT的“东坡语法”发送前检测
-
-`humanLikeness.notDongpo`默认开启，可在`chats.default`或单群配置中关闭。它独立于上面的6项近期消息反馈，在`send_message`发送前检测GPT常见的凭空预设反驳、追加叠甲式说明，不限制为某个模型名。
-
-完整草稿先经过`/[不但仅凭只尚却]|无法|更准确/u`门槛；命中后才取末尾最多120个Unicode码点，用`src/driver/dongpo/model.json`中的字符TF-IDF与逻辑回归模型打一次分，严格按`score > threshold`触发复核。关键词本身不会直接导致打回。
-
-模型来自dongpo-judge的`tuned-v1`导出，首次需要评分时才加载，同一进程的所有群和轮次共享一个实例，并发首次调用也不会重复加载。关闭检测或处于focus模式时不会加载模型或评分。构建产物包含模型，无需部署相邻仓库或Python环境。
-
-每轮最多返回一次`dongpo_review_required`，要求删掉无依据的辩驳和免责声明，保留实质信息及必要限定后重新发送。失败草稿只留在当前轮供修正，不进入持久化对话历史。
-
 配置示例（config.yaml）：
 
 ```yaml
 chats:
-  “751414718”:
+  "751414718":
     humanLikeness:
       markdownList: false
       markdownHeader: false
 ```
+
+### GPT防御性表达的发送前检测
+
+只填顶层`systemOne.apiKey`即可使用[TypeSafe官方System One API](https://docs.typesafe.ai/api/system-one)和`jev-latest`。也可通过`systemOne.endpoint`填写完整的兼容接口地址，并用`systemOne.model`指定模型；密钥须与接口匹配。沿用原来的准入正则`/[不但仅凭只尚却]|无法|更准确/u`：只匹配草稿，命中后才发送完整草稿，不再截取末尾或调用本地模型。
+
+有前文时，`send_message`在一次请求里发送草稿和前文，分别问“措辞是否像GPT式叠甲”和“是否在回答没人问、也没必要回答的问题”。前文取本轮开始时的快照：有`reply_to`就只取被回复的消息，否则最多取本轮新增的最近三条入站消息。每条最多取前2,000个文本单位，包含已有的图片描述，不发送图片本体。无可用前文时只发送草稿和第一问。任一分数严格大于`systemOne.threshold`（默认`0.55`）即打回；两问都命中时优先处理第二问。
+
+`humanLikeness.notDongpo`默认开启，可在`chats.default`或单群配置中关闭。未配置`systemOne`、关闭开关或处于focus模式时不请求。接口超时（5秒）或请求失败时放行；单个无效分数不影响另一问，其他口癖检查也不受影响。
+
+每轮最多返回一次`defensive_review_required`：措辞问题要求保留实质信息和必要限定并重写；答非所问则要求接住实际话题，没有相关内容可补充就用反应或保持沉默。失败草稿只留在当前轮供修正，不进入持久化对话历史。

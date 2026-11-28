@@ -1,4 +1,6 @@
-import { detectDongpo } from '../dongpo';
+import type { WritingReview } from '../systemone';
+
+export const DEFENSIVE_REVIEW_REQUIRED = 'defensive_review_required';
 
 const RIGID_CONTRAST_RE = /(?:不是[\s\S]{1,20}?(?:而是|(?<![不而])是)|(?<!不)是[\s\S]{1,20}?不是)/u;
 
@@ -12,7 +14,7 @@ const buildAcknowledgementOnlyAction = (
   replyTo: string | undefined,
   silentInstruction: string,
 ) => canReact
-    ? {
+  ? {
       action: 'react_message',
       ...(replyTo ? { suggested_message_id: replyTo } : {}),
       instruction: replyTo
@@ -20,7 +22,7 @@ const buildAcknowledgementOnlyAction = (
         : 'Choose the relevant message id from the chat context and an allowed emoji that matches the intended acknowledgement.',
       fallback: 'stay_silent',
     }
-    : {
+  : {
       action: 'stay_silent',
       instruction: silentInstruction,
     };
@@ -34,12 +36,12 @@ export const createSendMessageSpeechTicReview = (
   rejectRigidContrast: boolean,
   rejectQueshi: boolean,
   rejectConcession: boolean,
-  rejectDongpo: boolean,
+  detectDefensiveWriting?: (text: string, replyTo?: string) => Promise<WritingReview>,
 ) => {
   let agreementFlaggedThisTurn = false;
   let rigidContrastFlaggedThisTurn = false;
   let concessionFlaggedThisTurn = false;
-  let dongpoFlaggedThisTurn = false;
+  let defensiveFlaggedThisTurn = false;
 
   return async (text: string, replyTo: string | undefined, inFocusMode: boolean): Promise<string | null> => {
     if (inFocusMode)
@@ -103,12 +105,27 @@ export const createSendMessageSpeechTicReview = (
       });
     }
 
-    if (rejectDongpo && !dongpoFlaggedThisTurn && await detectDongpo(text)) {
-      dongpoFlaggedThisTurn = true;
+    const writingReview = !defensiveFlaggedThisTurn && await detectDefensiveWriting?.(text, replyTo);
+    if (writingReview) {
+      defensiveFlaggedThisTurn = true;
+      if (writingReview === 'uninvited') {
+        return JSON.stringify({
+          ok: false,
+          code: DEFENSIVE_REVIEW_REQUIRED,
+          error: '这条草稿可能在回答没人问的问题，或纠正没人提出的说法。',
+          next_actions: {
+            has_new_information: {
+              action: 'send_message',
+              instruction: '这条草稿可能包含不好的防御性表达习惯：擅自假设对方提出了不存在的反驳，并追加“仅凭这些还不能……”“但这不代表……”一类叠甲式说明。\n重新检查上下文，先把原稿放下，看看对方刚才是在问什么，还是只想分享一下。有话想接，就直接接对方的话。要是你唯一想说的就是原稿里那句没人问的纠正，这条就不用发。',
+            },
+            nothing_to_add: buildAcknowledgementOnlyAction(canReact, replyTo, '如果没有相关内容可补充，直接保持沉默。'),
+          },
+        });
+      }
       return JSON.stringify({
         ok: false,
-        code: 'defensive_review_required',
-        error: 'The draft may contain GPT-style defensive ending.',
+        code: DEFENSIVE_REVIEW_REQUIRED,
+        error: 'The draft may contain GPT-style defensive writing.',
         next_actions: {
           has_new_information: {
             action: 'send_message',

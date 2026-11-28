@@ -5,6 +5,7 @@ import type { Logger } from '@guiiai/logg';
 
 import type { ImApiInvoker } from './im-api/types';
 import type { SkillInfo } from './skills';
+import { createDefensiveWritingDetector, selectWritingReviewContext } from './systemone';
 import { createAdvancedImApiTool, createAskForImageTool, createBashTool, createAttachmentDownloader, createDownloadFileTool, createKillTaskTool, createReadImageTool, createReadTaskOutputTool, createSendMessageTool, createSleepTool, createWebFetchTool, createWebSearchTool, createStaySilentTool, createReactMessageTool, createEnterFocusTool, withToolResultLimit } from './tools';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './tools';
 import type { DriverSignal, TurnCapabilities, TurnState } from './turn-state';
@@ -14,6 +15,7 @@ import type { RuntimeConfig, ResolvedChatConfig } from '../config/config';
 import type { LlmEndpoint } from '../llm/types';
 import type { ImageConversationManager } from '../media/image-conversation';
 import { renderImageToTextSystemPrompt } from '../media/image-to-text-prompt';
+import type { RenderedContext } from '../rendering/types';
 import type { InstantViewPhotoReference } from '../telegram/instant-view-url';
 import type { Attachment } from '../telegram/message/types';
 
@@ -48,6 +50,7 @@ export const createToolsForCapabilities = (
   capabilities: TurnCapabilities,
   reactionEmojis: string[] = [],
   sendMessageTurnFlags?: SendMessageTurnFlags,
+  reviewContext?: { rc: RenderedContext; afterMs: number },
 ): CahciuaTool[] => {
   const {
     chatId,
@@ -73,6 +76,9 @@ export const createToolsForCapabilities = (
   const createChatTools = (): CahciuaTool[] => {
     const tools: CahciuaTool[] = [];
     if (capabilities.canSendMessage) {
+      const detect = chatConfig.humanLikeness.notDongpo && chatConfig.systemOne
+        ? createDefensiveWritingDetector(chatConfig.systemOne, log)
+        : undefined;
       tools.push(createSendMessageTool(async (text, replyTo, attachments) => {
         log.withFields({
           chatId,
@@ -88,8 +94,11 @@ export const createToolsForCapabilities = (
           throw new Error(`OneBot adapter unavailable for chat ${chatId}; refusing Telegram fallback`);
         const sent = await deps.sendMessage(chatId, text, replyTo ? Number(replyTo) : undefined, attachments);
         return { messageId: String(sent.messageId) };
-      }, sendMessageTurnFlags, canOfferReaction, chatConfig.humanLikeness.notErshi, chatConfig.humanLikeness.notQueshi, chatConfig.humanLikeness.notRen, chatConfig.humanLikeness.notDongpo, {
+      }, sendMessageTurnFlags, canOfferReaction, chatConfig.humanLikeness.notErshi, chatConfig.humanLikeness.notQueshi, chatConfig.humanLikeness.notRen, {
         formatMarkdown: chatConfig.platform !== 'onebot',
+        detectDefensiveWriting: detect
+          ? (draft, replyTo) => detect(draft, reviewContext && selectWritingReviewContext(reviewContext.rc, reviewContext.afterMs, replyTo))
+          : undefined,
       }));
     }
     tools.push(createEnterFocusTool({ focusMode: deps.focusMode, getActiveTurn: deps.getActiveTurn }));

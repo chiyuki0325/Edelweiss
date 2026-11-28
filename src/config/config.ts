@@ -204,8 +204,16 @@ const OneBotConfigSchema = v.optional(v.object({
   accessToken: v.optional(v.string(), ''),
 }), {});
 
+const SystemOneConfigSchema = v.object({
+  endpoint: v.optional(v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i)), 'https://api.typesafe.ai/v1/systemone'),
+  apiKey: v.pipe(v.string(), v.trim(), v.nonEmpty()),
+  model: v.optional(v.pipe(v.string(), v.trim(), v.nonEmpty()), 'jev-latest'),
+  threshold: v.optional(v.pipe(v.number(), v.minValue(0), v.maxValue(1)), 0.55),
+});
+
 const ConfigSchema = v.object({
   models: v.record(v.string(), v.object(llmEndpointEntries)),
+  systemOne: v.optional(SystemOneConfigSchema),
   telegram: v.optional(v.object({
     botToken: v.string(),
     botApiUrl: v.optional(v.string()),
@@ -224,6 +232,7 @@ const ConfigSchema = v.object({
 
 export type Config = v.InferOutput<typeof ConfigSchema>;
 export type ChatConfig = v.InferOutput<typeof ChatConfigSchema>;
+export type SystemOneConfig = v.InferOutput<typeof SystemOneConfigSchema>;
 
 export interface RuntimeConfig {
   shell: string[];
@@ -276,6 +285,7 @@ export interface ResolvedChatConfig {
     notDongpo: boolean;
     reducePersonaWords: Record<string, number>;
   };
+  systemOne?: SystemOneConfig;
   skills?: { folder: string };
   tools: {
     enableAdvancedApi: boolean;
@@ -371,6 +381,7 @@ export const resolveChatConfig = (config: Config, chatId: string): ResolvedChatC
     // Arrays in es-toolkit merge are merged by index; this policy is a replacement list.
     disabledReactions: [...(override.disabledReactions ?? config.chats.default.disabledReactions)],
     humanLikeness: merged.humanLikeness,
+    systemOne: config.systemOne,
     tools: {
       enableAdvancedApi: merged.tools.enableAdvancedApi,
       recordStaySilentReason: merged.tools.recordStaySilentReason,

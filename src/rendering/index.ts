@@ -304,7 +304,7 @@ export const render = (ic: IntermediateContext, params: RenderParams = {}): Rend
 
     if (node.type === 'message') {
       const { content, isMyself, isSelfSent, mentionsMe, repliesToMe, isAssociatedChannelPost } = renderMessage(node, params);
-      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }), ...(isAssociatedChannelPost && { isAssociatedChannelPost }) });
+      segments.push({ receivedAtMs: node.receivedAtMs, content, ...(!node.deleted && { messageId: node.messageId }), ...(isMyself && { isMyself }), ...(isSelfSent && { isSelfSent }), ...(mentionsMe && { mentionsMe }), ...(repliesToMe && { repliesToMe }), ...(isAssociatedChannelPost && { isAssociatedChannelPost }) });
     } else if (node.type === 'blocked_message') {
       segments.push({ receivedAtMs: node.receivedAtMs, content: renderBlockedMessage(node) });
     } else if (node.type === 'runtime_event') {

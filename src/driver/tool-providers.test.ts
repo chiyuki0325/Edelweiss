@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createToolsForCapabilities } from './tool-providers';
@@ -153,7 +154,6 @@ describe('createToolsForCapabilities send routing', () => {
 
   it.each([
     ['notRen', '行吧，我认'],
-    ['notDongpo', '仅凭这条还不能断言服务都挂了'],
   ] as const)('passes the %s toggle to the send boundary filter', async (toggle, text) => {
     const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
     const toolDeps = deps('telegram', sendMessage);
@@ -168,6 +168,66 @@ describe('createToolsForCapabilities send routing', () => {
 
     expect(JSON.parse(result.content as string)).toEqual({ ok: true, message_id: '1' });
     expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it.each([true, false])('only calls configured System One when notDongpo is %s', async enabled => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({
+      answers: { is_defensive_writing: { type: 'noul', noul: 0.9 } },
+    }));
+    try {
+      const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
+      const toolDeps = deps('telegram', sendMessage);
+      toolDeps.chatConfig.humanLikeness.notDongpo = enabled;
+      toolDeps.chatConfig.systemOne = {
+        endpoint: 'https://api.typesafe.ai/v1/systemone', apiKey: 'test-key', model: 'jev-latest', threshold: 0.55,
+      };
+      const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'))
+        .find(candidate => candidate.function.name === 'send_message')!;
+      const result = await tool.execute({ text: '还不能断定服务恢复了' }, { toolCallId: 'tc-defensive' });
+      expect(fetch).toHaveBeenCalledTimes(enabled ? 1 : 0);
+      expect(sendMessage).toHaveBeenCalledTimes(enabled ? 0 : 1);
+      expect(JSON.parse(result.content as string)).toMatchObject(enabled
+        ? { ok: false, code: 'defensive_review_required' }
+        : { ok: true });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it('reviews the reply target from the turn snapshot with alt text but without image pieces', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({
+      answers: {
+        is_defensive_writing: { type: 'noul', noul: 0.34 },
+        is_uninvited_reply: { type: 'noul', noul: 0.79 },
+      },
+    }));
+    try {
+      const sendMessage = vi.fn(async () => ({ messageId: 1, date: 1 }));
+      const toolDeps = deps('telegram', sendMessage);
+      toolDeps.chatConfig.systemOne = {
+        endpoint: 'https://api.typesafe.ai/v1/systemone', apiKey: 'test-key', model: 'jev-latest', threshold: 0.55,
+      };
+      const context = '<message id="42">\n<image type="photo">一张骑车记录截图</image>\n</message>';
+      const tool = createToolsForCapabilities(toolDeps, createDefaultTurnCapabilities('main'), [], undefined, {
+        afterMs: 2,
+        rc: [
+          { receivedAtMs: 1, messageId: '42', content: [{ type: 'text', text: context }, { type: 'image', image: sharp() }] },
+          { receivedAtMs: 3, messageId: '43', content: [{ type: 'text', text: '另一条无关消息' }] },
+        ],
+      }).find(candidate => candidate.function.name === 'send_message')!;
+      const draft = '光看均速不能判断有没有出汗';
+      const result = await tool.execute({ text: draft, reply_to: '42' }, { toolCallId: 'tc-contextual' });
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(JSON.parse(fetch.mock.calls[0]![1]?.body as string).state).toEqual({ context, draft });
+      expect(JSON.parse(result.content as string)).toMatchObject({
+        ok: false,
+        code: 'defensive_review_required',
+        next_actions: { nothing_to_add: { action: 'stay_silent' } },
+      });
+      expect(sendMessage).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it('does not suggest react_message when the reaction tool is not assembled', async () => {

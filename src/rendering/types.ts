@@ -18,6 +18,7 @@ export type RenderedContentPiece =
 // into user messages.
 export interface RenderedContextSegment {
   receivedAtMs: number;
+  messageId?: string;
   content: RenderedContentPiece[];
   // Sender is this bot account (used by Driver debounce to ignore bot's own messages
   // when deciding whether new external input arrived). True for all messages from this

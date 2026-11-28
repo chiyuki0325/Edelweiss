@@ -3,6 +3,7 @@ import type { Logger } from '@guiiai/logg';
 import { callLlm, type LlmCallConfig, type ToolSchema } from './call-llm';
 import { ensureDumpDir } from './constants';
 import { executePreparedToolCall, extractToolCalls, prepareToolCall, type CahciuaTool, type PreparedToolCall } from './tools';
+import { DEFENSIVE_REVIEW_REQUIRED } from './tools/send-message-speech-tics';
 import type { Usage } from '../llm/types';
 import type {
   ConversationEntry,
@@ -20,7 +21,7 @@ const isRecoverableSendMessageFailure = (tr: ToolResult): boolean => {
       && (parsed.code === 'agreement_review_required'
         || parsed.code === 'contrast_review_required'
         || parsed.code === 'concession_review_required'
-        || parsed.code === 'dongpo_review_required'
+        || parsed.code === DEFENSIVE_REVIEW_REQUIRED
         || (typeof parsed.error === 'string' && parsed.error.includes('too long')));
   } catch {
     return false;

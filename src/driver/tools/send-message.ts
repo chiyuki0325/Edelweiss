@@ -6,9 +6,11 @@ import prettier from 'prettier/esm/standalone.mjs';
 import { createSendMessageSpeechTicReview } from './send-message-speech-tics';
 import type { CahciuaTool, SendMessageAttachment, SendMessageTurnFlags } from './types';
 import { createTool } from './types';
+import type { WritingReview } from '../systemone';
 
 interface SendMessageToolOptions {
   formatMarkdown?: boolean;
+  detectDefensiveWriting?: (text: string, replyTo?: string) => Promise<WritingReview>;
 }
 
 export const createSendMessageTool = (
@@ -18,10 +20,9 @@ export const createSendMessageTool = (
   rejectRigidContrast = true,
   rejectQueshi = true,
   rejectConcession = true,
-  rejectDongpo = true,
   options?: SendMessageToolOptions,
 ): CahciuaTool => {
-  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi, rejectConcession, rejectDongpo);
+  const reviewSpeechTics = createSendMessageSpeechTicReview(canReact, rejectRigidContrast, rejectQueshi, rejectConcession, options?.detectDefensiveWriting);
 
   const properties: Record<string, unknown> = {
     text: { type: 'string', description: 'The message to send. When sending attachments, this becomes the caption.' },

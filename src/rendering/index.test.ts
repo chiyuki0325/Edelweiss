@@ -441,6 +441,7 @@ describe('render', () => {
           altText: 'a cat sleeping on a windowsill',
         }],
       })]));
+      expect(rc[0]!.messageId).toBe('42');
       expect(rc[0]!.content).toHaveLength(1);
       expect(rc[0]!.content[0]).toEqual({
         type: 'text',

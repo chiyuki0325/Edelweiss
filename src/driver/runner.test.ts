@@ -362,7 +362,7 @@ describe('pruneLengthLimitFailures', () => {
 
   it.each([
     CONTRAST_REVIEW_ERROR,
-    JSON.stringify({ ok: false, code: 'dongpo_review_required', error: 'review draft' }),
+    JSON.stringify({ ok: false, code: 'defensive_review_required', error: 'review draft' }),
   ])('removes style-review failures from persisted entries: %s', payload => {
     const entries: ConversationEntry[] = [
       MSG({ parts: [TEXT('I should use a contrast template'), TC('send_message', 'tc1', '{"text":"不是A而是B"}')] }),

@@ -6,9 +6,10 @@ import { loadConfig, resolveChatConfig } from './config';
 
 vi.mock('node:fs', () => ({ readFileSync: vi.fn() }));
 
-const loadFixture = (chats: Record<string, unknown> = {}, endpoint: Record<string, unknown> = {}) => {
+const loadFixture = (chats: Record<string, unknown> = {}, endpoint: Record<string, unknown> = {}, systemOne?: unknown) => {
   vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
     models: { primary: { apiBaseUrl: '', apiKey: '', model: 'test', ...endpoint } },
+    systemOne,
     runtime: { writeFile: ['tee'], readFile: ['cat'] },
     chats: { default: { tools: { webSearch: { tavilyKey: 'test' } } }, ...chats },
   }));
@@ -32,6 +33,28 @@ describe('dongpo review config', () => {
     expect(resolveChatConfig(config, 'other').humanLikeness.notDongpo).toBe(false);
     expect(resolveChatConfig(config, 'a').humanLikeness.notDongpo).toBe(true);
     expect(() => loadFixture({ a: { humanLikeness: { notDongpo: 'true' } } })).toThrow();
+  });
+});
+
+describe('System One config', () => {
+  const connection = { apiKey: 'test-key' };
+
+  it('is optional and defaults to the official endpoint and latest model', () => {
+    expect(resolveChatConfig(loadFixture(), 'other').systemOne).toBeUndefined();
+    const config = loadFixture({}, {}, connection);
+    expect(resolveChatConfig(config, 'other').systemOne).toEqual({
+      ...connection, endpoint: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', threshold: 0.55,
+    });
+  });
+
+  it('accepts a custom System One endpoint and model', () => {
+    const overrides = { ...connection, endpoint: 'https://systemone.example/v1/systemone', model: 'mili_debug/Clef', threshold: 0.7 };
+    expect(resolveChatConfig(loadFixture({}, {}, overrides), 'other').systemOne).toEqual(overrides);
+  });
+
+  it('validates the threshold and requires a credential', () => {
+    expect(() => loadFixture({}, {}, { ...connection, threshold: 1.1 })).toThrow();
+    expect(() => loadFixture({}, {}, {})).toThrow();
   });
 });
 

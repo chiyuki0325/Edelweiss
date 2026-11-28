@@ -34,6 +34,13 @@ onebot:
   port: 3001                     # WebSocket server port
   accessToken: ""               # optional: Bearer token for client authentication
 
+# Optional: send keyword-matched drafts and limited text context to System One for writing review.
+# systemOne:
+#   apiKey: "YOUR_TYPESAFE_API_KEY" # use the credential for the configured endpoint
+#   endpoint: "https://api.typesafe.ai/v1/systemone" # optional: full System One-compatible URL
+#   model: "jev-latest"           # optional: model ID accepted by that endpoint
+#   threshold: 0.55              # review only when either noul score is higher
+
 database:
   path: "./data/cahciua.db"
 
@@ -88,7 +95,7 @@ chats:
     #   notErshi: true                # reject rigid 不是…而是… / 是…不是… / 不是…是… drafts for regeneration
     #   notQueshi: true               # reject drafts containing 确实 for semantic review
     #   notRen: true                  # reject bare 我认 / 认栽 concessions for semantic review (认为/认识/认同 stay allowed)
-    #   notDongpo: true               # review GPT-style 东坡语法 after a keyword gate; local model loads once on first use
+    #   notDongpo: true               # review GPT-style defensive writing when systemOne is configured
     #   reducePersonaWords:           # remind when a word appears this many times across the recent 5 send_message messages
     #     棉花: 2
     #     爪子: 2

@@ -136,10 +136,8 @@ src/
 │   ├── call-llm.ts         # Unified LLM call dispatcher (openai-chat / responses / anthropic-messages)
 │   ├── call-llm.test.ts    # LLM dispatcher mapping tests, including OpenAI-compatible cache usage fields
 │   ├── runner.ts           # LLM step executor: triple-provider SSE streaming + lane-based tool scheduling (prelude/read/write/message/serial)
-│   ├── dongpo/             # Local GPT-style 东坡语法 detector
-│   │   ├── index.ts        # Character TF-IDF / logistic regression inference, keyword gate, 120-code-point tail, lazy process-wide judge Promise
-│   │   ├── index.test.ts   # Inference properties, gate, threshold, Unicode tail, and single-load tests
-│   │   └── model.json      # Exported dongpo-judge tuned-v1 model; bundled as a lazy JSON chunk
+│   ├── systemone.ts        # System One writing review: legacy draft gate, turn-start text context, dual noul scoring, fail-open
+│   ├── systemone.test.ts   # Gate, context selection, exact prompts, score boundaries, and failure handling tests
 │   ├── compaction.ts       # Context compaction: LLM-based conversation summarization (triple-provider); reuses the main-turn system prompt + tools with tool_choice: none for prompt-cache prefix reuse
 │   ├── scheduler.ts        # Explicit Driver scheduler: pure scheduling decisions + single-timer/interrupt/start execution
 │   ├── scheduler.test.ts   # Focused scheduling-decision and controller tests
@@ -170,7 +168,7 @@ src/
 │   │   ├── bash.ts           # createBashTool + built-in pseudo commands (chat_info, skill_info)
 │   │   ├── send-message.ts   # createSendMessageTool
 │   │   ├── send-message-speech-tics.ts # Async per-turn send-boundary speech-tic reviews (“确实”, concessions, rigid contrasts, and GPT-style 东坡语法)
-│   │   ├── send-message-speech-tics.test.ts # Dongpo send rejection, per-turn reset, disabled/focus bypass, and review ordering tests
+│   │   ├── send-message-speech-tics.test.ts # Defensive writing rejection, per-turn reset, disabled/focus bypass, and review ordering tests
 │   │   ├── advanced-im-api.ts # createAdvancedImApiTool (per-platform raw Bot API / OneBot 11 access)
 │   │   ├── web-search.ts     # createWebSearchTool (Tavily)
 │   │   ├── web-fetch.ts      # createWebFetchTool
@@ -576,7 +574,7 @@ The following optimizations are always active in `composeContext()` (operates on
 - **trimStaleNoToolCallTurnResponses**: Keep only latest 5 TRs without tool calls; older pure-text TRs are dropped before merge.
 - **trimSelfMessagesCoveredBySendToolCalls**: Filter RC segments with `isSelfSent=true` from context assembly (removes duplicate representation — bot messages exist in both RC via userbot and TRs via tool call results).
 - **trimToolResults**: Distance-based mechanical trimming of older oversized tool call results. Oversized means text content `>512 chars` or image content with non-low detail. Only the latest 5 oversized results are kept untrimmed; older oversized results are mechanically trimmed / downgraded.
-- **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for the 512-byte limit, `agreement_review_required`, `contrast_review_required`, `concession_review_required`, and `dongpo_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
+- **pruneLengthLimitFailures**: Despite the historical name, removes recoverable `send_message` failures for the 512-byte limit, `agreement_review_required`, `contrast_review_required`, `concession_review_required`, and `defensive_review_required` from persisted TRs while retaining them in the live turn for correction. Follow-up `send_message`, `react_message`, or `stay_silent` calls resolve the pending prune.
 
 The send-boundary speech-tic guard in `send-message-speech-tics.ts` intercepts the first draft per turn containing “确实” and returns `agreement_review_required` when `humanLikeness.notQueshi` is enabled (the default). This is a request for semantic review, not a declaration that the whole draft is meaningless: the model must remove only acknowledgement wording and preserve substantive content, or use `react_message` when the draft only agrees. The factory receives the already-resolved reaction capability as a boolean; no TurnState, RC, or persistence schema fields are added. If the rejected call supplied `reply_to`, that id is returned as the suggested reaction target; otherwise the model chooses from message ids already present in rendered chat context. OneBot receives the silent fallback and never sees Telegram reaction instructions.
 
@@ -586,7 +584,9 @@ When `humanLikeness.notRen` is enabled (the default), the same guard intercepts 
 
 ### Human-Likeness Heuristic Toggles
 
-When `humanLikeness.notDongpo` is enabled (the default), the async guard runs the local `src/driver/dongpo/` classifier after existing reviews, only for drafts matching `/[不但仅凭只尚却]|无法|更准确/u`. It scores the final 120 Unicode code points once and returns `dongpo_review_required` only when `score > judge.threshold`, with inline rewrite guidance in `send-message-speech-tics.ts` (no Velin template). This targets GPT-style imagined rebuttals and unnecessary disclaimers, preserving substantive content and justified qualifications. Each turn is flagged at most once; disabled/focus-mode checks never load or score the model. A module-level Promise shares one lazy model/judge across chats and concurrent requests. The model is the unchanged `dongpo-judge/artifacts/tuned-v1/model.json`; dynamic JSON import includes it in the tsdown output as a lazy chunk, without runtime dependency on the neighboring repository.
+When top-level `systemOne` is configured and `humanLikeness.notDongpo` is enabled (the default), the guard applies the legacy draft-only gate `/[不但仅凭只尚却]|无法|更准确/u` after the existing speech-tic checks. Only matches are sent, without truncating the draft. `systemOne.endpoint` and `systemOne.model` default to TypeSafe’s official `https://api.typesafe.ai/v1/systemone` and `jev-latest`; both can be overridden.
+
+Without context, `state` is the draft and the only `noul` question is `is_defensive_writing` (`prompts/defensive-writing.md`). With context, the same request sends `{ context, draft }`, appends `prompts/defensive-writing-context.md` to the first question, and adds `is_uninvited_reply` (`prompts/uninvited-reply.md`). Context uses the turn-start RC: the explicit reply target when supplied, otherwise up to three newest incoming messages after the turn cutoff. Each contributes up to 2,000 text units, including existing image descriptions but no binary pieces. Either valid score strictly above the shared threshold (default 0.55) returns `defensive_review_required` once per turn; an uninvited reply takes priority if both qualify. Focus mode skips the guard, request failures and the 5-second timeout fail open, and malformed answers do not suppress the other question.
 
 The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be disabled independently via the `humanLikeness` key in chat config (all enabled by default). Disabling one of those checks removes it from both detection and the late-binding XML feedback. `humanLikeness.notErshi`, `humanLikeness.notQueshi`, `humanLikeness.notRen`, and `humanLikeness.notDongpo` are separate keys that control the four send-boundary filters.
 
@@ -603,10 +603,10 @@ The 6 recent-message heuristic checks in `send-message-human-likeness.ts` can be
 | `humanLikeness.notErshi` | Send-boundary regeneration for rigid “不是…而是…”, “是…不是…”, and “不是…是…” templates | `true` |
 | `humanLikeness.notQueshi` | Send-boundary semantic review for drafts containing “确实” | `true` |
 | `humanLikeness.notRen` | Send-boundary semantic review for bare “我认” / “认栽” concessions (not “认为” / “认识” / “认同”) | `true` |
-| `humanLikeness.notDongpo` | Local-model semantic review for GPT-style 东坡语法 after a keyword gate | `true` |
+| `humanLikeness.notDongpo` | System One review for GPT-style defensive writing when configured | `true` |
 | `humanLikeness.reducePersonaWords` | Word → occurrence threshold map; report persona words once the window total is reached | `{}` |
 
-Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles and `reducePersonaWords` are passed to `collectRecentSendMessageAssessments()`, while `notErshi`, `notQueshi`, and `notRen` are passed to `createSendMessageTool()`.
+Toggles are per-chat (deep-merged with `default` like all other config). They are defined in `ChatConfigSchema` / `ChatOverrideSchema` in `src/config/config.ts`; the six feedback toggles and `reducePersonaWords` are passed to `collectRecentSendMessageAssessments()`, while `notErshi`, `notQueshi`, and `notRen` are passed to `createSendMessageTool()`. The tool provider attaches the System One detector only when `notDongpo` is enabled and `systemOne` is configured.
 
 `tools.recordStaySilentReason` is a separate per-chat switch (default `true`) that includes the `reason` parameter in the `stay_silent` tool schema. It is useful for models whose chain-of-thought is encrypted, since the recorded reason restores some observability; leave it off for models with an open chain-of-thought.
 
